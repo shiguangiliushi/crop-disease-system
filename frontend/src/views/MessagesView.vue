@@ -221,7 +221,13 @@ export default {
       }
     };
 
-    const goProfile = (id) => router.push({ name: 'userProfile', params: { id } });
+    // ⚠️ 第 112 批修：这里原来写的是 `name: 'userProfile'`，而路由表里注册的名字是
+    //    **`user-profile`**（带连字符）。名字对不上时 vue-router **不报错、不跳转**，
+    //    只往控制台打一条 warn —— 表现就是"点了没反应"。
+    //    同类错误在这个文件里找不到第二处，但项目里有一处同样的
+    //    （`UserProfileView.vue` 的关注列表跳个人主页），两处一起修了。
+    //    全项目 26 处按名字跳转里就这 2 处名字无效（已用脚本对着路由表核过）。
+    const goProfile = (id) => router.push({ name: 'user-profile', params: { id } });
 
     onMounted(async () => {
       await loadConversations();

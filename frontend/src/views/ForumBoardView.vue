@@ -618,10 +618,14 @@ export default {
       console.log('正在跳转到用户主页，用户ID:', userId);
       
       try {
-        // 使用路由跳转到用户主页
-        router.push({ 
-          name: 'userProfile', 
-          params: { id: userId } 
+        // ⚠️ 第 112 批修：路由名是 `user-profile`，这里原来写的是驼峰的 `userProfile`。
+        //    无效名字时 vue-router **不抛异常**（所以下面这个 catch 永远不会触发）、
+        //    也不跳转，只往控制台打一条 warn —— 用户看到的是"点作者名没反应"。
+        //    全项目共 3 处同样的错（另两处在 MessagesView 与 UserProfileView），
+        //    已全部修正，并加了 `src/router/__tests__/route-names.spec.js` 对账测试。
+        router.push({
+          name: 'user-profile',
+          params: { id: userId },
         });
       } catch (error) {
         console.error('跳转用户主页失败:', error);

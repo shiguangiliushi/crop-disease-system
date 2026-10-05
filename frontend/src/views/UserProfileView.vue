@@ -752,7 +752,10 @@ export default {
     const goToUserProfile = (id) => {
       if (!id) return;
       followDialogVisible.value = false;
-      router.push({ name: 'userProfile', params: { id } });
+      // ⚠️ 第 112 批修：路由名是 `user-profile`，这里原来写成了驼峰的 `userProfile`。
+      //    名字无效时 vue-router 只打 warn 不跳转 —— 后果是"在关注/粉丝列表里
+      //    点某个人，弹窗关了但页面没动"，很容易被当成"点错了"。
+      router.push({ name: 'user-profile', params: { id } });
     };
 
     // ========================================================================
