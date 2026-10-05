@@ -1,0 +1,83 @@
+# ============================================================================
+# 行尾与二进制文件约定（第 109 批建仓库时补）
+# ----------------------------------------------------------------------------
+# 为什么需要这个文件：建仓库时 `git add` 刷了一屏警告 ——
+#
+#   warning: in the working copy of 'backend/.env.example',
+#            LF will be replaced by CRLF the next time Git touches it
+#
+# 这是 Windows 上 Git 的默认行为（`core.autocrlf`）：提交时把工作区的 LF 转成
+# CRLF 存进仓库。后果是**同一份文件在不同机器上 diff 出整文件差异**，
+# 而项目里已经踩过行尾的坑（验证脚本读 `execSync` 输出时被 `\r` 坑过好几次，
+# 见 docs/系统完善记录.md 第 102/104 批）。
+#
+# 这里的约定：**仓库里一律存 LF，工作区也检出 LF**（`eol=lf`），
+# 让"文件里到底是什么换行"不再随机器变化。
+#
+# 不影响：Windows 上的 Python/Node/VSCode 都能正常读写 LF 文件；
+# `.bat` 例外 —— 批处理脚本用 CRLF 更稳妥（见末尾）。
+# ============================================================================
+
+# ── 默认：文本文件统一 LF ────────────────────────────────────────────────────
+* text=auto eol=lf
+
+# ── 明确是文本的（避免 Git 猜错） ────────────────────────────────────────────
+*.py        text eol=lf
+*.js        text eol=lf
+*.mjs       text eol=lf
+*.ts        text eol=lf
+*.vue       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.scss      text eol=lf
+*.sql       text eol=lf
+*.sh        text eol=lf
+*.env.example text eol=lf
+Dockerfile  text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# ── Windows 批处理：保持 CRLF（某些 Windows 工具对 LF 的 .bat 处理不一致） ──
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# ── 二进制：禁止 Git 做任何行尾转换（否则会损坏文件） ────────────────────────
+# 这些是**必须入库**的资产（见下面说明），所以更要明确标记为 binary。
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.svg       text eol=lf
+*.ttc       binary
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary
+*.pt        binary
+*.pth       binary
+*.onnx      binary
+*.zip       binary
+*.gz        binary
+*.sqlite3   binary
+
+# ── 关于"模型权重与字体为什么会入库" ─────────────────────────────────────────
+# `backend/api/newmodels/*.pt`（约 12MB）、`backend/api/models/*.pt`（约 3MB）、
+# `backend/yolov8n.pt`（约 6MB）、`backend/static/fonts/simsun.ttc`（约 17MB）
+# 都在仓库里，原因是**它们不是可再生的构建产物**：
+#   · 模型权重是训练出来的，本项目没有任何"重新训练"的脚本或数据；
+#   · 字体是 PDF 报告（DetectionReportView）运行必需的资源。
+# 一旦丢了，识别与报告功能直接不可用，而且**没有别的地方能拿回来**
+# （项目此前长期没有版本控制，这正是"唯一副本"风险的来源）。
+#
+# 代价是仓库偏大（首次 clone 约 40MB）。真要瘦身，正确做法是：
+#   1. 引入 Git LFS 并把上述文件迁过去；或
+#   2. 把权重放到对象存储/发布页，仓库里只留下载脚本 + 校验和。
+# 在那之前**保留在仓库里** —— 用"仓库大一点"换"资产不会丢"，这笔交易是划算的。
+# ⚠️ 不要为了瘦身直接删这些文件：删了就等于把唯一副本又变回"没有"。

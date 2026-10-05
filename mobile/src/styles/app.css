@@ -1,0 +1,101 @@
+:root {
+  --brand: #2e7d32;
+  --brand-soft: #e8f5e9;
+  --page-bg: #f4f6f4;
+  --ink: #1f2a1f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--page-bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* 让页面自己滚动，避免 iOS 上整页橡皮筋导致 tabbar 抖动 */
+  min-height: 100%;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* 页面通用容器：底部留出 tabbar 的高度（van-tabbar placeholder 已占位，
+   这里额外留一点呼吸空间） */
+.page {
+  padding-bottom: 16px;
+}
+
+.page-pad {
+  padding: 12px 14px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 1px 6px rgba(26, 46, 26, 0.06);
+  margin-bottom: 12px;
+}
+
+.card-title {
+  margin: 0 0 8px;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.muted {
+  color: #7c8b7c;
+  font-size: 0.85rem;
+}
+
+.brand-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 10px;
+}
+
+.brand-bar h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--brand);
+}
+
+.brand-logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.lang-switch {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #fff;
+}
+
+/* 文本块：保留换行（后端的症状/防治是多行文本） */
+.pre-wrap {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 0.9rem;
+  color: #33422f;
+}

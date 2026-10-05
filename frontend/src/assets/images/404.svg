@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200px" height="200px" viewBox="0 0 200 200" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>404</title>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="404" transform="translate(10.000000, 10.000000)" fill="#E0E6ED">
+            <path d="M90,0 C139.705627,0 180,40.2943709 180,90 C180,139.705629 139.705627,180 90,180 C40.2943709,180 0,139.705629 0,90 C0,40.2943709 40.2943709,0 90,0 Z M90,15 C48.4861372,15 15,48.4861372 15,90 C15,131.513863 48.4861372,165 90,165 C131.513863,165 165,131.513863 165,90 C165,48.4861372 131.513863,15 90,15 Z" id="Oval"></path>
+            <path d="M120,120 L60,60" id="Line-2" stroke="#E0E6ED" stroke-width="15" stroke-linecap="round"></path>
+            <path d="M60,120 L120,60" id="Line-2-Copy" stroke="#E0E6ED" stroke-width="15" stroke-linecap="round"></path>
+        </g>
+    </g>
+</svg>

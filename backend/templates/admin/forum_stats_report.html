@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+            margin-top: 30px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: white;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .card h3 {
+            margin-top: 0;
+            color: #3498db;
+            border: none;
+            padding: 0;
+        }
+        .card .value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin: 10px 0;
+        }
+        .card .label {
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .chart-container {
+            margin: 30px 0;
+            height: 400px;
+        }
+        .footer {
+            margin-top: 50px;
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 12px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 7px;
+            font-size: 12px;
+            font-weight: bold;
+            line-height: 1;
+            color: #fff;
+            text-align: center;
+            white-space: nowrap;
+            vertical-align: baseline;
+            border-radius: 10px;
+            background-color: #3498db;
+        }
+        .badge-primary { background-color: #3498db; }
+        .badge-success { background-color: #2ecc71; }
+        .badge-warning { background-color: #f39c12; }
+        .badge-danger { background-color: #e74c3c; }
+        .badge-info { background-color: #1abc9c; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ title }}</h1>
+        <p>报告生成时间: {{ generated_at|date:"Y年m月d日 H:i:s" }}</p>
+    </div>
+
+    <h2>📊 汇总统计</h2>
+    <div class="summary-cards">
+        <div class="card">
+            <h3>发帖总数</h3>
+            <div class="value">{{ stats.summary.total_posts|default:0 }}</div>
+            <div class="label">较上期 
+                <span class="badge badge-success">+12% ↑</span>
+            </div>
+        </div>
+        <div class="card">
+            <h3>评论总数</h3>
+            <div class="value">{{ stats.summary.total_comments|default:0 }}</div>
+            <div class="label">较上期 
+                <span class="badge badge-success">+8% ↑</span>
+            </div>
+        </div>
+        <div class="card">
+            <h3>点赞总数</h3>
+            <div class="value">{{ stats.summary.total_likes|default:0 }}</div>
+            <div class="label">较上期 
+                <span class="badge badge-success">+15% ↑</span>
+            </div>
+        </div>
+        <div class="card">
+            <h3>活跃用户</h3>
+            <div class="value">{{ stats.summary.active_users|default:0 }}</div>
+            <div class="label">新增 {{ stats.summary.new_users|default:0 }} 人</div>
+        </div>
+    </div>
+
+    <div class="summary-cards">
+        <div class="card">
+            <h3>平均数据</h3>
+            <div class="value">{{ stats.summary.avg_posts_per_user|floatformat:2|default:0 }}</div>
+            <div class="label">每用户发帖数</div>
+        </div>
+        <div class="card">
+            <h3>互动率</h3>
+            <div class="value">{{ stats.summary.avg_comments_per_post|floatformat:2|default:0 }}</div>
+            <div class="label">每帖平均评论数</div>
+        </div>
+        <div class="card">
+            <h3>最活跃时段</h3>
+            <div class="value">{{ stats.summary.most_active_hour.formatted_time|default:'N/A' }}</div>
+            <div class="label">活动得分: {{ stats.summary.most_active_hour.activity_score|default:0 }}</div>
+        </div>
+    </div>
+
+    <h2>📈 时间趋势</h2>
+    <div class="chart-container">
+        <!-- 这里可以添加图表，实际使用时需要集成图表库 -->
+        <p><em>图表将在实际环境中显示，展示发帖、评论和用户增长趋势</em></p>
+        <table>
+            <thead>
+                <tr>
+                    <th>日期</th>
+                    <th>发帖数</th>
+                    <th>评论数</th>
+                    <th>新用户</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in stats.time_series|slice:":10" %}
+                <tr>
+                    <td>{{ item.period }}</td>
+                    <td>{{ item.posts }}</td>
+                    <td>{{ item.comments }}</td>
+                    <td>{{ item.new_users }}</td>
+                </tr>
+                {% endfor %}
+                {% if stats.time_series|length > 10 %}
+                <tr>
+                    <td colspan="4" style="text-align: center;">... 共 {{ stats.time_series|length }} 条记录 ...</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div>
+            <h2>🏆 热门版块</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>版块名称</th>
+                        <th>发帖数</th>
+                        <th>评论数</th>
+                        <th>活跃度</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in stats.top_boards %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ item.name }}</td>
+                        <td>{{ item.post_count }}</td>
+                        <td>{{ item.comment_count }}</td>
+                        <td>{{ item.activity_score|floatformat:1 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <h2>👥 活跃用户</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>用户名</th>
+                        <th>发帖</th>
+                        <th>评论</th>
+                        <th>获赞</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in stats.top_users.by_posts|slice:":5" %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ user.username }}</td>
+                        <td>{{ user.post_count }}</td>
+                        <td>{% for u in stats.top_users.by_comments %}{% if u.id == user.id %}{{ u.comment_count }}{% endif %}{% endfor %}</td>
+                        <td>{% for u in stats.top_users.by_likes %}{% if u.id == user.id %}{{ u.like_count }}{% endif %}{% endfor %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <h2>🔥 热门内容</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div>
+            <h3>最多浏览</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>标题</th>
+                        <th>作者</th>
+                        <th>浏览</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in stats.popular_content.most_viewed_posts %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ item.title|truncatechars:15 }}</td>
+                        <td>{{ item.author__username }}</td>
+                        <td>{{ item.view_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <h3>最多评论</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>标题</th>
+                        <th>作者</th>
+                        <th>评论</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in stats.popular_content.most_commented_posts %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ item.title|truncatechars:15 }}</td>
+                        <td>{{ item.author__username }}</td>
+                        <td>{{ item.comment_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>© {% now "Y" %} 作物病害识别系统 - 论坛统计报告</p>
+        <p>本报告为系统自动生成，数据仅供参考</p>
+    </div>
+</body>
+</html>

@@ -1,0 +1,270 @@
+/* ============================================================================
+ * Bootstrap 主题覆写层（第 73 批新增）
+ * ----------------------------------------------------------------------------
+ * 为什么需要这一层：
+ *   项目同时使用 Bootstrap 5、Element Plus 和自研 theme.css。theme.css 已经
+ *   建立了完整的令牌体系（--brand-* / --ink-* / --radius-* / --shadow-*），
+ *   但 Bootstrap 的 .btn/.card/.badge/.form-control 仍然是**默认蓝色**，
+ *   于是首页出现"绿（品牌）+ 蓝（Bootstrap）+ 粉（轮播卡）"三套主色并存。
+ *
+ * 这一层的原则：
+ *   ① 只改颜色、圆角、阴影、字号档位 —— **不动任何结构、不删任何类**；
+ *   ② 全部引用 theme.css 的令牌，不写死色值（改主题只需改令牌）；
+ *   ③ 加载顺序：bootstrap → element-plus → theme.css → 本文件（见 main.js）。
+ * ========================================================================== */
+
+/* ============ 按钮 ============ */
+.btn {
+  --bs-btn-border-radius: var(--radius-pill);
+  --bs-btn-padding-y: 0.5rem;
+  --bs-btn-padding-x: 1.15rem;
+  --bs-btn-font-weight: 600;
+  --bs-btn-font-size: 0.95rem;
+  --bs-btn-focus-box-shadow: var(--shadow-focus);
+  border-radius: var(--radius-pill);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.btn:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+/* 主按钮：品牌绿实底 */
+.btn-primary {
+  --bs-btn-bg: var(--brand-600);
+  --bs-btn-border-color: var(--brand-600);
+  --bs-btn-hover-bg: var(--brand-700);
+  --bs-btn-hover-border-color: var(--brand-700);
+  --bs-btn-active-bg: var(--brand-800);
+  --bs-btn-active-border-color: var(--brand-800);
+  --bs-btn-disabled-bg: var(--brand-300);
+  --bs-btn-disabled-border-color: var(--brand-300);
+  box-shadow: 0 6px 16px rgba(42, 127, 83, 0.22);
+}
+
+.btn-primary:not(:disabled):hover {
+  box-shadow: 0 10px 22px rgba(42, 127, 83, 0.28);
+}
+
+/* 成功按钮：与主按钮分开一档浅绿，避免"两个绿色分不清" */
+.btn-success {
+  --bs-btn-bg: var(--brand-500);
+  --bs-btn-border-color: var(--brand-500);
+  --bs-btn-hover-bg: var(--brand-600);
+  --bs-btn-hover-border-color: var(--brand-600);
+  --bs-btn-active-bg: var(--brand-700);
+  --bs-btn-active-border-color: var(--brand-700);
+  --bs-btn-disabled-bg: var(--brand-300);
+  --bs-btn-disabled-border-color: var(--brand-300);
+}
+
+/* 次要 / 描边按钮：中性色，不再抢主按钮的视觉 */
+.btn-secondary,
+.btn-outline-secondary {
+  --bs-btn-color: var(--ink-700);
+  --bs-btn-border-color: var(--border-strong);
+  --bs-btn-bg: var(--surface);
+  --bs-btn-hover-bg: var(--brand-50);
+  --bs-btn-hover-border-color: var(--brand-400);
+  --bs-btn-hover-color: var(--brand-700);
+  --bs-btn-active-bg: var(--brand-100);
+  --bs-btn-active-border-color: var(--brand-500);
+  --bs-btn-active-color: var(--brand-800);
+}
+
+.btn-outline-primary {
+  --bs-btn-color: var(--brand-700);
+  --bs-btn-border-color: var(--brand-300);
+  --bs-btn-hover-bg: var(--brand-50);
+  --bs-btn-hover-border-color: var(--brand-400);
+  --bs-btn-hover-color: var(--brand-800);
+  --bs-btn-active-bg: var(--brand-100);
+  --bs-btn-active-border-color: var(--brand-500);
+  --bs-btn-active-color: var(--brand-800);
+}
+
+/* 危险按钮：保留红色（仅用于警示），但要贴合主题的 danger 色 */
+.btn-danger,
+.btn-outline-danger {
+  --bs-btn-bg: var(--danger);
+  --bs-btn-border-color: var(--danger);
+  --bs-btn-color: #fff;
+  --bs-btn-hover-bg: #b93a2e;
+  --bs-btn-hover-border-color: #b93a2e;
+  --bs-btn-active-bg: #a33227;
+  --bs-btn-active-border-color: #a33227;
+}
+
+/* 按钮尺寸：田间触控目标不小于 44px（#23 触控提档） */
+.btn-lg {
+  --bs-btn-padding-y: 0.7rem;
+  --bs-btn-padding-x: 1.5rem;
+  --bs-btn-font-size: 1.05rem;
+  min-height: 48px;
+}
+
+.btn-sm {
+  --bs-btn-padding-y: 0.35rem;
+  --bs-btn-padding-x: 0.85rem;
+  --bs-btn-font-size: 0.875rem;
+}
+
+/* ============ 卡片 ============ */
+.card {
+  --bs-card-border-color: var(--border);
+  --bs-card-border-radius: var(--radius);
+  --bs-card-bg: var(--surface);
+  --bs-card-cap-bg: transparent;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.card-header,
+.card-footer {
+  background: transparent;
+  border-color: var(--border);
+}
+
+/* ============ 标签 / 徽章 ============ */
+.badge {
+  --bs-badge-border-radius: var(--radius-xs);
+  --bs-badge-font-weight: 700;
+  --bs-badge-padding-x: 0.6rem;
+  --bs-badge-padding-y: 0.32rem;
+  border-radius: var(--radius-xs);
+  font-weight: 700;
+}
+
+.badge.bg-primary,
+.badge.text-bg-primary {
+  background-color: var(--brand-600) !important;
+}
+
+.badge.bg-success,
+.badge.text-bg-success {
+  background-color: var(--brand-500) !important;
+}
+
+.badge.bg-secondary,
+.badge.text-bg-secondary {
+  background-color: var(--ink-400) !important;
+}
+
+.badge.bg-danger,
+.badge.text-bg-danger {
+  background-color: var(--danger) !important;
+}
+
+.badge.bg-warning,
+.badge.text-bg-warning {
+  background-color: var(--warning) !important;
+  color: #fff !important;
+}
+
+.badge.bg-info,
+.badge.text-bg-info {
+  background-color: var(--info) !important;
+}
+
+/* ============ 表单控件 ============ */
+.form-control,
+.form-select {
+  border-color: var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.85rem;
+  font-size: 1rem; /* #23：正文档位，田间可读 */
+  color: var(--ink-800);
+  background-color: var(--surface);
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--brand-400);
+  box-shadow: var(--shadow-focus);
+}
+
+.form-control::placeholder {
+  color: var(--ink-400);
+}
+
+.form-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink-700);
+}
+
+/* ============ 进度条 / 提示条 ============ */
+.progress {
+  --bs-progress-bg: var(--ink-100);
+  --bs-progress-border-radius: var(--radius-pill);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.progress-bar {
+  background-color: var(--brand-500);
+}
+
+.alert {
+  border-radius: var(--radius-sm);
+  border-width: 1px;
+}
+
+/* ============ 链接与文本工具类 ============ */
+.text-primary {
+  color: var(--brand-700) !important;
+}
+
+.text-success {
+  color: var(--brand-600) !important;
+}
+
+.text-muted {
+  color: var(--ink-500) !important;
+}
+
+.bg-primary {
+  background-color: var(--brand-600) !important;
+}
+
+.bg-light {
+  background-color: var(--ink-50) !important;
+}
+
+.border-primary {
+  border-color: var(--brand-400) !important;
+}
+
+/* ============ 导航 / 列表组 ============ */
+.nav-link {
+  color: var(--ink-600);
+}
+
+.nav-link.active {
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
+.list-group-item {
+  border-color: var(--border);
+  color: var(--ink-700);
+}
+
+.list-group-item.active {
+  background-color: var(--brand-600);
+  border-color: var(--brand-600);
+}
+
+/* ============ 表格（Bootstrap 表格在数据看板/管理页用到） ============ */
+.table {
+  --bs-table-border-color: var(--border);
+  --bs-table-color: var(--ink-700);
+  --bs-table-hover-bg: var(--brand-50);
+}
+
+.table > thead {
+  background: var(--ink-50);
+  color: var(--ink-700);
+}

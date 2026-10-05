@@ -1,0 +1,37 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.DS_Store
+dist
+dist-ssr
+coverage
+*.local
+
+/cypress/videos/
+/cypress/screenshots/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.tsbuildinfo
+
+# Playwright E2E 产物（第 103 批）：HTML 报告与失败时的截图/trace 都是本地产物
+test-results/
+playwright-report/
+blob-report/
+
+# 验证脚本留下的截图（要留证时单独挑出来展示，不入库）
+dsh-shots/

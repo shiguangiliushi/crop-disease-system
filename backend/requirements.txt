@@ -1,0 +1,60 @@
+# ============================================================================
+# 后端运行依赖（第 94 批重写）
+# ----------------------------------------------------------------------------
+# 改前只有 8 行，且**装不出可运行的环境**：
+#   · 缺 django-cors-headers —— settings.py 的 INSTALLED_APPS 里有它，
+#     装完直接 ModuleNotFoundError，服务起不来；
+#   · 缺 django-filter —— DRF 的 DjangoFilterBackend 依赖它（用户管理/列表筛选都挂了）；
+#   · 缺 reportlab —— 识别报告 PDF 导出用；
+#   · 版本与开发环境实际安装的**全都不一样**（torch 写的 2.2.1、实际 2.7.1 …），
+#     按它装出来的环境与开发环境不是同一套，问题无法复现。
+#
+# 现在：**与开发环境实测版本一一对应**（`pip list` 里读出来的），并且可验证 ——
+#     python manage.py check_env --strict      # 对照本文件检查已装版本
+#
+# 安装：pip install -r requirements.txt
+# （Windows + CPU 版 torch 若装不动，见下方注释里的 CPU 专用源）
+# ============================================================================
+
+# ── Web 框架 ────────────────────────────────────────────────────────────────
+Django==5.2.4
+djangorestframework==3.16.0
+# CORS：移动端/桌面端跨域访问（settings.INSTALLED_APPS 里有 corsheaders）
+django-cors-headers==4.7.0
+# DRF 的 DjangoFilterBackend（views_user.py、views_forum.py 等在用）
+django-filter==25.1
+
+# ── 识别模型（AI） ──────────────────────────────────────────────────────────
+# CPU 版即可跑（本项目开发机就是 CPU 推理）。要 GPU 请按 PyTorch 官方选择对应源：
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch==2.7.1
+torchvision==0.22.1
+# YOLO 推理与标注图绘制
+ultralytics==8.3.163
+opencv-python==4.12.0.88
+
+# ── 图像 / 数值 / 报表 ──────────────────────────────────────────────────────
+Pillow==11.3.0
+numpy==2.2.6
+# 识别报告 PDF（views.py 的 DetectionReportView / 导出 PDF）
+reportlab==4.4.3
+
+# ── 其它 ────────────────────────────────────────────────────────────────────
+# 译文 provider 的 HTTP 调用（services_translate.py；mymemory/deepl/openai 都走它）
+requests==2.32.4
+
+
+# ============================================================================
+# 可选依赖（按需安装，不装也能跑核心链路）
+# ----------------------------------------------------------------------------
+# 生产部署（gunicorn + 静态文件托管 + PostgreSQL）：
+#     pip install -r requirements-prod.txt
+#
+# 开发辅助（造数据 faker / 终端表格 tabulate）：
+#     pip install -r requirements-dev.txt
+#
+# 说明：这三件事「不装也能跑」是刻意设计的 ——
+#   · 没装 whitenoise → settings 自动不做静态文件中间件，静态交给 Nginx；
+#   · 没装 gunicorn   → 用 runserver（仅开发）；
+#   · 没装 psycopg    → 用 sqlite（开发默认）。
+# ============================================================================

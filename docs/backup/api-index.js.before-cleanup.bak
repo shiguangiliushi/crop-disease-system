@@ -1,0 +1,360 @@
+import axios from 'axios';
+import router from '@/router';
+import { ElMessage } from 'element-plus';
+
+// 创建axios实例
+// 确保baseURL以/结尾，这样在拼接路径时不会出现问题
+// 注意：兜底值必须带 /api 前缀，与 http.js / utils/axios.js / main.js 保持一致。
+// 原来兜底是 'http://127.0.0.1:8000'（少 /api），而仓库只有 .env.development；
+// production 构建不会加载它，于是所有请求会打到 .../news/ 这类缺 /api 的地址 → 404。
+const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '') + '/';
+
+const apiClient = axios.create({
+  baseURL: baseURL,
+  timeout: 30000, // 请求超时时间30秒
+  withCredentials: true, // 跨域请求时发送cookies
+  xsrfCookieName: 'csrftoken',
+  xsrfHeaderName: 'X-CSRFToken',
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  },
+  validateStatus: function (status) {
+    return status >= 200 && status < 500; // 处理400-499的状态码
+  }
+});
+
+// 确保请求URL不以//开头
+apiClient.interceptors.request.use(config => {
+  if (config.url) {
+    config.url = config.url.replace(/^\/+/, '');
+  }
+  return config;
+});
+
+// 添加请求拦截器
+apiClient.interceptors.request.use(config => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Token ${token}`;
+  }
+  
+  // 为每个请求添加时间戳防止缓存
+  if (config.method === 'get') {
+    config.params = {
+      ...config.params,
+      _t: new Date().getTime()
+    };
+  }
+  
+  console.log(`[API Request] ${config.method.toUpperCase()} ${config.url}`, config);
+  return config;
+}, error => {
+  console.error('[API Request Error]', error);
+  return Promise.reject(error);
+});
+
+// 从cookie中获取CSRF Token
+const getCSRFToken = () => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split('; csrftoken=');
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+};
+
+// 从localStorage获取token
+const getAuthToken = () => {
+  // 尝试从不同位置获取token
+  return localStorage.getItem('auth_token') || 
+         localStorage.getItem('token') || 
+         sessionStorage.getItem('auth_token');
+};
+
+// 初始化拦截器
+let requestInterceptor = null;
+let responseInterceptor = null;
+
+// 清除认证信息
+const clearAuth = () => {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  sessionStorage.removeItem('auth_token');
+  sessionStorage.removeItem('user');
+};
+
+// 请求拦截器
+const setupRequestInterceptor = () => {
+  return apiClient.interceptors.request.use(
+    config => {
+      // 确保配置中的headers存在
+      config.headers = config.headers || {};
+      
+      // 添加认证token
+      const token = getAuthToken();
+      if (token) {
+        // 确保token格式正确，移除可能的多余引号和Bearer前缀
+        const cleanToken = token.replace(/^['"]|['"]$/g, '').replace(/^(Token|Bearer)\s+/i, '');
+        console.log('Using auth token:', cleanToken ? '***' + cleanToken.slice(-4) : 'none');
+        if (cleanToken) {
+          config.headers['Authorization'] = `Token ${cleanToken}`;
+        }
+      } else {
+        console.warn('No auth token found when making request to:', config.url);
+      }
+      
+      // 添加CSRF token（如果是修改请求）
+      const methods = ['post', 'put', 'patch', 'delete'];
+      if (methods.includes(config.method.toLowerCase())) {
+        const csrfToken = getCSRFToken() || (document.cookie.match(/csrftoken=([^;]+)/) || [])[1];
+        if (csrfToken) {
+          config.headers['X-CSRFToken'] = csrfToken;
+        }
+      }
+      
+      // 为所有请求添加X-Requested-With头
+      config.headers['X-Requested-With'] = 'XMLHttpRequest';
+      
+      // 确保始终发送cookies
+      config.withCredentials = true;
+      
+      // 记录请求日志
+      const fullUrl = config.baseURL && !config.url.startsWith('http')
+        ? `${config.baseURL.replace(/\/+$/, '')}/${config.url.replace(/^\/+/, '')}`
+        : config.url;
+      
+      console.groupCollapsed(`📡 ${config.method.toUpperCase()} ${fullUrl}`);
+      console.log('Request Config:', {
+        baseURL: config.baseURL,
+        url: config.url,
+        fullURL: fullUrl,
+        method: config.method,
+        headers: config.headers,
+        params: config.params,
+        data: config.data
+      });
+      console.groupEnd();
+      
+      return config;
+    },
+    error => {
+      console.error('❌ 请求错误:', error);
+      return Promise.reject(error);
+    }
+  );
+};
+
+// 响应拦截器
+const setupResponseInterceptor = () => {
+  return apiClient.interceptors.response.use(
+    response => {
+      // 对成功响应进行处理
+      console.groupEnd();
+
+      // 处理特定的响应状态码
+      if (response.status === 200 || response.status === 201) {
+        return response.data;
+      } else if (response.status === 204) {
+        return { success: true };
+      }
+      
+      return response;
+    },
+    async error => {
+      const { response } = error;
+      let errorMessage = '发生未知错误';
+      
+      if (response) {
+        // 处理HTTP错误状态码
+        const { status, data } = response;
+        
+        switch (status) {
+          case 400:
+            errorMessage = data.message || '请求参数错误';
+            break;
+          case 401:
+            errorMessage = '未授权，请重新登录';
+            // 清除认证信息并跳转到登录页
+            clearAuth();
+            router.push('/login');
+            break;
+          case 403:
+            errorMessage = '没有权限执行此操作';
+            break;
+          case 404:
+            errorMessage = '请求的资源不存在';
+            break;
+          case 408:
+            errorMessage = '请求超时，请重试';
+            break;
+          case 500:
+            errorMessage = '服务器内部错误';
+            break;
+          case 502:
+            errorMessage = '网关错误';
+            break;
+          case 503:
+            errorMessage = '服务不可用，请稍后重试';
+            break;
+          case 504:
+            errorMessage = '网关超时';
+            break;
+          default:
+            errorMessage = `请求失败，错误码: ${status}`;
+        }
+        
+        // 如果后端返回了错误信息，则使用后端的信息
+        if (data && data.detail) {
+          errorMessage = data.detail;
+        } else if (data && data.message) {
+          errorMessage = data.message;
+        }
+        
+        console.error(`请求错误 [${status}]:`, errorMessage);
+      } else if (error.request) {
+        // 请求已发送但未收到响应
+        if (error.code === 'ECONNABORTED') {
+          errorMessage = '请求超时，请检查网络连接';
+        } else if (error.message === 'Network Error') {
+          errorMessage = '网络连接错误，请检查网络设置';
+        } else {
+          errorMessage = '服务器未响应，请稍后重试';
+        }
+        console.error('无响应错误:', error);
+      } else {
+        // 请求设置出错
+        errorMessage = `请求设置错误: ${error.message}`;
+        console.error('请求错误:', error);
+      }
+      
+      // 显示错误消息
+      if (error.config && !error.config.silent) {
+        ElMessage.error(errorMessage);
+      }
+      
+      // 返回一个包含错误信息的rejected promise
+      return Promise.reject({
+        status: response?.status,
+        message: errorMessage,
+        data: response?.data,
+        originalError: error
+      });
+    }
+  );
+};
+
+// 设置拦截器
+const setupInterceptors = () => {
+  // 清除已有的拦截器
+  if (requestInterceptor !== null) {
+    apiClient.interceptors.request.eject(requestInterceptor);
+    requestInterceptor = null;
+  }
+  if (responseInterceptor !== null) {
+    apiClient.interceptors.response.eject(responseInterceptor);
+    responseInterceptor = null;
+  }
+
+  // 设置请求拦截器
+  requestInterceptor = setupRequestInterceptor();
+  
+  // 设置响应拦截器
+  responseInterceptor = setupResponseInterceptor();
+  
+  // 返回清理函数
+  return () => {
+    if (requestInterceptor !== null) {
+      apiClient.interceptors.request.eject(requestInterceptor);
+      requestInterceptor = null;
+    }
+    if (responseInterceptor !== null) {
+      apiClient.interceptors.response.eject(responseInterceptor);
+      responseInterceptor = null;
+    }
+  };
+};
+
+// 导出API方法
+const api = {
+  // 原始axios实例
+  axios: apiClient,
+  
+  // 通用请求方法
+  request(config) {
+    return apiClient.request(config);
+  },
+  
+  // GET请求
+  // ⚠️ 已修复的真实缺陷：这里原来是 get(url, params = {}, config = {})，
+  //    内部再拼成 apiClient.get(url, { ...config, params })。
+  //    但**全部 16 个调用点都是按 axios 约定写的**，第二个参数传的是 config
+  //    （例如 api.get('/detection-history/', { params: { page: 1 } })），
+  //    于是被多包了一层，真实请求变成 `?params[page]=1`，
+  //    后端只认 `page`/`page_size`/`all_users` 等 → **分页与筛选全部静默失效**。
+  //    现在直接把 config 透传给 axios（与 post/put/patch/delete 的写法一致）。
+  get(url, config = {}) {
+    // 确保 url 不以 / 开头
+    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+    return apiClient.get(cleanUrl, config);
+  },
+  
+  // POST请求
+  post(url, data = {}, config = {}) {
+    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+    return apiClient.post(cleanUrl, data, config);
+  },
+  
+  // PUT请求
+  put(url, data = {}, config = {}) {
+    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+    return apiClient.put(cleanUrl, data, config);
+  },
+  
+  // PATCH请求
+  patch(url, data = {}, config = {}) {
+    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+    return apiClient.patch(cleanUrl, data, config);
+  },
+  
+  // DELETE请求
+  delete(url, config = {}) {
+    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+    return apiClient.delete(cleanUrl, config);
+  },
+  
+  // 上传文件
+  upload(url, file, config = {}) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
+    
+    return apiClient.post(cleanUrl, formData, {
+      ...config,
+      headers: {
+        'Content-Type': 'multipart/form-data',
+        ...config.headers,
+      },
+    });
+  },
+  
+  // 工具方法
+  setupInterceptors,
+  clearAuth,
+  getAuthToken,
+  
+  // 获取当前axios实例
+  getInstance() {
+    return apiClient;
+  }
+};
+
+// 导出默认实例和命名导出
+export default api;
+
+// 导出工具方法
+export {
+  setupInterceptors,
+  clearAuth,
+  getAuthToken
+};

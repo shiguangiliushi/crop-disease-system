@@ -1,0 +1,383 @@
+import os  # 导入操作系统接口模块
+from pathlib import Path  # 导入路径处理模块
+
+# 项目根目录
+BASE_DIR = Path(__file__).resolve().parent.parent  # 获取项目根目录路径
+
+# 安全设置
+SECRET_KEY = 'django-insecure-!your_secret_key_here!'  # 替换为您自己的密钥  # Django安全密钥
+DEBUG = True  # 调试模式开关
+ALLOWED_HOSTS = ['*']  # 允许访问的主机列表
+
+# 应用定义
+INSTALLED_APPS = [  # 已安装的应用列表
+    'django.contrib.admin',  # Django管理后台
+    'django.contrib.auth',  # 认证系统
+    'django.contrib.contenttypes',  # 内容类型框架
+    'django.contrib.sessions',  # 会话框架
+    'django.contrib.messages',  # 消息框架
+    'django.contrib.staticfiles',  # 静态文件管理
+    'rest_framework',  # Django REST框架
+    'rest_framework.authtoken',  # REST框架Token认证
+    'corsheaders',  # 添加 CORS 支持  # 跨域请求支持
+    'django_filters',  # Django过滤器
+    'api',  # 自定义API应用
+]
+
+MIDDLEWARE = [  # 中间件列表
+    'corsheaders.middleware.CorsMiddleware',  # CORS 中间件，必须放在最前面
+    'django.middleware.security.SecurityMiddleware',  # 安全中间件
+    'django.contrib.sessions.middleware.SessionMiddleware',  # 会话中间件
+    'django.middleware.common.CommonMiddleware',  # 通用中间件
+    'django.middleware.csrf.CsrfViewMiddleware',  # CSRF 中间件  # CSRF保护中间件
+    'django.contrib.auth.middleware.AuthenticationMiddleware',  # 认证中间件
+    'api.middleware.TokenAuthenticationMiddleware',  # 自定义Token认证中间件  # 自定义Token认证
+    'django.contrib.messages.middleware.MessageMiddleware',  # 消息中间件
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',  # 点击劫持保护中间件
+    'django.middleware.locale.LocaleMiddleware',  # 本地化中间件
+    'django.middleware.http.ConditionalGetMiddleware',  # 条件GET中间件
+    'django.middleware.gzip.GZipMiddleware',  # GZip压缩中间件
+]
+
+# CORS 配置
+CORS_ALLOW_ALL_ORIGINS = True  # 开发环境允许所有源，生产环境应该更严格配置
+CORS_ALLOW_CREDENTIALS = True  # 允许携带认证信息
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://localhost:5173',  # Vite 开发服务器
+    'http://127.0.0.1:5173',  # Vite 开发服务器
+]
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'token',
+]
+
+# 会话配置
+SESSION_COOKIE_NAME = 'sessionid_%s'  # 使用动态会话名称
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = False  # 生产环境应该设置为 True
+SESSION_COOKIE_SAMESITE = 'Lax'  # 防止CSRF攻击
+SESSION_SAVE_EVERY_REQUEST = True  # 每次请求都保存会话
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 7  # 会话过期时间（秒），这里设置为7天
+
+# REST Framework 配置
+# ⚠️ 注意：本块**不会生效**！文件末尾（约 320 行「REST框架设置」）还有一份 REST_FRAMEWORK，
+#    Django 的 settings 是普通模块赋值，后者会**整体覆盖**前者（不是合并）。
+#    因此下面这些键目前全部处于失效状态，改在这里不会有任何效果：
+#      DEFAULT_PARSER_CLASSES / DEFAULT_FILTER_BACKENDS / EXCEPTION_HANDLER /
+#      DEFAULT_THROTTLE_CLASSES / DEFAULT_THROTTLE_RATES / DEFAULT_VERSIONING_CLASS
+#    实际生效的是末尾那份（PAGE_SIZE=5 + api.pagination.CustomPagination）。
+#    要恢复过滤/限流等能力，应把这些键合并到末尾那份里，并做回归验证。
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 10,
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.FormParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.coreapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/day',
+        'user': '1000/day',
+    },
+    'DEFAULT_VERSIONING_CLASS': 'rest_framework.versioning.NamespaceVersioning',
+}
+
+# 配置允许访问的前端域名
+CORS_ALLOWED_ORIGINS = [  # 允许的跨域源列表
+    'http://localhost:5173',  # 前端开发服务器地址  # 本地开发服务器
+    'http://127.0.0.1:5173',  # 本地开发服务器
+    'http://localhost:5175',  # 新的前端开发服务器地址  # 本地开发服务器
+    'http://127.0.0.1:5175',  # 本地开发服务器
+]
+
+# 配置允许的请求方法
+CORS_ALLOW_METHODS = [  # 允许的HTTP方法列表
+    'GET',  # GET请求
+    'POST',  # POST请求
+    'PUT',  # PUT请求
+    'PATCH',  # PATCH请求
+    'DELETE',  # DELETE请求
+    'OPTIONS'  # OPTIONS请求
+]
+
+# 配置允许的请求头
+CORS_ALLOW_HEADERS = [  # 允许的HTTP头部列表
+    'accept',  # Accept头部
+    'accept-encoding',  # Accept-Encoding头部
+    'authorization',  # Authorization头部
+    'content-type',  # Content-Type头部
+    'dnt',  # DNT头部
+    'origin',  # Origin头部
+    'user-agent',  # User-Agent头部
+    'x-csrftoken',  # X-CSRFToken头部
+    'x-requested-with',  # X-Requested-With头部
+]
+
+ROOT_URLCONF = 'crop_disease_backend.urls'  # 根URL配置
+
+TEMPLATES = [  # 模板配置
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',  # 使用Django模板引擎
+        'DIRS': [],  # 模板目录
+        'APP_DIRS': True,  # 是否在应用目录中查找模板
+        'OPTIONS': {  # 模板选项
+            'context_processors': [  # 上下文处理器
+                'django.template.context_processors.debug',  # 调试上下文处理器
+                'django.template.context_processors.request',  # 请求上下文处理器
+                'django.contrib.auth.context_processors.auth',  # 认证上下文处理器
+                'django.contrib.messages.context_processors.messages',  # 消息上下文处理器
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = 'crop_disease_backend.wsgi.application'  # WSGI应用
+
+# 数据库配置
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': str(BASE_DIR / 'db.sqlite3'),
+        'OPTIONS': {
+            'timeout': 30,  # 增加超时时间到30秒
+        }
+    }
+}
+
+# 密码验证
+# AUTH_PASSWORD_VALIDATORS = [  # 密码验证器（已注释）
+#     {
+#         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',  # 用户属性相似性验证器
+#     },
+#     {
+#         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',  # 最小长度验证器
+#     },
+#     {
+#         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',  # 常用密码验证器
+#     },
+#     {
+#         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',  # 数字密码验证器
+#     },
+# ]
+
+# 国际化
+LANGUAGE_CODE = 'zh-hans'  # 语言代码
+TIME_ZONE = 'Asia/Shanghai'  # 时区
+USE_I18N = True  # 启用国际化
+USE_TZ = True  # 使用时区
+
+# 基础URL配置
+BASE_URL = 'http://localhost:8000'  # 基础URL，用于构建完整URL
+
+# 媒体文件配置
+MEDIA_URL = '/media/'  # 媒体文件URL前缀
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # 媒体文件存储路径
+
+# 确保媒体目录存在
+os.makedirs(MEDIA_ROOT, exist_ok=True)
+
+# 确保日志目录存在
+LOG_DIR = BASE_DIR / 'logs'  # 日志目录路径
+LOG_DIR.mkdir(exist_ok=True)  # 创建日志目录（如果不存在）
+
+# Logging configuration
+# 说明：日志配置在文件末尾统一定义（原先此处与末尾各写了一份 LOGGING，
+# 后者会整体覆盖前者，容易改错地方；现已合并为一份）。
+
+# 静态文件
+STATIC_URL = 'static/'  # 静态文件URL
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # 静态文件根目录
+
+# 媒体文件
+MEDIA_URL = '/media/'  # 媒体文件URL
+MEDIA_ROOT = BASE_DIR / 'media'  # 媒体文件根目录
+
+# 自定义用户模型
+AUTH_USER_MODEL = 'api.CustomUser'  # 自定义用户模型
+
+# 认证后端
+AUTHENTICATION_BACKENDS = [  # 认证后端列表
+    'django.contrib.auth.backends.ModelBackend',  # 默认的认证后端  # Django模型认证后端
+]
+
+# Token 认证配置
+TOKEN_EXPIRED_AFTER_SECONDS = 7 * 24 * 60 * 60  # 7天过期  # Token过期时间
+
+# 登录URL
+LOGIN_URL = '/api/login/'  # 登录URL
+
+# 会话设置
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 7  # 1周，单位秒  # 会话Cookie年龄
+SESSION_SAVE_EVERY_REQUEST = True  # 每次请求保存会话
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False  # 浏览器关闭时不使会话过期
+
+# 日志配置（全项目唯一一份；使用轮转处理器，避免日志无限增长）
+LOGGING = {  # 日志配置
+    'version': 1,  # 日志配置版本
+    'disable_existing_loggers': False,  # 不禁用现有日志记录器
+    'formatters': {  # 日志格式器
+        'verbose': {  # 详细格式
+            'format': '{levelname} {asctime} {module} {message}',  # 格式字符串
+            'style': '{',  # 样式
+        },
+    },
+    'handlers': {  # 日志处理器
+        # 控制台只输出 INFO 以上，避免开发终端被逐请求的 DEBUG 刷屏
+        'console': {  # 控制台处理器
+            'level': 'INFO',  # 信息级别
+            'class': 'logging.StreamHandler',  # 使用流处理器
+            'formatter': 'verbose',  # 使用详细格式
+        },
+        # 应用日志：INFO 以上，单文件 10MB，保留 3 份
+        'file': {  # 文件处理器
+            'level': 'INFO',  # 信息级别
+            'class': 'logging.handlers.RotatingFileHandler',  # 使用轮转文件处理器
+            'filename': str(LOG_DIR / 'django.log'),  # 日志文件路径
+            'maxBytes': 10 * 1024 * 1024,  # 单文件最大 10MB
+            'backupCount': 3,  # 保留 3 个备份
+            'encoding': 'utf-8',  # 编码
+            'formatter': 'verbose',  # 使用详细格式
+        },
+        # 调试日志：DEBUG 以上，单文件 10MB，保留 3 份
+        'debug_file': {  # 调试文件处理器
+            'level': 'DEBUG',  # 调试级别
+            'class': 'logging.handlers.RotatingFileHandler',  # 使用轮转文件处理器
+            'filename': str(LOG_DIR / 'debug.log'),  # 调试日志文件路径
+            'maxBytes': 10 * 1024 * 1024,  # 单文件最大 10MB
+            'backupCount': 3,  # 保留 3 个备份
+            'encoding': 'utf-8',  # 编码
+            'formatter': 'verbose',  # 使用详细格式
+        },
+    },
+    'root': {  # 根日志记录器
+        'handlers': ['console', 'file'],  # 使用控制台和文件处理器
+        'level': 'INFO',  # 信息级别
+    },
+    'loggers': {  # 日志记录器配置
+        'django': {  # Django日志记录器
+            'handlers': ['console', 'file'],  # 使用控制台和文件处理器
+            'level': 'INFO',  # 信息级别
+            'propagate': False,  # 不传播
+        },
+        'django.request': {  # Django请求日志记录器
+            'handlers': ['console', 'file'],  # 使用控制台和文件处理器
+            'level': 'WARNING',  # 只在警告及以上记录
+            'propagate': False,  # 不传播
+        },
+        'api': {  # API日志记录器（DEBUG 只写入轮转的 debug.log）
+            'handlers': ['debug_file'],  # 使用调试文件处理器
+            'level': 'DEBUG',  # 调试级别
+            'propagate': False,  # 不传播
+        },
+        'api.middleware': {  # API中间件日志记录器
+            'handlers': ['debug_file'],  # 使用调试文件处理器
+            'level': 'DEBUG',  # 调试级别
+            'propagate': False,  # 不传播
+        },
+        'corsheaders': {  # CORS日志记录器
+            'handlers': ['console'],  # 使用控制台处理器
+            'level': 'WARNING',  # 警告级别
+            'propagate': False,  # 不传播
+        },
+    },
+}
+
+# REST框架设置
+REST_FRAMEWORK = {  # REST框架配置
+    'DEFAULT_AUTHENTICATION_CLASSES': [  # 默认认证类
+        'rest_framework.authentication.TokenAuthentication',  # Token认证
+        'rest_framework.authentication.SessionAuthentication',  # 会话认证
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [  # 默认权限类
+        'rest_framework.permissions.IsAuthenticated',  # 需要认证
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'api.pagination.CustomPagination',  # 默认分页类
+    'PAGE_SIZE': 5,  # 默认每页5条记录  # 每页记录数
+    'DEFAULT_RENDERER_CLASSES': [  # 默认渲染器类
+        'rest_framework.renderers.JSONRenderer',  # JSON渲染器
+        'rest_framework.renderers.BrowsableAPIRenderer',  # 可浏览API渲染器
+    ],
+    'DEFAULT_CHARSET': 'utf-8',  # 默认字符集
+    'UNICODE_JSON': True,  # 使用Unicode JSON
+    'COMPACT_JSON': True,  # 使用紧凑JSON
+    'STRICT_JSON': False  # 不使用严格JSON
+}
+
+# CSRF 可信任的来源
+# 说明：CORS_ALLOWED_ORIGINS 里同时放行了 localhost:5173 与 127.0.0.1:5173，
+# 这里原先只有 localhost 系列，导致用户若用 127.0.0.1:5173 打开前端，
+# 带 Origin 校验的写操作会被 CSRF 拦掉。现与 CORS 白名单对齐。
+CSRF_TRUSTED_ORIGINS = [  # CSRF信任的源列表
+    "http://localhost:5173",  # 本地开发服务器
+    "http://127.0.0.1:5173",  # 本地开发服务器（与 CORS 白名单保持一致）
+    "http://localhost:5174",  # 本地开发服务器
+    "http://127.0.0.1:5174",
+    "http://localhost:5175",  # 备用端口（与 CORS_ALLOWED_ORIGINS 对齐）
+    "http://127.0.0.1:5175",
+    'http://localhost:5176'  # 本地开发服务器
+]
+
+# 允许的HTTP方法
+CORS_ALLOW_METHODS = [  # 允许的HTTP方法列表（重复定义）
+    'DELETE',  # DELETE请求
+    'GET',  # GET请求
+    'OPTIONS',  # OPTIONS请求
+    'PATCH',  # PATCH请求
+    'POST',  # POST请求
+    'PUT',  # PUT请求
+]
+
+# 允许的HTTP头部
+CORS_ALLOW_HEADERS = [  # 允许的HTTP头部列表（重复定义）
+    'accept',  # Accept头部
+    'accept-encoding',  # Accept-Encoding头部
+    'authorization',  # Authorization头部
+    'content-type',  # Content-Type头部
+    'dnt',  # DNT头部
+    'origin',  # Origin头部
+    'user-agent',  # User-Agent头部
+    'x-csrftoken',  # X-CSRFToken头部
+    'x-requested-with',  # X-Requested-With头部
+]

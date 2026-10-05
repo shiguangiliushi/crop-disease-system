@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>农作物病害检测报告</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #4CAF50;
+        }
+        .header h1 {
+            color: #2E7D32;
+            margin-bottom: 10px;
+        }
+        .info-section {
+            margin-bottom: 30px;
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .section-title {
+            color: #2E7D32;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+            margin: 20px 0 15px 0;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .image-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .image-box {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .image-box img {
+            max-width: 300px;
+            max-height: 200px;
+            object-fit: contain;
+        }
+        .image-caption {
+            margin-top: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #777;
+            font-size: 12px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        .prevention-method {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f0f7f4;
+            border-left: 4px solid #4CAF50;
+        }
+        .method-category {
+            font-weight: bold;
+            color: #2E7D32;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>农作物病害检测报告</h1>
+        <p>生成时间：{{ generated_time }}</p>
+    </div>
+
+    <div class="info-section">
+        <h2 class="section-title">检测信息</h2>
+        <div class="info-grid">
+            <div class="info-label">检测ID：</div>
+            <div>{{ detection.id }}</div>
+            
+            <div class="info-label">检测时间：</div>
+            <div>{{ detection.timestamp|date:"Y年m月d日 H:i:s" }}</div>
+            
+            <div class="info-label">检测用户：</div>
+            <div>{{ user.username }}</div>
+        </div>
+    </div>
+
+    <div class="info-section">
+        <h2 class="section-title">检测结果</h2>
+        <div class="info-grid">
+            <div class="info-label">病害名称：</div>
+            <div>{{ detection.detection_result|default:"未知" }}</div>
+            
+            <div class="info-label">置信度：</div>
+            <div>{% if detection.confidence %}{{ detection.confidence|floatformat:2 }}%{% else %}N/A{% endif %}</div>
+            
+            {% if detection.pest_info %}
+                <div class="info-label">作物类型：</div>
+                <div>{{ detection.pest_info.crop_type|default:"未知" }}</div>
+                
+                <div class="info-label">英文标识：</div>
+                <div>{{ detection.pest_info.english_identifier|default:"无" }}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="image-container">
+        {% if detection.image %}
+        <div class="image-box">
+            <img src="{{ detection.image.url }}" alt="原始图片">
+            <div class="image-caption">原始图片</div>
+        </div>
+        {% endif %}
+        
+        {% if detection.annotated_image %}
+        <div class="image-box">
+            <img src="{{ detection.annotated_image.url }}" alt="标注图片">
+            <div class="image-caption">标注图片</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if detection.pest_info %}
+    <div class="info-section">
+        <h2 class="section-title">病害详情</h2>
+        
+        {% if detection.pest_info.symptoms %}
+        <h3>症状描述</h3>
+        <p>{{ detection.pest_info.symptoms|linebreaksbr }}</p>
+        {% endif %}
+        
+        {% if detection.pest_info.prevention_methods.exists %}
+        <h3>防治方法</h3>
+        {% for method in detection.pest_info.prevention_methods.all %}
+            <div class="prevention-method">
+                <div class="method-category">{{ method.get_category_display|default:"防治方法" }}</div>
+                <div>{{ method.measure|default:"无具体措施"|linebreaksbr }}</div>
+            </div>
+        {% endfor %}
+        {% endif %}
+        
+        {% if detection.pest_info.description %}
+        <h3>详细说明</h3>
+        <p>{{ detection.pest_info.description|linebreaksbr }}</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="footer">
+        <p>本报告由农作物病害检测系统生成 &copy; {{ generated_time|slice:":4" }}</p>
+    </div>
+</body>
+</html>

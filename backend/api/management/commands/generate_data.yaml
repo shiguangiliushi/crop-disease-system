@@ -1,0 +1,178 @@
+train: D:/ultralytics-8.3.143/datasets/train
+val: D:/ultralytics-8.3.143/datasets/val
+
+nc: 24
+names:
+  - Apple_Apple_scab          # 苹果-苹果疮痂病
+  - Apple_Black_rot           # 苹果-黑腐病
+  - Apple_Cedar_apple_rust    # 苹果-雪松苹果锈病
+  - Apple_healthy             # 健康苹果
+  - Blueberry_healthy         # 健康蓝莓
+  - Cherry_healthy            # 健康樱桃
+  - Corn_Cercospora_leaf_spot # 玉米-尾孢菌叶斑病灰斑病
+  - Corn_healthy              # 健康玉米
+  - Corn_Northern_Leaf_Blight # 玉米-大斑病
+  - Grape_Black_rot           # 葡萄-黑腐病
+  - Grape_healthy             # 健康葡萄
+  - Peach_healthy             # 健康桃子
+  - Pepper_bell_healthy       # 健康甜椒
+  - Potato_Early_blight       # 马铃薯-早疫病
+  - Potato_healthy            # 健康马铃薯
+  - Potato_Late_blight        # 马铃薯-晚疫病
+  - Raspberry_healthy         # 健康树莓
+  - Soybean_healthy           # 健康大豆
+  - Squash_Powdery_mildew     # 南瓜-白粉病
+  - Strawberry_healthy        # 健康草莓
+  - Strawberry_Leaf_scorch    # 草莓-叶焦病
+  - Tomato_Early_blight       # 番茄-早疫病
+  - Tomato_healthy            # 健康番茄
+  - Tomato_Late_blight        # 番茄-晚疫病 
+
+names_v2:
+  - Cherry leaf            # 樱桃叶
+  - Peach leaf             # 桃叶
+  - Corn leaf blight       # 玉米叶斑病
+  - Apple rust leaf        # 苹果锈病叶
+  - Potato leaf late blight # 马铃薯晚疫病叶
+  - Strawberry leaf        # 草莓叶
+  - Corn rust leaf         # 玉米锈病叶
+  - Tomato leaf late blight # 番茄晚疫病叶
+  - Tomato mold leaf       # 番茄霉病叶
+  - Potato leaf early blight # 马铃薯早疫病叶
+  - Apple leaf             # 苹果叶
+  - Tomato leaf yellow virus # 番茄黄化病毒叶
+  - Blueberry leaf         # 蓝莓叶
+  - Tomato leaf mosaic virus # 番茄花叶病毒叶
+  - Raspberry leaf         # 树莓叶
+  - Tomato leaf bacterial spot # 番茄细菌性斑点叶
+  - Squash Powdery mildew leaf # 南瓜白粉病叶
+  - grape leaf             # 葡萄叶
+  - Corn Gray leaf spot    # 玉米灰斑病叶
+  - Tomato Early blight leaf # 番茄早疫病叶
+  - Apple Scab Leaf        # 苹果黑星病叶
+  - Tomato Septoria leaf spot # 番茄褐斑病叶
+  - Tomato leaf            # 番茄叶
+  - Soyabean leaf          # 大豆叶
+  - Bell_pepper leaf spot  # 灯笼椒斑点叶
+  - Bell_pepper leaf       # 灯笼椒叶
+  - grape leaf black rot   # 葡萄黑腐病叶
+  - Potato leaf            # 马铃薯叶
+  - Tomato two spotted spider mites leaf # 番茄二斑叶螨叶
+
+Apple:
+  - name: "苹果疮痂病"
+    english_identifier: "Apple_Apple_scab"
+    symptoms: "主要危害叶片和果实。叶片上初期为淡橄榄色小斑，后变为暗褐色或黑色，严重时叶片扭曲、早落。果实上形成圆形黑褐色木栓化疮痂，导致果实畸形、龟裂。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "选用抗病品种，加强果园管理，保持通风透光，彻底清除并烧毁落叶、病果。"
+      - category: "CHEMICAL"
+        measure: "萌芽前喷洒波美5度石硫合剂。生长期定期喷洒10%多抗霉素1000倍液或70%代森锰锌500倍液。"
+  - name: "苹果黑腐病"
+    english_identifier: "Apple_Black_rot"
+    symptoms: "主要危害果实、枝干。果实染病初期为褐色小斑点，迅速扩大变黑腐烂，有明显的同心轮纹。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "及时清除并处理病果、僵果和病枝。休眠期彻底刮除枝干上的粗皮和病斑，并涂抹保护剂。"
+      - category: "CHEMICAL"
+        measure: "生长期喷洒50%多菌灵可湿性粉剂800倍液或80%代森锰锌600倍液。"
+  - name: "苹果雪松锈病"
+    english_identifier: "Apple_Cedar_apple_rust"
+    symptoms: "主要危害叶片、新梢和果实。叶片正面出现橙黄色、有光泽的小斑点，背面长出灰黄色毛状物（锈孢子器）。"
+    prevention:
+      - category: "ECOLOGICAL"
+        measure: "清除果园周围5公里内的桧柏、龙柏等转主寄主，是控制此病最有效的方法。"
+      - category: "CHEMICAL"
+        measure: "发芽后至开花前，喷洒15%三唑酮或20%戊唑醇进行保护。"
+
+Corn:
+  - name: "玉米大斑病"
+    english_identifier: "Corn_Northern_Leaf_Blight"
+    symptoms: "在叶片上形成大型、灰褐色至黄褐色、纺锤形或长椭圆形病斑，边缘有明显的暗色带。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "选用抗病品种，收获后及时深耕病残体。"
+      - category: "CHEMICAL"
+        measure: "发病初期喷洒25%三唑酮乳油1500倍液或70%代森锰锌可湿性粉剂500倍液。"
+  - name: "玉米锈病"
+    english_identifier: "Corn_Common_Rust"
+    symptoms: "主要发生在叶片上。病斑初期为浅黄色小点，后隆起破裂，散出铁锈色粉末（夏孢子）。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "种植抗病或耐病品种。"
+      - category: "ECOLOGICAL"
+        measure: "适当提早播种，避开锈病发生高峰期。"
+      - category: "CHEMICAL"
+        measure: "田间病株率达到10%时，可喷洒三唑酮、丙环唑等杀菌剂。"
+
+Grape:
+  - name: "葡萄黑腐病"
+    english_identifier: "Grape_Black_rot"
+    symptoms: "危害叶、果、新梢。果实上病斑初期为褐色，后变黑腐烂，并出现黑色小点，最后变成干缩僵果。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "冬季修剪后，彻底清除架面上的病枝、病果、卷须，并集中烧毁。"
+      - category: "PHYSICAL"
+        measure: "在葡萄生长季节，给果穗套袋，可有效防止病菌侵染。"
+      - category: "CHEMICAL"
+        measure: "萌芽前喷洒波美3-5度石硫合剂。花前、花后及果实生长期喷洒波尔多液或代森锰锌。"
+
+Potato:
+  - name: "马铃薯晚疫病"
+    english_identifier: "Potato_Late_blight"
+    symptoms: "危害叶、茎、块茎。叶片上病斑从叶尖或叶缘开始，为水浸状、暗绿色大斑，潮湿时病斑边缘有白色霉层。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "选用无病种薯，采用高垄栽培，适时中耕培土。"
+      - category: "MONITORING"
+        measure: "建立病情监测系统，田间中心病株出现时立即开始用药。"
+      - category: "CHEMICAL"
+        measure: "发病初期喷洒72%霜脲·锰锌可湿性粉剂600倍液或69%烯酰·锰锌水分散粒剂1000倍液。"
+  - name: "马铃薯早疫病"
+    english_identifier: "Potato_Early_blight"
+    symptoms: "主要危害叶片和块茎。叶片上形成圆形或近圆形、暗褐色同心轮纹病斑。块茎上病斑为圆形或不规则形、暗褐色凹陷斑。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "实行与非茄科作物2-3年轮作，选用无病种薯。"
+      - category: "CHEMICAL"
+        measure: "发病初期喷洒75%百菌清或68.75%氟菌·霜霉威悬浮剂。"
+
+Squash:
+  - name: "南瓜白粉病"
+    english_identifier: "Squash_Powdery_mildew"
+    symptoms: "主要危害叶片。叶片上出现白色近圆形粉斑，后扩大连接成片，像撒了一层白粉。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "合理密植，确保通风透光，避免偏施氮肥，增施磷钾肥。"
+      - category: "CHEMICAL"
+        measure: "发病初期可喷洒15%三唑酮或30%醚菌酯悬浮剂。"
+
+Strawberry:
+  - name: "草莓叶焦病"
+    english_identifier: "Strawberry_Leaf_scorch"
+    symptoms: "叶片上出现不规则的紫色病斑，中心后期变为褐色或灰色，边缘保持紫色。严重时叶片焦枯、卷曲。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "及时摘除病叶、老叶，集中带出田外烧毁。"
+      - category: "ECOLOGICAL"
+        measure: "合理密植，改善通风透光条件，雨后及时排水。"
+      - category: "CHEMICAL"
+        measure: "发病初期可选用70%代森锰锌可湿性粉剂500倍液或50%多菌灵可湿性粉剂600倍液喷雾。"
+
+Tomato:
+  - name: "番茄早疫病"
+    english_identifier: "Tomato_Early_blight"
+    symptoms: "危害叶、茎、果。叶片上病斑为圆形或不规则形，有暗褐色同心轮纹。果实病斑多在果蒂附近，为暗褐色圆形凹陷斑。"
+    prevention:
+      - category: "AGRICULTURAL"
+        measure: "与非茄科作物轮作。加强通风，降低棚内湿度。"
+      - category: "CHEMICAL"
+        measure: "发病初期喷洒75%百菌清或10%苯醚甲环唑水分散粒剂。"
+  - name: "番茄晚疫病"
+    english_identifier: "Tomato_Late_blight"
+    symptoms: "危害叶、茎、果。叶片上病斑从叶尖或叶缘开始，为水浸状、暗褐色大斑，潮湿时病斑边缘有白色霉层。"
+    prevention:
+      - category: "ECOLOGICAL"
+        measure: "保护地栽培时，加强温湿度管理，雨后或浇水后必须及时通风，严防叶面结露。"
+      - category: "CHEMICAL"
+        measure: "发病初期及时喷洒68.75%氟菌·霜霉威或52.5%噁酮·霜脲氰。注意药剂的交替使用。"

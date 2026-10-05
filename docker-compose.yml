@@ -1,0 +1,94 @@
+# ============================================================================
+# 一键起「后端 + 前端 + 移动端 + Nginx」（第 94 批）
+# ----------------------------------------------------------------------------
+# 用法：
+#   1) 先构建两个前端产物（Nginx 直接把 dist 发出去，不在容器里跑 node）：
+#        cd frontend && npm ci && npm run build-only
+#        cd ../mobile && npm ci && npm run build
+#   2) 准备后端环境变量：
+#        cp backend/.env.example backend/.env    # 至少填 DJANGO_SECRET_KEY
+#   3) 起服务：
+#        docker compose up -d --build
+#   4) 验证：
+#        curl -i http://localhost/api/health/          # 期望 200 + status ok
+#        浏览器打开 http://localhost/                   # 桌面端
+#        手机同网访问 http://<电脑IP>/m/                # 移动端
+#
+# ⚠️ 为什么不在容器里构建前端：一次 npm ci + vite build 会拉几百 MB node_modules，
+#    把镜像撑大且拖慢每次重建。前端产物是**静态文件**，构建一次即可，交给 Nginx。
+#    这也符合真实部署的做法。
+#
+# ⚠️ 数据库默认仍是 sqlite（挂卷持久化）。要上 Postgres 见文件末尾注释。
+# ============================================================================
+services:
+  backend:
+    build:
+      context: ./backend
+    image: crop-disease-backend:latest
+    restart: unless-stopped
+    env_file:
+      # 里面的 DJANGO_SECRET_KEY / DJANGO_ALLOWED_HOSTS 等；没有这个文件时
+      # 请改用下面的 environment 段显式传值。
+      - ./backend/.env
+    environment:
+      # 容器内固定值（会覆盖 .env 里的同名项，避免"本地开发值"被带进容器）
+      DJANGO_DEBUG: "False"
+      DJANGO_WHITENOISE: "True"
+      # 生产由 Nginx 托管 /media/（见 nginx.conf 的 /media/ location）。
+      # 若不用 Nginx，把这里改成 "True" 让 Django 自己发。
+      DJANGO_SERVE_MEDIA: "False"
+      GUNICORN_BIND: "0.0.0.0:8000"
+    volumes:
+      # 上传的图片必须落在宿主机上，否则重建容器就丢
+      - ./backend/media:/app/media
+      - ./backend/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 前端产物（先 npm run build-only / npm run build 生成）
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./mobile/dist:/usr/share/nginx/html-mobile:ro
+      # 媒体文件由 Nginx 直接发（比 Django 发高效得多）
+      - ./backend/media:/var/www/media:ro
+
+# ── 想换成 PostgreSQL ───────────────────────────────────────────────────────
+# 1) 取消下面注释，并把 psycopg[binary] 加进 backend/requirements-prod.txt
+# 2) 在 backend/.env 里设置：
+#      DJANGO_DB_ENGINE=postgres
+#      DJANGO_DB_NAME=cropdb
+#      DJANGO_DB_USER=crop
+#      DJANGO_DB_PASSWORD=<强密码>
+#      DJANGO_DB_HOST=db
+#      DJANGO_DB_PORT=5432
+#    （若 settings.py 还没读这些变量，请先在它里面接上 —— 目前它只支持 sqlite。）
+# 3) docker compose up -d
+#
+#  db:
+#    image: postgres:16-alpine
+#    restart: unless-stopped
+#    environment:
+#      POSTGRES_DB: cropdb
+#      POSTGRES_USER: crop
+#      POSTGRES_PASSWORD: change-me
+#    volumes:
+#      - pgdata:/var/lib/postgresql/data
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U crop -d cropdb"]
+#      interval: 10s
+#      retries: 5
+#
+# volumes:
+#   pgdata:

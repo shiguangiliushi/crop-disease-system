@@ -1,0 +1,26 @@
+/*
+ * 全局入口样式（第 73 批整理）
+ * ------------------------------------------------------------------
+ * 说明：原来这里 `@import './base.css'` 引入的是 Vue 脚手架自带的调色板，
+ * 它会在 `prefers-color-scheme: dark` 下把 body 背景改成深色，也会用
+ * Inter/15px 覆盖全站字体，与 assets/theme.css 的令牌体系互相打架。
+ * 主题相关的一切现在统一由 theme.css + bootstrap-theme.css 负责，
+ * 所以这里不再引入 base.css（文件保留但已停用，见 assets/base.css 顶部说明）。
+ */
+
+#app {
+  margin: 0 auto;
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: var(--brand-600, #2a7f53);
+  transition: color var(--dur, 0.24s) var(--ease, ease);
+}
+
+@media (hover: hover) {
+  a:hover {
+    color: var(--brand-700, #1f6343);
+  }
+}

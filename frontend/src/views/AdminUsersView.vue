@@ -1,0 +1,1046 @@
+<template>
+  <div class="admin-users tinted-page">
+    <!-- 返回入口（第 87 批：本页只能从顶栏「管理」下拉进来，此前没有返回按钮） -->
+    <BackButton />
+
+    <!-- 页头（沿用全站 .admin-hero：深绿实底 + 白色文字） -->
+    <header class="admin-hero">
+      <div class="admin-hero-main">
+        <span class="admin-hero-icon"><i class="fas fa-users-gear"></i></span>
+        <div>
+          <h1>{{ t('adminUsers.title') }}</h1>
+          <p>{{ t('adminUsers.subtitle') }}</p>
+        </div>
+      </div>
+      <div class="admin-hero-actions">
+        <el-button plain :loading="loading" @click="reload">
+          <i class="fas fa-sync-alt"></i> {{ t('adminUsers.refresh') }}
+        </el-button>
+      </div>
+    </header>
+
+    <!-- 概览小卡 -->
+    <div class="admin-stats">
+      <div class="stat-tile">
+        <span class="stat-tile-icon"><i class="fas fa-users"></i></span>
+        <div>
+          <div class="stat-tile-value">{{ stats.total }}</div>
+          <div class="stat-tile-label">{{ t('adminUsers.statTotal') }}</div>
+        </div>
+      </div>
+      <div class="stat-tile stat-tile--processing">
+        <span class="stat-tile-icon"><i class="fas fa-user-shield"></i></span>
+        <div>
+          <div class="stat-tile-value">{{ stats.staff }}</div>
+          <div class="stat-tile-label">{{ t('adminUsers.statStaff') }}</div>
+        </div>
+      </div>
+      <div class="stat-tile stat-tile--ok">
+        <span class="stat-tile-icon"><i class="fas fa-user-tie"></i></span>
+        <div>
+          <div class="stat-tile-value">{{ stats.expert }}</div>
+          <div class="stat-tile-label">{{ t('adminUsers.statExpert') }}</div>
+        </div>
+      </div>
+      <div class="stat-tile stat-tile--pending">
+        <span class="stat-tile-icon"><i class="fas fa-user"></i></span>
+        <div>
+          <div class="stat-tile-value">{{ stats.normal }}</div>
+          <div class="stat-tile-label">{{ t('adminUsers.statNormal') }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 筛选 -->
+    <div class="filter-bar">
+      <!-- 第 88 批：两个下拉都补 @clear。
+           Element Plus 的 el-select 清除时是 `emitChange(value)` → `emit('clear')`，
+           而 emitChange 带 `isEqual(props.modelValue, val)` 守卫（useSelect.mjs 的
+           deleteSelected / emitChange）—— 这次 change 一旦被挡掉，只挂在 @change 上的
+           筛选就不会重查，列表停在原来的筛选结果里：用户看到的就是
+           "选了角色只能看当前的，清不掉、看不到全部"。`clear` 是无条件发出的，
+           挂它才能保证"清掉角色 → 回到全部用户"。 -->
+      <el-select
+        v-model="filters.role"
+        :placeholder="t('adminUsers.roleFilter')"
+        clearable
+        style="width: 150px"
+        @change="applyFilter"
+        @clear="handleClear"
+      >
+        <el-option :label="t('adminUsers.roleAdmin')" value="ADMIN" />
+        <el-option :label="t('adminUsers.roleEditor')" value="EDITOR" />
+        <el-option :label="t('adminUsers.roleUser')" value="USER" />
+      </el-select>
+      <el-select
+        v-model="filters.status"
+        :placeholder="t('adminUsers.statusFilter')"
+        clearable
+        style="width: 150px"
+        @change="applyFilter"
+        @clear="handleClear"
+      >
+        <el-option :label="t('adminUsers.statusActive')" value="active" />
+        <el-option :label="t('adminUsers.statusDisabled')" value="disabled" />
+        <el-option :label="t('adminUsers.statusExpert')" value="expert" />
+        <el-option :label="t('adminUsers.statusStaff')" value="staff" />
+      </el-select>
+      <el-input
+        v-model="filters.search"
+        :placeholder="t('adminUsers.searchPlaceholder')"
+        clearable
+        style="width: 260px"
+        @clear="applyFilter"
+        @keyup.enter="applyFilter"
+      >
+        <template #prefix><i class="fas fa-search"></i></template>
+        <template #append>
+          <el-button @click="applyFilter"><i class="fas fa-search"></i></el-button>
+        </template>
+      </el-input>
+      <!-- 第 88 批：一键回到"全部用户"（三个筛选条件都清掉） -->
+      <el-button plain :disabled="!hasFilter" @click="resetFilters">
+        <i class="fas fa-rotate-left"></i> {{ t('adminUsers.resetFilters') }}
+      </el-button>
+      <span class="total-hint">{{ t('adminUsers.totalHint', { count: total }) }}</span>
+    </div>
+
+    <!-- 列表 -->
+    <div class="panel-head list-panel-head">
+      <span class="panel-icon"><i class="fas fa-address-book"></i></span>
+      <h3 class="panel-title">{{ t('adminUsers.listTitle') }}</h3>
+      <span class="panel-count">{{ total }}</span>
+      <div class="panel-head-right">
+        <!--
+          第 100 批：批量操作条
+          ------------------------------------------------------------------
+          只在有选中行时出现 —— 平时不占位置。删除是最需要批量的操作：
+          "清理一批测试账号"以前要点 N 次删除、输 N 次用户名。
+        -->
+        <template v-if="selectedRows.length">
+          <span class="selection-hint">{{ t('adminUsers.selectedCount', { count: selectedRows.length }) }}</span>
+          <el-button size="small" type="danger" plain @click="openBulkDelete">
+            <i class="fas fa-trash"></i> {{ t('adminUsers.bulkDeleteAction') }}
+          </el-button>
+          <el-button size="small" text @click="clearSelection">{{ t('adminUsers.clearSelection') }}</el-button>
+        </template>
+        <span v-else class="panel-hint">{{ t('adminUsers.listHint') }}</span>
+      </div>
+    </div>
+
+    <!--
+      ⚠️ 排序要交给**后端**（`sortable="custom"` + `@sort-change`），不要用 el-table 自带的
+      前端排序：表格里只有当前这一页的 10 行，前端排序会让人以为"全库最大的在前"，
+      实际只是"这 10 条里最大的在前" —— 属于会误导决策的那种错。
+    -->
+    <el-table
+      ref="userTableRef"
+      v-loading="loading"
+      :data="items"
+      style="width: 100%"
+      row-key="id"
+      @selection-change="onSelectionChange"
+      @sort-change="onSortChange"
+    >
+      <el-table-column type="selection" width="46" :selectable="isRowSelectable" />
+      <el-table-column :label="t('adminUsers.colUser')" min-width="240" prop="username" sortable="custom">
+        <template #default="{ row }">
+          <div class="user-cell">
+            <el-avatar :size="34" :src="row.avatar || undefined">
+              {{ row.username?.[0]?.toUpperCase() }}
+            </el-avatar>
+            <div class="user-cell-text">
+              <span class="user-name">{{ row.username }}</span>
+              <span class="user-email">{{ row.email || t('adminUsers.noEmail') }}</span>
+            </div>
+          </div>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('adminUsers.colRole')" width="120">
+        <template #default="{ row }">
+          <el-tag size="small" effect="plain" :type="roleTagType(row)">{{ roleLabel(row) }}</el-tag>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('adminUsers.colStatus')" width="200">
+        <template #default="{ row }">
+          <el-tag size="small" :type="statusTagType(row)" effect="light">{{ statusLabel(row) }}</el-tag>
+          <el-tag v-if="row.is_expert" size="small" type="success" effect="dark" class="expert-tag">
+            <i class="fas fa-user-tie"></i> {{ row.expert_title || t('adminUsers.statusExpert') }}
+          </el-tag>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('adminUsers.colActivity')" width="190" prop="detections" sortable="custom">
+        <template #default="{ row }">
+          <span class="activity-text">
+            {{ t('adminUsers.activitySummary', {
+              posts: row.post_count, comments: row.comment_count, detections: row.detection_count,
+            }) }}
+          </span>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('adminUsers.colJoined')" width="160" prop="date_joined" sortable="custom">
+        <template #default="{ row }">{{ formatTime(row.date_joined, 'YYYY-MM-DD HH:mm') }}</template>
+      </el-table-column>
+
+      <el-table-column :label="t('adminUsers.colLastLogin')" width="160" prop="last_login" sortable="custom">
+        <template #default="{ row }">
+          <span v-if="row.last_login">{{ formatTime(row.last_login, 'YYYY-MM-DD HH:mm') }}</span>
+          <span v-else class="muted">{{ t('adminUsers.neverLoggedIn') }}</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('adminUsers.colActions')" width="290" fixed="right">
+        <template #default="{ row }">
+          <el-button size="small" type="primary" link @click="openDetail(row)">
+            {{ t('adminUsers.detailAction') }}
+          </el-button>
+          <el-button v-if="!row.is_expert" size="small" type="success" link @click="openGrant(row)">
+            {{ t('adminUsers.grantAction') }}
+          </el-button>
+          <el-button v-else size="small" type="danger" link @click="doRevoke(row)">
+            {{ t('adminUsers.revokeAction') }}
+          </el-button>
+          <!-- 第 95 批：删除用户（软删除）。护栏在后端，这里只负责"别让人误点"。 -->
+          <el-button
+            size="small"
+            type="danger"
+            link
+            :disabled="!canDelete(row)"
+            :title="deleteBlockedReason(row)"
+            @click="openDelete(row)"
+          >
+            {{ t('adminUsers.deleteAction') }}
+          </el-button>
+        </template>
+      </el-table-column>
+
+      <template #empty>
+        <div class="table-empty">
+          <i class="fas fa-inbox"></i>
+          <p>{{ t('adminUsers.empty') }}</p>
+        </div>
+      </template>
+    </el-table>
+
+    <div class="pagination-wrap">
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        :total="total"
+        background
+        @size-change="handleSizeChange"
+        @current-change="loadList"
+      />
+    </div>
+
+    <!-- 用户详情 -->
+    <el-dialog v-model="detailVisible" :title="t('adminUsers.detailTitle')" width="640px" top="8vh">
+      <el-skeleton v-if="detailLoading" :rows="6" animated />
+      <template v-else-if="detail">
+        <div class="detail-head">
+          <el-avatar :size="52" :src="detail.avatar || undefined">
+            {{ detail.username?.[0]?.toUpperCase() }}
+          </el-avatar>
+          <div>
+            <strong class="detail-name">{{ detail.username }}</strong>
+            <div class="detail-tags">
+              <el-tag size="small" effect="plain" :type="roleTagType(detail)">{{ roleLabel(detail) }}</el-tag>
+              <el-tag size="small" :type="statusTagType(detail)" effect="light">{{ statusLabel(detail) }}</el-tag>
+              <el-tag v-if="detail.is_expert" size="small" type="success" effect="dark">
+                <i class="fas fa-user-tie"></i> {{ detail.expert_title || t('adminUsers.statusExpert') }}
+              </el-tag>
+            </div>
+          </div>
+        </div>
+
+        <h4 class="detail-section">{{ t('adminUsers.basicInfo') }}</h4>
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item :label="t('adminUsers.fieldId')">{{ detail.id }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldUsername')">{{ detail.username }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldEmail')">{{ detail.email || t('adminUsers.noEmail') }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldName')">{{ fullName(detail) || '—' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldPoints')">{{ detail.points }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldJoined')">{{ formatTime(detail.date_joined, 'YYYY-MM-DD HH:mm') }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldLastLogin')" :span="2">
+            {{ detail.last_login ? formatTime(detail.last_login, 'YYYY-MM-DD HH:mm') : t('adminUsers.neverLoggedIn') }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <h4 class="detail-section">{{ t('adminUsers.expertInfo') }}</h4>
+        <p v-if="!detail.is_expert" class="muted">{{ t('adminUsers.notExpert') }}</p>
+        <el-descriptions v-else :column="2" border size="small">
+          <el-descriptions-item :label="t('adminUsers.fieldExpertTitle')">
+            {{ detail.expert_title || t('adminUsers.statusExpert') }}
+          </el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldExpertGrantedAt')">
+            {{ formatTime(detail.expert_granted_at, 'YYYY-MM-DD HH:mm') || '—' }}
+          </el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldExpertSpecialties')" :span="2">
+            {{ detail.expert_specialties?.length ? detail.expert_specialties.join('、') : '—' }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <h4 class="detail-section">{{ t('adminUsers.activityInfo') }}</h4>
+        <el-descriptions :column="3" border size="small">
+          <el-descriptions-item :label="t('adminUsers.fieldPosts')">{{ detail.post_count }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldComments')">{{ detail.comment_count }}</el-descriptions-item>
+          <el-descriptions-item :label="t('adminUsers.fieldDetections')">{{ detail.detection_count }}</el-descriptions-item>
+        </el-descriptions>
+      </template>
+      <template #footer>
+        <el-button @click="detailVisible = false">{{ t('adminUsers.close') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 授予专家 -->
+    <el-dialog v-model="grantVisible" :title="t('adminUsers.grantDialogTitle')" width="480px" :close-on-click-modal="false">
+      <el-form label-position="top">
+        <el-form-item :label="t('adminUsers.grantTarget')">
+          <el-input :model-value="grantTarget?.username" disabled />
+        </el-form-item>
+        <el-form-item :label="t('adminUsers.grantTitleLabel')">
+          <el-input v-model="grantForm.title" maxlength="80" :placeholder="t('adminUsers.grantPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('adminUsers.grantSpecialtiesLabel')">
+          <el-input
+            v-model="grantForm.specialties"
+            maxlength="200"
+            :placeholder="t('adminUsers.grantSpecialtiesPlaceholder')"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="grantVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="granting" @click="submitGrant">{{ t('adminUsers.grantSubmit') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!--
+      删除用户（第 95 批）
+      ------------------------------------------------------------------
+      为什么要求"手打一遍用户名"而不是普通的"确定/取消"：
+      这是不可逆操作中最容易被点错的一个 —— 表格里每行都有按钮、旁边就是"取消专家"，
+      弹窗一多就容易条件反射点确定。要求输入用户名能让操作者**确认自己点的是哪一行**。
+      （服务端也要求同一个 confirm 字段，前端弹窗只是第一道。）
+    -->
+    <el-dialog
+      v-model="deleteVisible"
+      :title="t('adminUsers.deleteDialogTitle')"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <el-alert type="warning" :closable="false" show-icon class="delete-warning">
+        <p>{{ t('adminUsers.deleteWarning') }}</p>
+        <p class="delete-warning-sub">{{ t('adminUsers.deleteKeepsContent') }}</p>
+      </el-alert>
+
+      <el-descriptions :column="2" border size="small" class="delete-target">
+        <el-descriptions-item :label="t('adminUsers.fieldUsername')">
+          {{ deleteTarget?.username }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('adminUsers.colRole')">
+          {{ roleLabel(deleteTarget) }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('adminUsers.fieldPosts')">
+          {{ deleteTarget?.post_count }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('adminUsers.fieldComments')">
+          {{ deleteTarget?.comment_count }}
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <el-form label-position="top" class="delete-form">
+        <el-form-item :label="t('adminUsers.deleteConfirmLabel', { name: deleteTarget?.username || '' })">
+          <el-input
+            v-model="deleteConfirmText"
+            :placeholder="deleteTarget?.username || ''"
+            autocomplete="off"
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="deleteVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="danger"
+          :loading="deleting"
+          :disabled="deleteConfirmText.trim() !== (deleteTarget?.username || '')"
+          @click="confirmDelete"
+        >
+          {{ t('adminUsers.deleteConfirmAction') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!--
+      批量删除用户（第 100 批）
+      ------------------------------------------------------------------
+      为什么批量删除**不要求逐行输入用户名**（单条删除要求）：一次选 10 个还要打 10 遍
+      名字，等于把批量入口做成不可用。改成"列出要删的用户名 + 输入固定词确认"——
+      让人能核对清单，又不至于点到手软。
+      真正的护栏仍然在后端：不能删自己、不能删超管、非超管不能删管理员，
+      而且**逐条**执行（部分失败会如实报告，不会"以为都删了"）。
+    -->
+    <el-dialog
+      v-model="bulkDeleteVisible"
+      :title="t('adminUsers.bulkDeleteTitle')"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <el-alert type="warning" :closable="false" show-icon class="delete-warning">
+        <p>{{ t('adminUsers.deleteWarning') }}</p>
+        <p class="delete-warning-sub">{{ t('adminUsers.deleteKeepsContent') }}</p>
+      </el-alert>
+
+      <p class="bulk-list-title">
+        {{ t('adminUsers.bulkDeleteList', { count: deletableSelected.length }) }}
+      </p>
+      <ul class="bulk-list">
+        <li v-for="row in deletableSelected" :key="row.id">
+          <span class="user-name">{{ row.username }}</span>
+          <span class="muted">{{ roleLabel(row) }}</span>
+        </li>
+      </ul>
+
+      <el-alert
+        v-if="blockedSelected.length"
+        type="info"
+        :closable="false"
+        show-icon
+        class="bulk-blocked"
+        :title="t('adminUsers.bulkDeleteSkipped', { count: blockedSelected.length })"
+        :description="blockedSelected.map((r) => `${r.username}：${deleteBlockedReason(r)}`).join('；')"
+      />
+
+      <el-form label-position="top" class="delete-form">
+        <el-form-item :label="t('adminUsers.bulkDeleteConfirmLabel', { word: bulkDeleteWord })">
+          <el-input v-model="bulkDeleteConfirmText" :placeholder="bulkDeleteWord" autocomplete="off" />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="bulkDeleteVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="danger"
+          :loading="bulkDeleting"
+          :disabled="!deletableSelected.length || bulkDeleteConfirmText.trim() !== bulkDeleteWord"
+          @click="confirmBulkDelete"
+        >
+          {{ t('adminUsers.bulkDeleteConfirmAction', { count: deletableSelected.length }) }}
+        </el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script>
+/**
+ * 管理端「用户管理」（第 76 批新增）
+ * ------------------------------------------------------------------
+ * 背景：管理板块此前只有 新闻 / 意见反馈 / 内容审核 / 数据看板，
+ * **没有用户管理** —— 管理员想看"平台上有哪些用户、谁是专家、谁多久没登录过"
+ * 只能进 Django 自带的 /admin/（不在产品导航里，权限口径也不一致）。
+ *
+ * 本页只做**读** + 专家授予/取消：
+ *   · 禁用账号 / 改角色 / 删除用户 属于不可逆或提权操作，本次明确不做；
+ *   · 列表/详情走新增的 /api/admin/users/（只读）；
+ *   · 授予与取消**复用**专家咨询域的现成接口（@/api/consult 的
+ *     grantExpert / revokeExpert），不另造一套专家管理接口。
+ *
+ * 为什么不复用 /api/users/：那个接口用的是 UserProfileSerializer（面向"资料页"），
+ * 不含角色中文名、专家身份、活跃度等管理端字段，且被"授予专家"的用户搜索复用，
+ * 改它的返回结构会牵连咨询页。所以另开 /api/admin/users/。
+ */
+import { computed, ref, watch } from 'vue';import { ElMessage, ElMessageBox } from 'element-plus';
+import { bulkDeleteAdminUsers, deleteAdminUser, fetchAdminUser, fetchAdminUsers } from '@/api/adminUser';
+import { grantExpert, revokeExpert } from '@/api/consult';
+import { formatApiError } from '@/api/http';
+import { formatTime } from '@/utils/date';
+import { useAuthStore } from '@/stores/auth';  // 第 95 批：判断"这行是不是我自己"
+import { useI18n } from '@/i18n';
+import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
+import { useQueryState } from '@/composables/useQueryState';  // 第 98 批：筛选/分页进 URL
+
+export default {
+  name: 'AdminUsersView',
+  components: { BackButton },  // 第 87 批：返回按钮
+  setup() {
+    const { t } = useI18n();
+    const authStore = useAuthStore();  // 第 95 批
+    const currentUserId = computed(() => authStore.user?.id ?? null);
+    const currentIsSuperuser = computed(() => Boolean(authStore.user?.is_superuser));
+
+    const loading = ref(false);
+    const items = ref([]);
+    const total = ref(0);
+    const page = ref(1);
+    // 第 89 批：默认每页条数与意见反馈管理页对齐（原来 20，两页一个 10 一个 20，观感不一致）
+    const pageSize = ref(10);
+    const filters = ref({ search: '', role: '', status: '' });
+    const stats = ref({ total: 0, staff: 0, expert: 0, normal: 0 });
+    /** 第 100 批：后端排序（`?ordering=`），空串 = 默认按注册时间倒序 */
+    const ordering = ref('');
+
+    const detailVisible = ref(false);
+    const detailLoading = ref(false);
+    const detail = ref(null);
+
+    const grantVisible = ref(false);
+    const granting = ref(false);
+    const grantTarget = ref(null);
+    const grantForm = ref({ title: '', specialties: '' });
+
+    // -- 删除用户（第 95 批）--------------------------------------------
+    const deleteVisible = ref(false);
+    const deleting = ref(false);
+    const deleteTarget = ref(null);
+    const deleteConfirmText = ref('');
+
+    /**
+     * 这行能不能删 —— **前端只负责"少让人白点一次"**，真正的护栏在后端：
+     * 不能删自己、不能删超级管理员、非超管不能删其他管理员。
+     * 这里做同样的判断并把原因写进 title，用户不用点了才知道。
+     */
+    const deleteBlockedReason = (row) => {
+      if (!row) return '';
+      if (row.id === currentUserId.value) return t('adminUsers.deleteBlockedSelf');
+      if (row.is_superuser) return t('adminUsers.deleteBlockedSuperuser');
+      if ((row.is_staff || row.role === 'ADMIN') && !currentIsSuperuser.value) {
+        return t('adminUsers.deleteBlockedAdmin');
+      }
+      return '';
+    };
+
+    const canDelete = (row) => deleteBlockedReason(row) === '';
+
+    const openDelete = (row) => {
+      deleteTarget.value = row;
+      deleteConfirmText.value = '';
+      deleteVisible.value = true;
+    };
+
+    const confirmDelete = async () => {
+      if (!deleteTarget.value) return;
+      const row = deleteTarget.value;
+      deleting.value = true;
+      try {
+        await deleteAdminUser(row.id, deleteConfirmText.value.trim());
+        ElMessage.success(t('adminUsers.deleteOk', { name: row.username }));
+        deleteVisible.value = false;
+        // 删掉的可能是本页最后一条 → 与反馈管理页同一处理，避免停在空白页
+        if (items.value.length === 1 && page.value > 1) page.value -= 1;
+        await reload();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.deleteFailed')));
+      } finally {
+        deleting.value = false;
+      }
+    };
+
+    // ======================================================================
+    // 第 100 批：批量删除 + 后端排序
+    // ======================================================================
+    const userTableRef = ref(null);
+    const selectedRows = ref([]);
+    const bulkDeleteVisible = ref(false);
+    const bulkDeleting = ref(false);
+    const bulkDeleteConfirmText = ref('');
+    /** 批量删除要求输入的确认词（与单条删除"输入用户名"同一个思路，只是不必逐行打） */
+    const bulkDeleteWord = 'DELETE';
+
+    const onSelectionChange = (rows) => {
+      selectedRows.value = rows || [];
+    };
+
+    /** 不可删的行不让勾选 —— 与其勾完再被拒，不如一开始就点不动（原因在按钮 title 里） */
+    const isRowSelectable = (row) => canDelete(row);
+
+    const clearSelection = () => {
+      userTableRef.value?.clearSelection?.();
+      selectedRows.value = [];
+    };
+
+    /** 选中的行里**真正可删**的（护栏与后端一致：见 deleteBlockedReason） */
+    const deletableSelected = computed(() => selectedRows.value.filter((row) => canDelete(row)));
+    const blockedSelected = computed(() => selectedRows.value.filter((row) => !canDelete(row)));
+
+    const openBulkDelete = () => {
+      bulkDeleteConfirmText.value = '';
+      bulkDeleteVisible.value = true;
+    };
+
+    const confirmBulkDelete = async () => {
+      const rows = deletableSelected.value;
+      if (!rows.length) return;
+      bulkDeleting.value = true;
+      try {
+        const result = await bulkDeleteAdminUsers(rows.map((row) => row.id));
+        const succeeded = result?.succeeded ?? 0;
+        const failed = result?.failed ?? 0;
+        if (failed > 0) {
+          // 有失败就**说清楚哪几条为什么失败** —— 只说"部分失败"等于没说
+          const reasons = (result?.results || [])
+            .filter((item) => !item.ok)
+            .map((item) => {
+              const row = rows.find((r) => r.id === item.id);
+              return `${row?.username || item.id}：${item.detail}`;
+            })
+            .join('；');
+          ElMessage.warning(t('adminUsers.bulkDeletePartial', { ok: succeeded, failed }) + reasons);
+        } else {
+          ElMessage.success(t('adminUsers.bulkDeleteOk', { count: succeeded }));
+        }
+        bulkDeleteVisible.value = false;
+        clearSelection();
+        // 整页都被删掉时退回上一页（否则停在空白页）
+        if (succeeded >= items.value.length && page.value > 1) page.value -= 1;
+        await reload();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.deleteFailed')));
+      } finally {
+        bulkDeleting.value = false;
+      }
+    };
+
+    /**
+     * 表头排序 → 交给后端（`sortable="custom"`）
+     *
+     * ⚠️ 三个坑都踩过（第 100 批）：
+     *  1. 一定要**回到第 1 页**：排序换了之后原页码可能越界，后端对越界页返回 404，页面空白；
+     *  2. `ordering` 必须登记进 `useQueryState`，否则后端收不到参数、地址栏也不变
+     *     （表现：点了表头没反应）；
+     *  3. **el-table 记不住 `sortable="custom"` 的排序状态**：数据一旦被后端重排后整体替换，
+     *     它的内部排序状态就没了，于是第二次点同一列拿到的是 `null`（"取消排序"），
+     *     而不是"切到升序"。试过用 `:default-sort` 把状态喂回去，实测**无效**（仍是 descending→null）。
+     *     最终改为**自己维护三态循环**：拿到 el-table 的原始意图后，按"降序 → 升序 → 取消"
+     *     推进（以我们自己记住的 `ordering` 为准，不依赖组件的内部状态）。
+     */
+    const onSortChange = ({ prop, order }) => {
+      const next = order ? `${order === 'descending' ? '-' : ''}${prop}` : '';
+      // 以"当前 ordering"推下一步；这正是"不依赖 el-table 记忆"的关键
+      let target;
+      if (!ordering.value) {
+        target = `-${prop}`;                       // 未排序 → 降序（与 el-table 的首次行为一致）
+      } else if (ordering.value === `-${prop}`) {
+        target = prop;                             // 降序 → 升序
+      } else if (ordering.value === prop) {
+        target = '';                               // 升序 → 取消排序
+      } else {
+        target = next || `-${prop}`;               // 换了另一列：从降序开始
+      }
+
+      console.debug('[admin-users] 表头排序:', prop, order, '=>', target || '(默认)');
+      ordering.value = target;
+      page.value = 1;
+      loadList();
+    };
+
+    // -- 展示映射（角色的中文名由前端给，切语言时才跟着变） ----------------
+    const roleLabel = (row) => ({
+      ADMIN: t('adminUsers.roleAdmin'),
+      EDITOR: t('adminUsers.roleEditor'),
+      USER: t('adminUsers.roleUser'),
+    }[row?.role] || row?.role || '');
+
+    const roleTagType = (row) => ({
+      ADMIN: 'danger',
+      EDITOR: 'warning',
+      USER: 'info',
+    }[row?.role] || 'info');
+
+    // 「账号状态」只表达可用性；管理员/专家身份各有独立标签，避免一个格子塞三种含义
+    const statusTagType = (row) => (row?.is_active === false ? 'danger' : 'success');
+
+    const statusLabel = (row) =>
+      row?.is_active === false ? t('adminUsers.statusDisabled') : t('adminUsers.statusActive');
+
+    const fullName = (row) => [row?.last_name, row?.first_name].filter(Boolean).join(' ').trim();
+
+    // -- 数据加载 ---------------------------------------------------------
+    const buildParams = () => {
+      const params = { page: page.value, page_size: pageSize.value };
+      if (filters.value.search.trim()) params.search = filters.value.search.trim();
+      if (filters.value.role) params.role = filters.value.role;
+      if (filters.value.status) params.status = filters.value.status;
+      // 第 100 批：排序交后端（白名单字段，后端会忽略非法值）
+      if (ordering.value) params.ordering = ordering.value;
+      return params;
+    };
+
+    const loadList = async () => {
+      loading.value = true;
+      try {
+        const data = await fetchAdminUsers(buildParams());
+        items.value = data.results || [];
+        total.value = data.count || 0;
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.loadFailed')));
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    // 概览小卡：各用一次 page_size=1 的请求只取 count（与反馈管理页同一套路）
+    const loadStats = async () => {
+      try {
+        const [all, staff, expert, normal] = await Promise.all([
+          fetchAdminUsers({ page: 1, page_size: 1 }),
+          fetchAdminUsers({ page: 1, page_size: 1, status: 'staff' }),
+          fetchAdminUsers({ page: 1, page_size: 1, status: 'expert' }),
+          fetchAdminUsers({ page: 1, page_size: 1, role: 'USER' }),
+        ]);
+        stats.value = {
+          total: all?.count || 0,
+          staff: staff?.count || 0,
+          expert: expert?.count || 0,
+          normal: normal?.count || 0,
+        };
+      } catch (error) {
+        console.warn('获取用户统计失败:', error);
+      }
+    };
+
+    const reload = async () => {
+      await Promise.all([loadList(), loadStats()]);
+    };
+
+    // ========================================================================
+    // 第 98 批：筛选与分页写进 URL
+    // ------------------------------------------------------------------------
+    // 此前只存在组件内存里 → 刷新即重置、后退丢条件、也没法把"这一页结果"分享出去。
+    // 用 `filters.value.xxx` 作为 ref 传入：对象属性本身不是 ref，包一层 getter/setter
+    // 让 useQueryState 能读能写，同时保持模板里 `filters.search` 的写法不变。
+    // ========================================================================
+    const filterRef = (key) => ({
+      get value() { return filters.value[key]; },
+      set value(next) { filters.value[key] = next ?? ''; },
+    });
+
+    const { isReady: queryReady } = useQueryState({
+      fields: {
+        page: { ref: page, type: 'int', default: 1 },
+        page_size: { ref: pageSize, type: 'int', default: 10 },
+        search: { ref: filterRef('search'), type: 'string', default: '' },
+        role: { ref: filterRef('role'), type: 'string', default: '' },
+        status: { ref: filterRef('status'), type: 'string', default: '' },
+        // ⚠️ 排序也必须登记进来（第 100 批的坑）：`tableSortOrdering` 自己改了 ref，
+        // 但没告诉 useQueryState，于是**后端收不到 ordering、地址栏也不变** ——
+        // 表现是"点了表头没反应"。实测诊断日志里 onSortChange 已经算出
+        // `date_joined descending`，URL 却还是 null。
+        ordering: { ref: ordering, type: 'string', default: '' },
+      },
+      // URL 变（后退/前进/别人发来的链接）→ 重新查一次
+      onExternalChange: () => reload(),
+    });
+
+    /**
+     * 改筛选条件：**回到第 1 页**再查。
+     * 不重置页码会出现"在第 5 页筛出 3 条、页面空白"（后端分页对越界页返回 404）。
+     */
+    const applyFilter = () => {
+      page.value = 1;
+      loadList();
+    };
+
+    /**
+     * 点下拉的清除图标（第 88 批）
+     *
+     * el-select 清除时走 deleteSelected()：`emitChange(value)` 之后才 `emit('clear')`，
+     * 而 emitChange 内部有一道 `if (!isEqual(props.modelValue, val))` 守卫
+     * （element-plus/es/components/select/src/useSelect.mjs）—— 清除的意图是明确的，
+     * 却要先比一遍"值有没有变"才决定通不通知页面。
+     *
+     * 所以筛选不能只挂在 @change 上：一旦那次 change 被守卫挡掉，列表就停在原来的
+     * 筛选结果里，用户看到的就是"选了角色只能看当前的，清不掉、看不到全部"。
+     * `clear` 是无条件发出的，挂它最稳（即便 change 也发了，最坏只是多查一次，幂等）。
+     */
+    const handleClear = () => applyFilter();
+
+    const hasFilter = computed(() =>
+      Boolean(filters.value.role || filters.value.status || filters.value.search.trim()),
+    );
+
+    /** 一键回到全部用户：把三个条件一起清掉再查 */
+    const resetFilters = () => {
+      filters.value = { search: '', role: '', status: '' };
+      applyFilter();
+    };
+
+    /**
+     * 改每页条数时回到第 1 页。
+     * 否则"在第 5 页把每页条数改成 50"会让 page 越界，后端分页直接 404（页面空白）。
+     */
+    const handleSizeChange = () => {
+      page.value = 1;
+      loadList();
+    };
+
+    // -- 详情 -------------------------------------------------------------
+    const openDetail = async (row) => {
+      detailVisible.value = true;
+      detailLoading.value = true;
+      detail.value = null;
+      try {
+        detail.value = await fetchAdminUser(row.id);
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.detailFailed')));
+        detailVisible.value = false;
+      } finally {
+        detailLoading.value = false;
+      }
+    };
+
+    // -- 授予 / 取消专家 ---------------------------------------------------
+    const openGrant = (row) => {
+      grantTarget.value = row;
+      grantForm.value = { title: row.expert_title || '', specialties: (row.expert_specialties || []).join(',') };
+      grantVisible.value = true;
+    };
+
+    const submitGrant = async () => {
+      if (!grantTarget.value) return;
+      granting.value = true;
+      try {
+        await grantExpert(grantTarget.value.id, {
+          title: grantForm.value.title.trim(),
+          specialties: grantForm.value.specialties.trim(),
+        });
+        ElMessage.success(t('adminUsers.grantedOk'));
+        grantVisible.value = false;
+        await reload();
+        if (detail.value?.id === grantTarget.value.id) {
+          detail.value = await fetchAdminUser(grantTarget.value.id);
+        }
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.grantFailed')));
+      } finally {
+        granting.value = false;
+      }
+    };
+
+    const doRevoke = async (row) => {
+      try {
+        await ElMessageBox.confirm(
+          t('adminUsers.revokeConfirm', { name: row.username }),
+          t('adminUsers.revokeAction'),
+          { type: 'warning', confirmButtonText: t('adminUsers.revokeAction'), cancelButtonText: t('common.cancel') },
+        );
+      } catch {
+        return; // 用户点了取消
+      }
+      try {
+        await revokeExpert(row.id);
+        ElMessage.success(t('adminUsers.revokeOk'));
+        await reload();
+        if (detail.value?.id === row.id) {
+          detail.value = await fetchAdminUser(row.id);
+        }
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.revokeFailed')));
+      }
+    };
+
+    // 第 98 批：等 URL 参数应用完再加载（否则"带参数打开链接"会先用默认值查一次，
+    // 再用链接里的条件查第二次 —— 两次请求、还会闪一下）
+    watch(queryReady, (ready) => {
+      if (ready) reload();
+    }, { immediate: true });
+    // 注意：不再用 onMounted(reload)，由上面的 watch 统一负责（避免重复加载）
+
+    return {
+      t,
+      loading, items, total, page, pageSize, filters, stats,
+      detailVisible, detailLoading, detail,
+      grantVisible, granting, grantTarget, grantForm,
+      roleLabel, roleTagType, statusLabel, statusTagType, fullName, formatTime,
+      reload, loadList, applyFilter, handleSizeChange, openDetail, openGrant, submitGrant, doRevoke,
+      // 第 88 批：清除筛选 / 一键回到全部用户
+      handleClear, hasFilter, resetFilters,
+      // 第 95 批：删除用户
+      deleteVisible, deleting, deleteTarget, deleteConfirmText,
+      canDelete, deleteBlockedReason, openDelete, confirmDelete,
+      // 第 100 批：批量删除 + 后端排序
+      userTableRef, selectedRows, onSelectionChange, isRowSelectable, clearSelection,
+      bulkDeleteVisible, bulkDeleting, bulkDeleteConfirmText, bulkDeleteWord,
+      deletableSelected, blockedSelected, openBulkDelete, confirmBulkDelete,
+      onSortChange,
+    };
+  },
+};
+</script>
+
+<style scoped>
+/* 第 89 批：返回按钮紧贴左边缘，和下面的深绿页头留出间距 */
+.admin-users > .back-button {
+  margin-bottom: 12px;
+}
+
+/* 第 95 批：删除用户弹窗里的提示与目标信息 */
+.delete-warning {
+  margin-bottom: 14px;
+}
+
+.delete-warning p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.delete-warning-sub {
+  margin-top: 6px;
+  font-size: 12.5px;
+  opacity: 0.85;
+}
+
+.delete-target {
+  margin-bottom: 14px;
+}
+
+.delete-form {
+  margin-top: 4px;
+}
+
+/* 第 100 批：批量删除弹窗里的清单 */
+.bulk-list-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-800, #24352c);
+}
+
+.bulk-list {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #e2ebe5);
+  border-radius: 8px;
+}
+
+.bulk-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border, #e2ebe5);
+}
+
+.bulk-list li:last-child {
+  border-bottom: none;
+}
+
+.bulk-blocked {
+  margin-bottom: 14px;
+}
+
+/* 批量操作条里的"已选 N 人" */
+.selection-hint {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--danger, #cf4436);
+  margin-right: 4px;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+
+.user-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.user-cell-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-name {
+  font-weight: 700;
+  color: var(--ink-800);
+}
+
+.user-email {
+  font-size: 12px;
+  color: var(--ink-400);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expert-tag {
+  margin-left: 6px;
+}
+
+.activity-text {
+  font-size: 12.3px;
+  color: var(--ink-600);
+}
+
+.muted {
+  color: var(--ink-400);
+  font-size: 12.3px;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.table-empty {
+  padding: 26px 0;
+  color: var(--ink-400);
+  text-align: center;
+}
+
+.table-empty i {
+  font-size: 26px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.detail-name {
+  font-size: 15px;
+  color: var(--ink-900);
+}
+
+.detail-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.detail-section {
+  margin: 16px 0 8px;
+  font-size: 13.3px;
+  font-weight: 800;
+  color: var(--ink-800);
+}
+
+:deep(.el-tag + .el-tag) {
+  margin-left: 0;
+}
+</style>

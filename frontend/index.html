@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<!--
+  第 80 批：`translate="no"` + 下面的 notranslate meta —— 禁止浏览器自动翻译整页。
+
+  为什么必须禁：本系统自带中英切换（右上角 EN/中）。当界面切成英文后，页面变成
+  **纯英文**（`<html lang="en">` 由 i18n 模块同步），中文浏览器会认为"这是一页英文"
+  并弹出/自动执行"翻译成中文"。于是用户看到的是**英文界面被机器回译成中文**，
+  例如：
+      Diagnosis history        → 「诊断病史」（界面里应是「识别历史记录」）
+      Disease Wiki             → 「疾病维基」（应是「病害百科」）
+      Leaf Mold（库里的 name_en）→ 「叶模」（这条病害的中文名是「番茄叶霉病」）
+      Orange（作物英文名）        → 「橙色」（应是「柑橘」，被当成颜色翻译了）
+  罪魁祸首是"二次翻译"，不是应用文案 —— 关掉浏览器自动翻译即可恢复正常。
+-->
+<html lang="zh-CN" translate="no">
+  <head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="/favicon.ico">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 第 80 批：Chrome / Edge 认这条 meta，不再对本站提供或自动执行整页翻译 -->
+    <meta name="google" content="notranslate">
+    <!-- 第 51 批：PWA（可安装 + 应用外壳离线缓存，见 public/sw.js） -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#1f6343">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <title>智能农作物叶片病虫害识别系统</title>
+    <!--
+      图标说明：Bootstrap Icons 与 Font Awesome 均已改为通过 npm 包在 main.js 中本地引入
+      （原来走 CDN，离线环境下图标会全部丢失）。这里不再需要任何外部 CDN 链接。
+    -->
+  </head>
+  <body>
+    <div id="app-container"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
