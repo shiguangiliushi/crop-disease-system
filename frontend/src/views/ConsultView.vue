@@ -79,9 +79,13 @@
             <el-empty v-if="!experts.length" :description="t('consult.emptyExperts')" :image-size="60" />
             <ul v-else class="expert-list">
               <li v-for="item in experts" :key="item.user.id" class="expert-item">
-                <el-avatar :size="36" :src="item.user.avatar || undefined">
-                  {{ item.user.username?.[0]?.toUpperCase() }}
-                </el-avatar>
+                <!-- 第 113 批：点头像 → 开私信 -->
+                <UserAvatarLink
+                  :size="36"
+                  :user-id="item.user.id"
+                  :username="item.user.username"
+                  :avatar="item.user.avatar"
+                />
                 <div class="expert-info">
                   <span class="expert-name">
                     {{ item.user.username }}
@@ -297,9 +301,11 @@ import { formatTime } from '@/utils/date';
 import { useAuthStore } from '@/stores/auth';
 import { useI18n } from '@/i18n';  // 第 65 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 78 批：作物名等内容数据多语言
+import UserAvatarLink from '@/components/UserAvatarLink.vue';
 
 export default {
   name: 'ConsultView',
+  components: { UserAvatarLink },  // 第 113 批：点头像 → 开私信
   setup() {
     const { t } = useI18n();  // 第 65 批：多语言
     const { localizedField } = useLocalized();  // 第 78 批

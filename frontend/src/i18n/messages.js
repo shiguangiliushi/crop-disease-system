@@ -1214,6 +1214,8 @@ export const zhCN = {
     following: '已关注',
     report: '举报',
     message: '私信',
+    // 第 113 批：头像悬浮提示 —— 点用户头像直接开私信（用户要求）
+    messageUser: '给 {name} 发私信',
     maxLevel: '已是最高等级',
     points: '{count} 积分',
     toNextLevel: '距下一级还差 {count}',
@@ -2140,6 +2142,8 @@ export const zhCN = {
     noBoardDescLong: '这个版块还没有填写说明',
     anonymous: '匿名用户',
     viewsCount: '{count} 浏览',
+    // 第 113 批：版块页的作者名可点（去主页）—— 头像是"开私信"，两者并存
+    viewProfile: '看他的主页',
     filterAll: '全部',
     unknownTime: '未知时间',
     invalidPostId: '无法打开帖子：无效的帖子ID',
@@ -3549,6 +3553,8 @@ export const en = {
     following: 'Following',
     report: 'Report',
     message: 'Message',
+    // Batch 113: avatar tooltip — clicking a user's avatar opens a DM
+    messageUser: 'Message {name}',
     maxLevel: 'Highest level reached',
     points: '{count} points',
     toNextLevel: '{count} to the next level',
@@ -4471,6 +4477,8 @@ export const en = {
     noBoardDescLong: 'This board has no description yet',
     anonymous: 'Anonymous',
     viewsCount: '{count} views',
+    // Batch 113: author name is clickable (goes to profile); the avatar opens a DM
+    viewProfile: "View their profile",
     filterAll: 'All',
     unknownTime: 'Unknown time',
     invalidPostId: 'Cannot open the post: invalid post ID',

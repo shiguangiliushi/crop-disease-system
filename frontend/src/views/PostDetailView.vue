@@ -28,9 +28,13 @@
         />
         <div class="post-meta">
           <div class="author-info">
-            <el-avatar :size="40" :src="post.author?.avatar || ''">
-              {{ post.author?.username ? post.author.username[0].toUpperCase() : 'U' }}
-            </el-avatar>
+            <!-- 第 113 批：点头像 → 开私信 -->
+            <UserAvatarLink
+              :size="40"
+              :user-id="post.author?.id"
+              :username="post.author?.username"
+              :avatar="post.author?.avatar"
+            />
             <div class="author-meta">
               <span class="author-name">{{ post.author?.username || t('forum.unknownUser') }}</span>
               <span class="post-time">{{ formatTime(post.created_at) }}</span>
@@ -182,9 +186,13 @@
                 class="comment-item"
               >
                 <div class="comment-avatar">
-                  <el-avatar :size="36" :src="comment.author?.avatar || ''">
-                    {{ comment.author?.username ? comment.author.username[0].toUpperCase() : 'U' }}
-                  </el-avatar>
+                  <!-- 第 113 批：点头像 → 开私信 -->
+                  <UserAvatarLink
+                    :size="36"
+                    :user-id="comment.author?.id"
+                    :username="comment.author?.username"
+                    :avatar="comment.author?.avatar"
+                  />
                 </div>
                 <div class="comment-main">
                   <div class="comment-header">
@@ -337,9 +345,13 @@
                       class="comment-item reply"
                     >
                       <div class="comment-avatar">
-                        <el-avatar :size="32" :src="reply.author?.avatar || ''">
-                          {{ reply.author?.username ? reply.author.username[0].toUpperCase() : 'U' }}
-                        </el-avatar>
+                        <!-- 第 113 批：点头像 → 开私信 -->
+                        <UserAvatarLink
+                          :size="32"
+                          :user-id="reply.author?.id"
+                          :username="reply.author?.username"
+                          :avatar="reply.author?.avatar"
+                        />
                       </div>
                       <div class="comment-main">
                         <div class="comment-header">
@@ -517,10 +529,11 @@ import ReportDialog from '@/components/ReportDialog.vue';  // 第 41 批：举�
 import ContentTranslationBar from '@/components/ContentTranslationBar.vue';
 // 第 91 批（安全）：帖子正文与评论都要进 v-html，必须先净化（存储型 XSS）
 import { sanitizeRichText } from '@/utils/richText';
+import UserAvatarLink from '@/components/UserAvatarLink.vue';
 
 export default {
   name: 'PostDetailView',
-  components: { LikersDialog, ReportDialog, ContentTranslationBar },
+  components: { LikersDialog, ReportDialog, ContentTranslationBar, UserAvatarLink },
   setup() {
     const { t } = useI18n();  // 第 60 批：多语言
     const { localizedField, hasTranslation, isTranslationStale } = useLocalized();
@@ -2193,13 +2206,18 @@ export default {
   100% { background: var(--surface-muted); }
 }
 
+/* ⚠️ 第 113 批：`.comment-avatar` 是个**包装 div**，头像在它里面（`UserAvatarLink`
+   → 实测 DOM 就是 `el-avatar` 本身，因为 el-tooltip 会透传 class）。
+   所以这里的 `background` / `color` 原本是画在**头像背后**的，被 `el-avatar` 自己的
+   默认底色盖住 —— 也就是说那段渐变**一直没有生效**（第 23 批把头像换成
+   el-avatar 时就漏了）。现在用 `:deep()` 打到内部那个圆上，才是当初想要的样子。 */
 .comment-avatar {
   flex-shrink: 0;
-  width: 38px;
-  height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
+}
+
+.comment-avatar :deep(.el-avatar) {
   background: var(--gradient-brand);
   color: #fff;
   font-size: 15px;

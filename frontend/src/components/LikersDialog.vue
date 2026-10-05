@@ -13,9 +13,13 @@
 
     <ul v-else class="likers-list">
       <li v-for="like in likers" :key="like.id" class="liker-item">
-        <el-avatar :size="32" :src="like.user?.avatar || undefined">
-          {{ initial(like.user) }}
-        </el-avatar>
+        <!-- 第 113 批：点头像 → 开私信 -->
+        <UserAvatarLink
+          :size="32"
+          :user-id="like.user?.id"
+          :username="like.user?.username"
+          :avatar="like.user?.avatar"
+        />
         <div class="liker-main">
           <span class="liker-name">{{ like.user?.username || t('likers.unknownUser') }}</span>
           <span class="liker-time">{{ formatTime(like.created_at) }}</span>
@@ -40,9 +44,11 @@ import { ref, watch, computed } from 'vue';
 import { getPostLikers, getCommentLikers } from '@/api/forum';
 import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 83 批：弹窗标题此前写死中文
+import UserAvatarLink from '@/components/UserAvatarLink.vue';
 
 export default {
   name: 'LikersDialog',
+  components: { UserAvatarLink },  // 第 113 批：点头像 → 开私信
   props: {
     modelValue: { type: Boolean, default: false },
     // 'post' = 查帖子的点赞者；'comment' = 查某条评论的点赞者

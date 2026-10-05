@@ -456,9 +456,13 @@
 
       <ul v-else class="follow-list">
         <li v-for="item in followList" :key="item.id" class="follow-item">
-          <el-avatar :size="38" :src="item.avatar || undefined" @click="goToUserProfile(item.id)">
-            {{ item.username ? item.username[0].toUpperCase() : 'U' }}
-          </el-avatar>
+          <!-- 第 113 批：点头像 → 开私信 -->
+          <UserAvatarLink
+            :size="38"
+            :user-id="item.id"
+            :username="item.username"
+            :avatar="item.avatar"
+          />
           <div class="follow-info" @click="goToUserProfile(item.id)">
             <span class="follow-name">{{ item.username }}</span>
             <span class="follow-bio">{{ item.bio || t('profile.noBio') }}</span>
@@ -529,10 +533,11 @@ import { fetchFollowers, fetchFollowing, toggleFollow } from '@/api/social';  //
 // 第 95 批：自助注销账号
 import { DELETE_ACCOUNT_CONFIRM_WORD, deleteMyAccount } from '@/api/account';
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges';  // 第 97 批：离开前提醒
+import UserAvatarLink from '@/components/UserAvatarLink.vue';
 
 export default {
   name: 'UserProfileView',
-  components: { LikersDialog, ReportDialog },
+  components: { LikersDialog, ReportDialog, UserAvatarLink },
   
   setup() {
     const { t } = useI18n();  // 第 64 批：多语言

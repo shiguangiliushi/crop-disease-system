@@ -125,14 +125,14 @@
               :class="{ 'is-pinned': post.is_pinned, 'is-essence': post.is_essence }"
               @click="goToPost(post.id)"
             >
-              <el-avatar
+              <!-- 第 113 批：点头像 → 开私信 -->
+              <UserAvatarLink
                 class="post-avatar"
                 :size="44"
-                :src="post.author?.avatar"
-                @click.stop="goToUserProfile(post.author.id)"
-              >
-                {{ post.author?.username ? post.author.username[0].toUpperCase() : 'U' }}
-              </el-avatar>
+                :user-id="post.author?.id"
+                :username="post.author?.username"
+                :avatar="post.author?.avatar"
+              />
 
               <div class="post-content">
                 <h3 class="post-title">
@@ -147,7 +147,15 @@
                      每条帖子下面恒显示"暂无内容预览"。改为用正文前 80 字做摘要。 -->
                 <p class="post-excerpt">{{ excerptOf(post) }}</p>
                 <div class="post-meta">
-                  <span><i class="fas fa-user"></i> {{ post.author?.username || t('forum.anonymous') }}</span>
+                  <!-- 第 113 批：作者名可点 → 去他的个人主页。
+                       头像被改成"开私信"之后，这里是版块页**唯一**还能进用户主页的入口 ——
+                       所以不能省（否则 `goToUserProfile` 就成了死代码，
+                       而用户会发现在版块页根本找不到"看这个人主页"的办法）。 -->
+                  <span
+                    class="post-author-link"
+                    :title="t('forum.viewProfile')"
+                    @click.stop="goToUserProfile(post.author?.id)"
+                  ><i class="fas fa-user"></i> {{ post.author?.username || t('forum.anonymous') }}</span>
                   <span><i class="fas fa-clock"></i> {{ formatTime(post.created_at) }}</span>
                   <span><i class="fas fa-eye"></i> {{ t('forum.viewsCount', { count: post.view_count || 0 }) }}</span>
                 </div>
@@ -215,11 +223,13 @@ import { formatTime } from '@/utils/date';
 import { useAuthStore } from '@/stores/auth';
 import { useI18n } from '@/i18n';  // 第 60 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 79 批：版块名/描述等内容数据
+import UserAvatarLink from '@/components/UserAvatarLink.vue';
 
 const API_PREFIX = '/api';
 
 export default {
   name: 'ForumBoardView',
+  components: { UserAvatarLink },  // 第 113 批：点头像 → 开私信
   setup() {
     const { t } = useI18n();  // 第 60 批：多语言
     const { localizedField } = useLocalized();  // 第 79 批：版块名/描述等内容数据
@@ -882,9 +892,15 @@ export default {
   border-left: 3px solid var(--warning);
 }
 
+/* ⚠️ 第 113 批：`.post-avatar` 现在落在 `<UserAvatarLink>` 外层的 span 上
+   （组件内部真实存在的元素），不是 `el-avatar` 本身 —— 因为 `el-tooltip`
+   是 `inheritAttrs: false`，父组件的 class 传不进它内部的子元素（实测：
+   类名会凭空消失）。所以底色/字重用 `:deep()` 打进内部那个圆。 */
 .post-avatar {
   flex-shrink: 0;
-  cursor: pointer;
+}
+
+.post-avatar :deep(.el-avatar) {
   background: var(--brand-500);
   color: #fff;
   font-weight: 700;
@@ -929,6 +945,20 @@ export default {
 
 .post-meta i {
   margin-right: 4px;
+}
+
+/* 第 113 批：作者名可点（去主页）。做成"看得出能点"的样子 ——
+   否则用户不会知道这里能进主页（头像是开私信，两条路要能区分）。 */
+.post-author-link {
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.post-author-link:hover {
+  color: var(--brand-700, #1f6343);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* 右侧统计：回复 / 点赞 / 收藏 */
