@@ -26,6 +26,16 @@ import {
   watchPageErrors,
 } from './helpers.mjs';
 
+// 管理端表格的等待上限。
+//
+// ⚠️ 第 109 批：原来这里散落着多个硬编码的 timeout: 20000，而实测在
+//    **机器忙的时候**（例如同时跑两轮 E2E、或识别接口正在冷启动）20 秒会不够，
+//    表现为 waitForSelector 超时 —— 看起来像功能坏了，其实只是渲染慢。
+//    提成具名常量并放宽到 35 秒：
+//      · 正常情况仍是 1~2 秒内就出现，放宽不会让测试变慢；
+//      · 真正坏了的情况照样会失败，只是晚 15 秒报错。
+const TABLE_WAIT_MS = 35_000;
+
 test.describe('管理端：用户管理', () => {
   let session;
 
@@ -51,7 +61,7 @@ test.describe('管理端：用户管理', () => {
     const errors = watchPageErrors(page);
     await loginAs(page, session);
     await page.goto('/admin/users');
-    await page.waitForSelector('.el-table__row', { timeout: 20000 });
+    await page.waitForSelector('.el-table__row', { timeout: TABLE_WAIT_MS });
     await page.waitForTimeout(800);
 
     const totalAll = await page.locator('.pagination-wrap .el-pagination').first().innerText();
@@ -88,7 +98,7 @@ test.describe('管理端：用户管理', () => {
 
     // 直接打开"带条件的链接"→ 条件必须已生效（第 98 批的能力）
     await page.goto(`/admin/users?search=${TEMP_PREFIX}_ui&page_size=10`);
-    await page.waitForSelector('.el-table__row, .el-table__empty-text', { timeout: 20000 });
+    await page.waitForSelector('.el-table__row, .el-table__empty-text', { timeout: TABLE_WAIT_MS });
     await page.waitForTimeout(1200);
 
     const searchValue = await page.locator('.filter-bar input:not([readonly])').first().inputValue();
@@ -96,7 +106,7 @@ test.describe('管理端：用户管理', () => {
 
     // 刷新后条件还在（"刷新即重置"就是这一条要防的）
     await page.reload();
-    await page.waitForSelector('.el-table__row, .el-table__empty-text', { timeout: 20000 });
+    await page.waitForSelector('.el-table__row, .el-table__empty-text', { timeout: TABLE_WAIT_MS });
     await page.waitForTimeout(1000);
     const afterReload = await page.locator('.filter-bar input:not([readonly])').first().inputValue();
     expectThat('刷新后条件仍在', afterReload, `${TEMP_PREFIX}_ui`);
@@ -106,7 +116,7 @@ test.describe('管理端：用户管理', () => {
   test('表头排序走后端（地址栏出现 ordering，且顺序真的变了）', async ({ page }) => {
     await loginAs(page, session);
     await page.goto(`/admin/users?search=${TEMP_PREFIX}_ui&page_size=10`);
-    await page.waitForSelector('.el-table__row', { timeout: 20000 });
+    await page.waitForSelector('.el-table__row', { timeout: TABLE_WAIT_MS });
     await page.waitForTimeout(1000);
 
     const readPoints = async () => {
@@ -151,7 +161,7 @@ test.describe('管理端：用户管理', () => {
 
     await loginAs(page, session);
     await page.goto(`/admin/users?search=${TEMP_PREFIX}_bulk&page_size=10`);
-    await page.waitForSelector('.el-table__row', { timeout: 20000 });
+    await page.waitForSelector('.el-table__row', { timeout: TABLE_WAIT_MS });
     await page.waitForTimeout(1200);
 
     const rows = await page.locator('.el-table__row').count();

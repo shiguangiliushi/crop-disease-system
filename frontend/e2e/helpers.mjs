@@ -21,7 +21,7 @@
  *    `user` 两个 key 上（见 utils/authStorage.js）。`loginAs()` 会把它们写进去，
  *    这样用例不必每次走一遍登录表单 —— 只有**专门测登录**的用例才该走表单。
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -107,6 +107,116 @@ export function runDjango(lines) {
   } finally {
     rmSync(file, { force: true });
   }
+}
+
+/**
+ * 常驻的 Django 会话（第 109 批）—— 多次查询共用**一个** Python 进程。
+ *
+ * ⚠️ 为什么需要它：`runDjango()` 每次都要新起一个 Python 进程 + `django.setup()`，
+ * 而这个项目装了 torch，导入链很长 —— 实测一台普通开发机上**单次要十几秒**。
+ * 第 109 批给一条用例加计时打点后发现：
+ *
+ *     分步耗时：准备 42.6s｜页面打开 6.5s｜等待结果 1.0s
+ *               （其中 maxDetectionId 36119ms）
+ *
+ * 也就是说**被测功能只用 1 秒**，剩下的 40 秒全是"启 Python 查一下数据库"。
+ * 更糟的是这种纯开销会把"真的变慢"和"环境慢"混在一起 ——
+ * 加打点之前根本看不出是哪一头。
+ *
+ * 用法（配合 `djangoSession.close()` 收尾）：
+ *
+ *     const session = djangoSession();
+ *     const maxId = Number(session.run(['from api.models import X', 'print(X.objects.count())']));
+ *     session.close();
+ *
+ * 实现：进程常驻，用 `stdin` 逐行发指令、按 `#OK<id>` / `#ERR<id>` 标记读回结果。
+ * 只用一个 `data` 事件缓冲 stdout（不用 readline 逐行读，避免半行 JSON 被截断）。
+ */
+export function djangoSession() {
+  const file = resolve(BACKEND_DIR, `_e2e_session_${Date.now()}.py`);
+  writeFileSync(file, [
+    'import os, sys, io, json, traceback, django',
+    "os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'crop_disease_backend.settings')",
+    'django.setup()',
+    'for raw in sys.stdin:',
+    '    raw = raw.strip()',
+    '    if not raw:',
+    '        continue',
+    '    request = json.loads(raw)',
+    '    buffer = io.StringIO()',
+    '    real_stdout, sys.stdout = sys.stdout, buffer',
+    '    try:',
+    '        exec(request["code"], {"__name__": "__main__"})',
+    '        payload = {"ok": True, "out": buffer.getvalue()}',
+    '    except Exception as exc:',
+    '        payload = {"ok": False, "out": buffer.getvalue(),',
+    '                   "err": f"{type(exc).__name__}: {exc}",',
+    '                   "tb": traceback.format_exc()[-600:]}',
+    '    finally:',
+    '        sys.stdout = real_stdout',
+    '    sys.stdout.write("#R#" + json.dumps(payload) + "\\n")',
+    '    sys.stdout.flush()',
+  ].join('\n'), 'utf8');
+
+  const child = spawn(PYTHON, [file], {
+    cwd: BACKEND_DIR,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let buffer = '';
+  const pending = [];
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk;
+    let index = buffer.indexOf('\n');
+    while (index >= 0) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      if (line.startsWith('#R#')) {
+        const waiter = pending.shift();
+        if (waiter) {
+          try {
+            waiter.resolve(JSON.parse(line.slice(3)));
+          } catch (error) {
+            waiter.reject(new Error(`会话返回无法解析：${line.slice(0, 200)}`));
+          }
+        }
+      }
+      index = buffer.indexOf('\n');
+    }
+  });
+
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  return {
+    run(lines, { timeoutMs = 120_000 } = {}) {
+      return new Promise((resolvePromise, rejectPromise) => {
+        const timer = setTimeout(() => {
+          rejectPromise(new Error(`djangoSession 超时（${timeoutMs}ms）；stderr: ${stderr.slice(-300)}`));
+        }, timeoutMs);
+        pending.push({
+          resolve: (payload) => {
+            clearTimeout(timer);
+            if (!payload.ok) {
+              rejectPromise(new Error(`会话里的代码出错：${payload.err}\n${payload.tb || ''}`));
+              return;
+            }
+            resolvePromise(String(payload.out).trim());
+          },
+          reject: (error) => { clearTimeout(timer); rejectPromise(error); },
+        });
+        child.stdin.write(`${JSON.stringify({ code: lines.join('\n') })}\n`);
+      });
+    },
+    close() {
+      try { child.stdin.end(); } catch { /* 忽略 */ }
+      try { child.kill(); } catch { /* 忽略 */ }
+      rmSync(file, { force: true });
+    },
+    get stderr() { return stderr; },
+  };
 }
 
 /** 按前缀清理临时数据（用例的 `afterAll` 里调它）。
@@ -281,6 +391,51 @@ export async function loginAs(page, { token, user }) {
     sessionStorage.setItem('auth_token', payload.token);
     sessionStorage.setItem('user', JSON.stringify(payload.user));
   }, { token, user });
+}
+
+/**
+ * 打开一个需要登录的页面，并在**被弹回登录页时自动重试一次**（第 109 批）。
+ *
+ * ⚠️ 为什么需要这个：桌面端的登录态放在 `sessionStorage`（关标签页就登出，这是有意的）。
+ * 而 **Vite 在依赖重优化时会强制整页 reload** —— reload 会把我们注入的
+ * sessionStorage 一起清掉，于是路由守卫把用例踢到 `/login`。
+ *
+ * 触发时机很典型：**刚改过前端文件就立刻跑 E2E**（改动使 Vite 的依赖图失效）。
+ * 表现极具误导性：截图里是登录页，看起来像"登录态没注入"或"登录坏了"，
+ * 而实际上注入是对的，只是被 reload 冲掉了。
+ * （第 109 批为此查了很久 —— 同一个流程用独立脚本直连只要 2.4 秒，
+ *   在用例里却卡 45~90 秒；最后靠失败截图才看出停在登录页。）
+ *
+ * 做法：导航后如果停在登录页，等 Vite 稳定再导航一次。
+ * `addInitScript` 会重新注入，所以第二次必然带着登录态。
+ * 真要是登录态本身有问题，第二次仍然会失败 —— 这条重试不会掩盖真 bug。
+ */
+export async function gotoAuthed(page, url, { attempts = 3 } = {}) {
+  let lastUrl = '';
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await page.goto(url);
+    // 给路由守卫与首个接口调用一点时间落地
+    await page.waitForTimeout(1000);
+    lastUrl = page.url();
+    if (!lastUrl.includes('/login')) return lastUrl;
+
+    // 诊断：把"登录态到底还在不在"打出来。
+    // 这一步很关键 —— 被弹回登录页有**两种完全不同的原因**：
+    //   ① sessionStorage 被清掉了（reload / 拦截器清身份）→ 下面会显示 null
+    //   ② 登录态还在，但守卫因为别的原因跳了 → 下面会显示 token 还在
+    // 不区分这两种，就只能对着"停在登录页"这一个现象猜。
+    const state = await page.evaluate(() => ({
+      token: Boolean(sessionStorage.getItem('auth_token')),
+      user: Boolean(sessionStorage.getItem('user')),
+      url: location.href,
+    })).catch(() => null);
+    console.log(`  ↳ 第 ${attempt} 次被弹回登录页；存储状态 ${JSON.stringify(state)}`);
+
+    // Vite 重优化期间会反复 reload；多等一会儿再试，这段时间不该算进用例超时
+    await page.waitForTimeout(5000);
+  }
+  console.log(`  ↳ 重试 ${attempts} 次后仍停在登录页 —— 下面用例会失败，请检查登录态是否正确`);
+  return lastUrl;
 }
 
 /** 收集页面 JS 报错（很多问题的唯一线索就是它，别丢） */

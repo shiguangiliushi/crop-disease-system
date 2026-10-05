@@ -27,6 +27,16 @@ import {
   watchPageErrors,
 } from './helpers.mjs';
 
+// 管理端表格的等待上限。
+//
+// ⚠️ 第 109 批：原来这里散落着多个硬编码的 timeout: 20000，而实测在
+//    **机器忙的时候**（例如同时跑两轮 E2E、或识别接口正在冷启动）20 秒会不够，
+//    表现为 waitForSelector 超时 —— 看起来像功能坏了，其实只是渲染慢。
+//    提成具名常量并放宽到 35 秒：
+//      · 正常情况仍是 1~2 秒内就出现，放宽不会让测试变慢；
+//      · 真正坏了的情况照样会失败，只是晚 15 秒报错。
+const TABLE_WAIT_MS = 35_000;
+
 const PAYLOAD = '<img src=x onerror="window.__zze2e_xss=1">';
 
 test.describe('安全回归（历史事故）', () => {
@@ -119,7 +129,7 @@ test.describe('安全回归（历史事故）', () => {
     const errors = watchPageErrors(page);
     await loginAs(page, session);
     await page.goto('/admin/users');
-    await page.waitForSelector('.el-table__row', { timeout: 20000 });
+    await page.waitForSelector('.el-table__row', { timeout: TABLE_WAIT_MS });
 
     // 界面上：自己那一行的勾选框必须是禁用的（护栏在 UI 也拦一道）
     const selfRowDisabled = await page.evaluate((username) => {
