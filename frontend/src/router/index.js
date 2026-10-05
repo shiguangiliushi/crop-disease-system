@@ -31,7 +31,9 @@ const NewsDetailView = () => import('@/views/NewsDetailView.vue')
 const ForumView = () => import('@/views/ForumView.vue')
 const PostDetailView = () => import('@/views/PostDetailView.vue')
 // 第 22 批：DetectionHistoryView.vue 已随「识别记录管理」合并进 HistoryView 而停用，
-// 文件已移到 src/_deprecated/views/（路由 /admin/detection-history 改为重定向）。
+// 路由 /admin/detection-history 改为重定向到 /history。
+// 第 109 批：那份旧文件所在的 `src/_deprecated/` 已删除（建立版本控制之后），
+// 需要参考旧实现时用 `git show 1f54f00:frontend/src/_deprecated/views/DetectionHistoryView.vue`。
 const NewsManagementView = () => import('@/views/NewsManagementView.vue')
 // 第 27 批：管理端意见反馈管理
 const AdminFeedbackView = () => import('@/views/AdminFeedbackView.vue')

@@ -31,7 +31,7 @@ function walk(dir) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) {
-      if (name === '_deprecated') continue;  // 废弃组件不参与
+      if (name === '_deprecated') continue;  // 第 109 批：该目录已删，此分支保留为通用约定
       out.push(...walk(path));
     } else if (name.endsWith('.vue')) {
       out.push(path);

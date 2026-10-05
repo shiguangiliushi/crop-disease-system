@@ -7,8 +7,10 @@ export default mergeConfig(
   defineConfig({
     test: {
       environment: 'jsdom',
-      // src/_deprecated 是已停用的备份目录（见该目录 README），其中的脚手架测试不应再参与扫描
-      exclude: [...configDefaults.exclude, 'e2e/**', 'src/_deprecated/**'],
+      // 第 109 批：去掉了原来那条 `src/_deprecated/**` —— 那个目录已删除
+      // （删除前先建了版本控制，需要找回时 `git show 1f54f00:frontend/src/_deprecated/...`）。
+      // 留一条指向不存在目录的排除规则，只会让后来的人去找它。
+      exclude: [...configDefaults.exclude, 'e2e/**'],
       root: fileURLToPath(new URL('./', import.meta.url)),
     },
   }),
