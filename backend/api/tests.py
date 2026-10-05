@@ -3329,6 +3329,35 @@ class ImageUploadValidationTests(TestCase):
         self.client_admin = APIClient()
         self.client_admin.force_authenticate(user=self.admin)
 
+        # ⚠️ 第 110 批：把 MEDIA_ROOT 指到临时目录。
+        #
+        # `test_news_image_upload_accepts_real_png` 是**唯一**必须真的落盘的用例 ——
+        # 它要验证"合法 PNG 能存下来并返回 url"，只给字段赋字符串是测不出来的。
+        # 但它此前写进了**真实 media**，实测每跑一次 `manage.py test` 就在
+        # `backend/media/news_images/` 下留一个 0.1KB 的 `news_<随机>_png`，
+        # 而本文件开头明确写着"本文件的测试不写任何媒体文件"（第 21 批立的规矩）。
+        #
+        # 这既是污染（跑测试会改工作区，还会被 `git add -A` 收进仓库），
+        # 也违背了那条规矩的**理由**：测试里的一次上传/删除会真的动到业务文件，
+        # 而事务回滚救不了文件系统。
+        #
+        # 用 `override_settings` + 临时目录（与 `PruneMediaCommandTests` 同一做法）。
+        # 注意要用 `enable()/disable()` 而不是装饰器：类里其它用例不需要它，
+        # 而写在类上的装饰器会让整个类都换目录（无害但没必要）。
+        import tempfile
+
+        self._media_tmp = Path(tempfile.mkdtemp(prefix='zz_img_upload_'))
+        self._media_override = override_settings(MEDIA_ROOT=str(self._media_tmp))
+        self._media_override.enable()
+
+    def tearDown(self):
+        # 顺序很重要：先让 settings 复原，再删目录 ——
+        # 反过来的话，清理期间任何一次文件访问都会写到一个已删除的目录。
+        self._media_override.disable()
+        import shutil
+
+        shutil.rmtree(self._media_tmp, ignore_errors=True)
+
     # ---------- 客户端可伪造 content_type，必须按文件内容判断 ----------
 
     def test_spoofed_content_type_is_rejected(self):
@@ -4140,6 +4169,32 @@ class PruneMediaCommandTests(TestCase):
         return out.getvalue()
 
     # ---------- 规则 1：被引用的文件不动 ----------
+
+    def test_non_media_files_are_never_deleted(self):
+        """
+        第 110 批补的关键护栏：**非媒体扩展名的文件一律不动**。
+
+        这条来自一个真实险情：`media/README.md`（讲这个目录"哪些入库、哪些不入库"的
+        说明文档）被这个命令列进了待删名单 —— 它当然没有任何 FileField 引用它，
+        于是"没有任何数据库记录引用"这条判据把它判成了孤儿，只差一个 `--yes` 就没了。
+
+        同类风险还有运维放进 media 的脚本、配置、`.gitattributes` 等：
+        **它们天然不会被数据库引用，而这恰恰是这个命令唯一的判据。**
+
+        所以判据改成"扩展名白名单"（`PRUNABLE_SUFFIXES`）：
+        遇到没预料到的类型就**不删** —— 失效方向是"占点磁盘"而不是"文件没了"。
+        """
+        readme = self._write('README.md', content='# media 口径说明'.encode('utf-8'))
+        notes = self._write('detection_uploads/notes.txt', content=b'not a media file')
+        script = self._write('crop-images/backup.py', content=b'print("hi")')
+        orphan = self._write('detection_uploads/orphan.JPG')
+
+        output = self._run('--min-age-days', '0', '--yes')
+
+        for kept in (readme, notes, script):
+            self.assertTrue(kept.exists(), f'{kept.name} 被误删了 —— 非媒体文件不该动')
+        self.assertFalse(orphan.exists(), '孤儿图片仍然应当被清掉')
+        self.assertIn('非媒体文件', output)
 
     def test_referenced_file_is_never_deleted(self):
         kept = self._write('detection_uploads/keep_me.JPG')

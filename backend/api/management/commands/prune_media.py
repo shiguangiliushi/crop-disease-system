@@ -42,7 +42,21 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 #: 永远不动的目录/文件
-PROTECTED_NAMES = {'.gitkeep', '.gitignore', '.DS_Store', 'Thumbs.db'}
+PROTECTED_NAMES = {'.gitkeep', '.gitignore', '.gitattributes', '.DS_Store', 'Thumbs.db'}
+
+#: **只清理这些扩展名的文件**（第 110 批补的护栏）。
+#
+# 为什么用白名单：这个命令判"孤儿"只看"有没有 FileField 引用"，
+# 而 media/ 里那些**天然不被数据库引用**的文件（说明文档、运维脚本、配置）
+# 恰好最不能删 —— 实测 `media/README.md` 就被列进了待删名单。
+# 白名单的失效方向是安全的：遇到没预料到的类型就**不删**（占磁盘 vs 文件消失，
+# 显然是前者可接受）。
+PRUNABLE_SUFFIXES = frozenset({
+    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.avif',
+    '.mp4', '.mov', '.avi', '.webm', '.mkv',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv',
+    '.zip', '.rar', '.7z',
+})
 
 #: 这些字段类型里的路径要纳入"被引用"集合
 FILE_FIELD_TYPES = ('FileField', 'ImageField')
@@ -80,6 +94,7 @@ class Command(BaseCommand):
         candidates = []
         skipped_recent = 0
         skipped_protected = 0
+        skipped_not_media = 0
 
         for path in sorted(scope.rglob('*')):
             if not path.is_file():
@@ -87,6 +102,19 @@ class Command(BaseCommand):
             rel = path.relative_to(media_root).as_posix()
             if path.name in PROTECTED_NAMES or path.name.startswith('.'):
                 skipped_protected += 1
+                continue
+            # ⚠️ 第 110 批补的**关键护栏**：只动"看起来就是上传的媒体文件"。
+            #
+            # 为什么必须加：这个命令判"孤儿"的唯一依据是"没有任何 FileField 引用它"。
+            # 而 media/ 里**本来就不该有 FileField 引用的东西**恰恰是最不能删的 ——
+            # 实测它把 `media/README.md`（讲这个目录口径的说明文档）列进了待删名单，
+            # 只差一个 `--yes` 就没了。同类风险：放个 `scripts/backup.py`、
+            # `.gitattributes`、或任何运维放的说明/配置进去，都会被"合理地"清掉。
+            #
+            # 判据选"扩展名白名单"而不是"黑名单"：**默认不删**更安全 ——
+            # 万一出现没预料到的文件类型，结果是"占点磁盘"而不是"文件没了"。
+            if path.suffix.lower() not in PRUNABLE_SUFFIXES:
+                skipped_not_media += 1
                 continue
             if rel in referenced:
                 continue
@@ -106,6 +134,7 @@ class Command(BaseCommand):
             'orphan_bytes': total_bytes,
             'skipped_recent': skipped_recent,
             'skipped_protected': skipped_protected,
+            'skipped_not_media': skipped_not_media,
             'min_age_days': options['min_age_days'],
             'deleted': False,
             'files': [rel for rel, _ in candidates],
@@ -127,6 +156,11 @@ class Command(BaseCommand):
                                   '可能是刚上传还没入库的）')
             if skipped_protected:
                 self.stdout.write(f'  （跳过 {skipped_protected} 个占位/隐藏文件）')
+            if skipped_not_media:
+                # 把这些明确报出来：它们**不是**"被保护"，而是"这个命令管不着"。
+                # 混淆这两者会让人以为"文档/脚本受保护"，而实际是靠扩展名挡住的。
+                self.stdout.write(f'  （跳过 {skipped_not_media} 个非媒体文件 —— '
+                                  '说明文档/脚本/配置等一律不动，见 PRUNABLE_SUFFIXES）')
 
             if candidates:
                 self.stdout.write('')

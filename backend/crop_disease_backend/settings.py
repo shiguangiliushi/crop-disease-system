@@ -780,3 +780,23 @@ TRANSLATE_GLOSSARY = _env_bool('TRANSLATE_GLOSSARY', True)
 if _IS_TESTING:
     TRANSLATE_ENABLED = False
     TRANSLATE_ON_WRITE = False
+
+# ----------------------------------------------------------------------------
+# 测试期间把 MEDIA_ROOT 挪到临时目录（第 110 批）
+# ----------------------------------------------------------------------------
+# 跑一次 `manage.py test` 会在**真实 backend/media/** 里留下文件：实测
+# `media/news_images/news_<随机>.png`、`media/uploads/<随机>.jpg` 都是测试上传的，
+# 而且它们没有任何数据库引用 —— 是纯垃圾，还会被 `git add -A` 收进仓库
+# （首次提交时就是这么混进 98 个的）。
+#
+# `api/tests.py` 第 21 批立过规矩"本文件的测试不写任何媒体文件"，
+# 但"靠每个测试作者记得遵守"不可靠。这个 runner 把规矩变成**默认行为**。
+#
+# ⚠️ 注意这里**刻意不用 `if _IS_TESTING:` 包起来**：
+#    那个变量靠 `'test' in sys.argv` 判断，pytest / IDE / 直接调 runner 时判不出来。
+#    `TEST_RUNNER` 是 Django 官方扩展点，只在真的跑测试时才会被实例化，
+#    所以无条件配置是正确且更可靠的（生产运行时它只是一行没被读到的字符串配置）。
+#
+#    实现与理由见 `api/test_runner.py`。
+# ----------------------------------------------------------------------------
+TEST_RUNNER = 'api.test_runner.MediaIsolatedTestRunner'

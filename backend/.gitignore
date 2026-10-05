@@ -44,13 +44,25 @@ venv/
 # 而项目的惯例本该是"只有种子内容入库"。
 #
 # 忽略的分三类：
-#   1. 早期上传路径的遗留目录（当前代码零引用）；
+#   1. `media/uploads/` —— `/api/upload/image/` 的落盘目录（帖子插图、富文本插图），
+#      活跃代码路径，见 `api/image_validation.py` 的用法示例。
+#      ⚠️ 第 110 批更正：上一版这里写成"早期上传路径的遗留目录（当前代码零引用）"，
+#      **是错的** —— 我当时的判断依据是"数据库里没有 FileField 引用它"，
+#      但它的用途本来就是"先传图拿到 URL、再写进富文本正文"，正文里的 URL
+#      不是 FileField，所以永远查不到引用。这也正是 prune_media 需要
+#      `PRUNABLE_SUFFIXES` 白名单护栏的原因（见该命令的注释）。
 #   2. 测试/用户跑识别产生的 `det_*.jpg`、`annotated_*.jpg`
 #      （命名带时间戳或随机后缀，一眼可辨）；
-#   3. 头像与咨询配图（同样是用户上传）。
+#   3. 用户上传的头像与咨询配图。
+#
+# ⚠️ 第 110 批补 `news_images/news_*.png`：跑一次后端测试就会在**真实 media** 里
+#    多出这样一个文件（0.1KB 的假 PNG）。根因已修 —— 现在整轮测试的 MEDIA_ROOT
+#    指向临时目录（`api/test_runner.py`），真实 media 不再被写。
+#    这条规则保留作双保险（万一 runner 因权限问题回落到真实目录）。
 media/uploads/
 media/detection_history/det*.jpg
 media/detection_history/annotated_*.jpg
 media/detection_uploads/
+media/news_images/news_*.png
 media/avatars/
 media/consult_images/
