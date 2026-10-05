@@ -188,3 +188,70 @@ class FollowSuggestionView(APIView):
             .order_by('-followers', '-last_login')[:5]
         )
         return Response({'results': [_user_brief(user, request) for user in users]})
+
+
+#: 搜索收信人时，关键词至少要这么长
+MIN_SEARCH_LENGTH = 2
+
+#: 一次最多回多少个候选
+SEARCH_LIMIT = 10
+
+
+class UserSearchView(APIView):
+    """
+    按用户名搜索用户（第 112 批）——**给"发起新私信"用**
+
+    `GET /api/users/search/?q=<关键词>`
+
+    ----------------------------------------------------------------------------
+    为什么需要这个接口
+    ----------------------------------------------------------------------------
+    第 112 批用户反馈"私信功能用不了"，查下来收发链路本身完全正常，问题是
+    **没有发起新会话的入口**：私信页只能显示"已有的会话"，而新会话的唯一入口是
+    先进对方的个人主页、再点"私信"。空列表时页面只写一句"还没有消息"，
+    用户根本不知道该去哪儿找人 —— 这就是"用得不顺"的根源。
+
+    而现成的接口都不合适：
+      · `/api/users/` 是**仅管理员**（`IsAdminUser`），普通用户搜不了；
+      · `/api/users/follow-suggestions/` 只回固定的 Top 5，**不接受关键词**。
+
+    ----------------------------------------------------------------------------
+    为什么限制得比较紧（这是有意的）
+    ----------------------------------------------------------------------------
+    它让**任何登录用户**都能按用户名查人，本质上是把"平台上有哪些用户"
+    这个信息开放出去了。所以加了四道限制：
+
+    1. **必须登录**（`IsAuthenticated`）—— 匿名不能用来枚举用户名；
+    2. **关键词至少 `MIN_SEARCH_LENGTH`（2）个字** —— 挡住 `?q=a` 这种
+       "逐字母扫全站用户名"的做法（用户名往往就是手机号/姓名，能被枚举出来
+       本身就是隐私问题）；
+    3. **一次最多 `SEARCH_LIMIT`（10）条** —— 不能靠翻页把整站用户拉走；
+    4. **只回最少字段**（id / username / avatar / bio）—— 不回 email、角色、
+       积分等；`_user_brief` 已经有这个形状，直接复用。
+
+    另外**始终排除自己**（搜到自己没有意义），以及 `is_active=True`
+    （注销冷静期里的账号不应再被搜到）。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        keyword = (request.query_params.get('q') or '').strip()
+
+        if len(keyword) < MIN_SEARCH_LENGTH:
+            # 不报错，回空列表 + 一句提示：前端在输入框下方直接显示它，
+            # 比弹一个错误框友好（用户只是还没输够字，不是操作错了）
+            return Response({
+                'results': [],
+                'detail': f'请至少输入 {MIN_SEARCH_LENGTH} 个字',
+            })
+
+        users = (
+            User.objects.filter(is_active=True, username__icontains=keyword)
+            .exclude(id=request.user.id)          # 不搜自己
+            .order_by('username')[:SEARCH_LIMIT]  # 上限，且顺序稳定（便于测试）
+        )
+        return Response({
+            'results': [_user_brief(user, request) for user in users],
+            'detail': '',
+        })

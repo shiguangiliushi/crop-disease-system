@@ -5,6 +5,7 @@ import torch
 import tempfile
 import base64
 import logging
+import threading
 import numpy as np
 from io import BytesIO
 from PIL import Image
@@ -17,6 +18,20 @@ if not torch.cuda.is_available():
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+#: 模型加载 / 预热的互斥锁（第 113 批）
+#:
+#: 为什么需要它：第 113 批把启动预热改成**后台线程**（它原来同步跑，
+#: 会让服务在 30 秒里完全不监听端口，甚至卡住起不来 —— 见 `apps.py` 的说明）。
+#: 于是出现了新的并发窗口：**预热线程刚起来的那一瞬间，正好来了一个识别请求**，
+#: 两边会同时去走 `YOLO(model_path)`。
+#:
+#: 后果不是"慢一点"，而是：加载两份 6MB 权重（内存翻倍）、
+#: 两个 torch 前向同时跑（CPU 抢线程、都变慢），
+#: 而且在极端情况下 torch 的延迟初始化不是线程安全的。
+#:
+#: 用一把模块级锁把"加载并预热"串起来：后来者等前面做完，直接复用已就绪的模型。
+_WARMUP_LOCK = threading.Lock()
 
 
 class AIService:
@@ -406,6 +421,19 @@ def warm_up(*, force: bool = False) -> bool:
         return False
 
     started = time.time()
+
+    # ⚠️ 第 113 批：**整段预热都在锁里**。
+    # 这一批把预热改成后台线程之后，"预热进行中正好来了识别请求"成了真实场景 ——
+    # 两边会同时走 `YOLO(model_path)`：加载两份权重、两个 torch 前向抢 CPU，
+    # 而 torch 的延迟初始化在极端情况下不是线程安全的。
+    #
+    # 用 `blocking=False` 拿锁：**拿不到就说明预热正在跑，直接返回**，
+    # 不排队等待 —— 因为调用方（app 启动）不需要等结果，而真实请求走的是
+    # `get_ai_service()`，它会在模型就绪后正常推理（那时预热线程已经填好了 model）。
+    if not _WARMUP_LOCK.acquire(blocking=False):
+        logger.info('AI 预热已在进行中，跳过重复调度')
+        return False
+
     try:
         service = get_ai_service()
         if not service or not getattr(service, 'model', None):
@@ -432,3 +460,7 @@ def warm_up(*, force: bool = False) -> bool:
         # "否决启动"的权力（模型缺失、内存不足都可能发生，而其它接口仍然可用）。
         logger.warning('AI 预热失败（不影响启动）：%s', exc, exc_info=True)
         return False
+    finally:
+        # 必须在 finally 里放锁：漏掉任何一条返回路径都会让锁永远不释放，
+        # 之后每次调度都直接被跳过（而且是静默的 —— 只有一行 info 日志）
+        _WARMUP_LOCK.release()

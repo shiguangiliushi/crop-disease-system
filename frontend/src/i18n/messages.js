@@ -1328,6 +1328,14 @@ export const zhCN = {
     sending: '发送中...',
     loadMore: '加载更多',
     unreadCount: '{count} 条未读私信',
+    // 第 112 批：私信页加"发起新私信"（原来只能等别人先找你，
+    // 用户反馈"私信功能用不了"就是这个 —— 收发链路本身是好的）
+    newMessage: '发起私信',
+    newMessageTitle: '发起新私信',
+    searchHint: '输入对方用户名，至少 2 个字',
+    searchEmpty: '没有找到这个用户',
+    searchTooShort: '请至少输入 2 个字',
+    startChat: '开始聊天',
   },
   news: {
     title: '行业动态',
@@ -3653,6 +3661,13 @@ export const en = {
     sending: 'Sending...',
     loadMore: 'Load more',
     unreadCount: '{count} unread message(s)',
+    // Batch 112: a way to start a new conversation from the messages page
+    newMessage: 'New message',
+    newMessageTitle: 'Start a new conversation',
+    searchHint: 'Type a username (at least 2 characters)',
+    searchEmpty: 'No user found with that name',
+    searchTooShort: 'Type at least 2 characters',
+    startChat: 'Start chatting',
   },
   news: {
     title: 'Industry News',

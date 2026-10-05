@@ -13,6 +13,19 @@
         </div>
       </div>
       <div class="admin-hero-actions">
+        <!-- ⚠️ 第 112 批：这个按钮是**后补的**，而且它解决的是用户真实反馈
+             "私信功能用不了"。查下来的结论是：收发链路完全正常（发信 201、
+             未读计数、通知、"我发的"气泡都对），**缺的是"发起新会话"的入口** ——
+             私信页只能显示已有会话，新会话的唯一入口是"先进对方主页再点私信"，
+             而空列表时页面只写一句"还没有私信"，用户根本不知道该去哪儿找人。
+
+             顺带发现 i18n 里 `messages` 命名空间**本来就定义了** searchPlaceholder /
+             selectConversation / deleteConversation 等 10 个键，但 MessagesView
+             一个都没用 —— 说明"联系人搜索"当初设计过、没实现。这里把它补上，
+             并复用已有的 searchPlaceholder 文案。 -->
+        <el-button type="primary" plain @click="openNewMessage">
+          <i class="fas fa-pen-to-square"></i> {{ t('messages.newMessage') }}
+        </el-button>
         <el-button plain :loading="loadingConversations" @click="loadConversations">
           <i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}
         </el-button>
@@ -120,6 +133,55 @@
         </div>
       </section>
     </div>
+
+    <!-- ⚠️ 第 112 批：发起新私信（搜人）的弹窗。
+         没有它的时候，空会话列表等于"这个功能用不了"—— 用户只能等别人先找他。 -->
+    <el-dialog
+      v-model="newMessageVisible"
+      :title="t('messages.newMessageTitle')"
+      width="460px"
+      class="form-dialog"
+    >
+      <el-input
+        v-model="searchKeyword"
+        :placeholder="t('messages.searchPlaceholder')"
+        clearable
+        @input="onSearchInput"
+      >
+        <template #prefix><i class="fas fa-magnifying-glass"></i></template>
+      </el-input>
+      <p class="search-hint">
+        <i class="fas fa-circle-info"></i> {{ t('messages.searchHint') }}
+      </p>
+
+      <div v-if="searching" class="search-loading">
+        <el-skeleton :rows="3" animated />
+      </div>
+      <!-- 关键词太短时后端会回一句 detail（不是报错），直接显示它 -->
+      <p v-else-if="searchHint" class="search-empty">{{ searchHint }}</p>
+      <p v-else-if="searchResults.length === 0" class="search-empty">
+        {{ searchKeyword.trim().length >= 2 ? t('messages.searchEmpty') : '' }}
+      </p>
+      <ul v-else class="search-results">
+        <li
+          v-for="user in searchResults"
+          :key="user.id"
+          class="search-item"
+          @click="startChatWith(user)"
+        >
+          <el-avatar :size="34" :src="user.avatar || undefined">
+            {{ user.username ? user.username[0].toUpperCase() : 'U' }}
+          </el-avatar>
+          <div class="search-info">
+            <span class="search-name">{{ user.username }}</span>
+            <span v-if="user.bio" class="search-bio">{{ user.bio }}</span>
+          </div>
+          <el-button size="small" type="primary" plain>
+            {{ t('messages.startChat') }}
+          </el-button>
+        </li>
+      </ul>
+    </el-dialog>
   </div>
 </template>
 
@@ -136,7 +198,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
 import { formatTime, timeAgo } from '@/utils/date';  // 第 84 批：相对时间跟随语言
-import { fetchConversation, fetchConversations, sendMessage } from '@/api/message';
+import { fetchConversation, fetchConversations, searchUsers, sendMessage } from '@/api/message';
 import { useI18n } from '@/i18n';  // 第 64 批：多语言
 import { formatApiError } from '@/api/http';
 import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
@@ -158,6 +220,60 @@ export default {
     const draft = ref('');
     const sending = ref(false);
     const threadRef = ref(null);
+
+    // ---- 发起新私信（第 112 批）------------------------------------------
+    const newMessageVisible = ref(false);
+    const searchKeyword = ref('');
+    const searchResults = ref([]);
+    const searching = ref(false);
+    const searchHint = ref('');
+    /** 防抖计时器：搜人是逐字符请求，不防抖会打出一串无用请求 */
+    let searchTimer = null;
+
+    const openNewMessage = () => {
+      searchKeyword.value = '';
+      searchResults.value = [];
+      searchHint.value = '';
+      newMessageVisible.value = true;
+    };
+
+    const onSearchInput = () => {
+      if (searchTimer) clearTimeout(searchTimer);
+      // 关键词不足 2 个字：本地直接给提示，**不发请求**
+      // （后端的限制也是 2 个字，提前拦住能少一半无用请求）
+      if (searchKeyword.value.trim().length < 2) {
+        searchResults.value = [];
+        searchHint.value = searchKeyword.value.trim() ? t('messages.searchTooShort') : '';
+        return;
+      }
+      searching.value = true;
+      searchTimer = setTimeout(async () => {
+        try {
+          const data = await searchUsers(searchKeyword.value.trim());
+          searchResults.value = data?.results || [];
+          // 后端在关键词太短时会回 detail，把它当提示显示（不是错误）
+          searchHint.value = data?.detail || '';
+        } catch (error) {
+          searchResults.value = [];
+          searchHint.value = formatApiError(error, t('messages.searchEmpty'));
+        } finally {
+          searching.value = false;
+        }
+      }, 300);
+    };
+
+    /**
+     * 选中某人 → 关弹窗 → 直接打开与他的会话。
+     *
+     * 刻意**不**要求"先发一条消息才建会话"：这个后端模型的会话是按参与双方
+     * 计算出来的（`conversation_key`），没有"空会话"这种状态 ——
+     * 打开一个从未聊过的人就是空聊天窗口，发送键在下面，用户自己决定说什么。
+     * 这样也少一次"建会话"的接口往返。
+     */
+    const startChatWith = (user) => {
+      newMessageVisible.value = false;
+      openConversation(user.id);
+    };
 
     const activeUserId = computed(() => activeUser.value?.id ?? null);
 
@@ -257,6 +373,19 @@ export default {
       openConversation,
       send,
       goProfile,
+      // 第 112 批：发起新私信。**必须全部 return** ——
+      // 本项目在"setup 里定义了却没 return"上踩过三次
+      // （第 64/67/68 批：MessagesView / MessageEntry / NotificationBell），
+      // 现象是模板渲染时 `_ctx.xxx is not a function`，而 type-check 不报。
+      // `component-wiring.spec.js` 会静态检查这件事。
+      newMessageVisible,
+      searchKeyword,
+      searchResults,
+      searching,
+      searchHint,
+      openNewMessage,
+      onSearchInput,
+      startChatWith,
     };
   },
 };
@@ -459,6 +588,74 @@ export default {
 .chat-placeholder i {
   font-size: 34px;
   color: var(--brand-300);
+}
+
+/* ---- 发起新私信的弹窗（第 112 批）------------------------------------ */
+.search-hint {
+  margin: 8px 0 12px;
+  font-size: 12.5px;
+  color: var(--ink-500, #6b7c73);
+}
+
+.search-hint i {
+  margin-right: 4px;
+}
+
+.search-empty {
+  margin: 18px 0;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--ink-500, #6b7c73);
+}
+
+.search-loading {
+  padding: 8px 0;
+}
+
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.search-item:hover {
+  background: var(--brand-50, #eef7f1);
+}
+
+.search-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-name {
+  font-weight: 600;
+  color: var(--ink-800, #24352c);
+  /* 用户名可能很长，别把"开始聊天"按钮挤出去 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-bio {
+  font-size: 12px;
+  color: var(--ink-500, #6b7c73);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

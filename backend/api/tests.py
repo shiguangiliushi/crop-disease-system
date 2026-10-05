@@ -4316,20 +4316,107 @@ class PruneMediaCommandTests(TestCase):
 # ============================================================================
 class AIWarmUpTests(TestCase):
     """
-    AI 启动预热（第 107 批）
+    AI 启动预热（第 107 批新增，第 113 批**改为后台线程**）
 
     解决的是"**第一个上传图片的用户要等 20 多秒**"：
     实测冷启动 = 加载模型 5.5s + 第一次真实推理 21s，之后每次 0.8s。
     `AIService.__new__` 里那个零张量"预测测试"只覆盖模型加载，
     盖不住第一次真实推理的一次性开销，所以账还是算在第一个用户头上。
 
+    ⚠️⚠️ **第 113 批的重大修正**：第 107 批是**同步**调用 `warm_up()` 的，那是错的。
+    `apps.ready()` 在服务器开始监听端口**之前**执行，所以同步预热会让服务在
+    这 30 秒里完全不接受连接（浏览器显示"无法连接"）—— 对使用者来说比
+    "第一个请求慢"更糟，因为看起来像**服务没起来**。
+    实测更糟：在 `runserver --noreload` 下它**真的卡住过** ——
+    日志停在 `results[0].plot(...)`、CPU 0%、4 分钟不监听端口，
+    而同样的代码手动调用 30 秒就正常返回。
+
+    现在改成守护线程 + 一把 `_WARMUP_LOCK`（防止"预热刚起来时正好来请求"
+    导致两边同时加载模型）。所以下面的用例里多了两条钉住这次修正的。
+
     这些测试**不真的加载模型**（那会让整套测试慢几十秒，而且依赖权重文件），
-    只钉住三件容易出错的事：
+    只钉住几件容易出错的事：
       1. 开关能关掉（跑测试/慢机器时不想拖长启动）；
-      2. **预热失败绝不影响启动** —— 这是最重要的一条：识别是核心功能，
+      2. **预热失败绝不影响启动** —— 识别是核心功能，
          但它不该拥有"否决服务启动"的权力；
-      3. 模型不可用时给出的是"跳过"而不是抛异常。
+      3. 模型不可用时给出的是"跳过"而不是抛异常；
+      4. **调度预热不能阻塞**（第 113 批）；
+      5. **重复调度要被锁挡住**，且锁一定会释放（第 113 批）。
     """
+
+    def test_warm_up_is_dispatched_in_background_thread(self):
+        """
+        第 113 批：`apps.ready()` 必须**在线程里**调度预热，不能同步等它。
+
+        这条是本次事故的直接回归。判据选"源码里有没有
+        `threading.Thread(... target=warm_up ...)`"而不是"测启动耗时" ——
+        后者要真的加载模型才能测（几十秒 + 依赖权重文件），
+        而**这个 bug 的本质就是"有没有用线程"**，静态判定足够且快得多。
+        """
+        from pathlib import Path
+
+        from django.conf import settings
+
+        source = Path(settings.BASE_DIR, 'api', 'apps.py').read_text(encoding='utf-8')
+        self.assertIn('threading.Thread(', source, 'apps.ready() 里应当用线程调度预热')
+        self.assertIn('target=warm_up', source, '线程的目标应当是 warm_up')
+        self.assertIn('daemon=True', source, '必须是守护线程，否则会拖住进程退出')
+        # 反向断言：不能再出现"直接调用 warm_up()"（同步写法）
+        self.assertNotRegex(
+            source,
+            r'^\s+warm_up\(\)\s*$',
+            'apps.py 里又出现了同步调用 warm_up() —— 那会让服务在预热期间不接受连接',
+        )
+
+    def test_concurrent_warm_up_is_skipped_by_lock(self):
+        """
+        第 113 批：预热正在跑时，第二次调度要被**跳过**（不能排队、更不能同时加载）。
+
+        并发窗口是真实存在的：预热线程刚起来的那一瞬可能正好来了识别请求。
+        两边同时走 `YOLO(model_path)` 会加载两份 6MB 权重、两个 torch 前向抢 CPU，
+        而 torch 的延迟初始化在极端情况下不是线程安全的。
+
+        用 `blocking=False` 拿锁：拿不到就返回 False（"已在进行中"）。
+        """
+        from api import ai_service
+
+        # 手动占住锁，模拟"预热正在进行"
+        self.assertTrue(ai_service._WARMUP_LOCK.acquire(blocking=False))
+        try:
+            with override_settings(AI_WARMUP_ON_STARTUP=True):
+                self.assertFalse(
+                    ai_service.warm_up(force=True),
+                    '锁被占着时应当直接跳过，而不是排队等待或重复加载',
+                )
+        finally:
+            ai_service._WARMUP_LOCK.release()
+
+    def test_lock_is_released_on_every_failure_path(self):
+        """
+        第 113 批：**失败路径也必须放锁**。
+
+        漏掉任何一条返回路径都会让锁永远不释放，后果是之后每次预热调度
+        都被静默跳过（只有一行 info 日志）—— 而"第一个用户等 20 秒"
+        这个问题会悄悄回来，且没有任何报错。
+        """
+        from api import ai_service
+
+        class Boom:
+            model = object()   # 非 None，让流程走到 predict
+
+            def predict(self, _buffer):
+                raise RuntimeError('模拟推理崩溃')
+
+        with override_settings(AI_WARMUP_ON_STARTUP=True):
+            with patch.object(ai_service, 'get_ai_service', return_value=Boom()):
+                self.assertFalse(ai_service.warm_up(force=True))
+
+        # 关键断言：锁必须已经释放（能再拿到）
+        self.assertTrue(
+            ai_service._WARMUP_LOCK.acquire(blocking=False),
+            '预热失败后锁没有释放 —— 之后所有预热都会被静默跳过',
+        )
+        ai_service._WARMUP_LOCK.release()
 
     def test_switch_can_disable_warm_up(self):
         from api.ai_service import warm_up
@@ -7329,3 +7416,121 @@ class TranslateProviderTests(TestCase):
         self.assertIn('stub translation', out.getvalue())
 
 
+# ============================================================================
+# 第 112 批：私信"发起新会话"用的用户搜索
+# ============================================================================
+class UserSearchViewTests(TestCase):
+    """
+    `GET /api/users/search/?q=<关键词>`（第 112 批）
+
+    背景：用户反馈"私信功能用不了"，查下来收发链路是好的 ——
+    问题是**没有发起新会话的入口**，用户不知道去哪儿找人。
+    私信页要加一个"发起新私信"的弹窗，而这个弹窗需要一个
+    "普通用户也能按用户名搜人"的接口：
+
+      · `/api/users/`        是仅管理员（IsAdminUser），普通用户搜不了；
+      · `/api/users/follow-suggestions/` 只回固定 Top 5，不接受关键词。
+
+    这个接口让**任何登录用户**都能按用户名查人，等于把"平台上有哪些用户"
+    开放了出去，所以限制得比较紧 —— 下面每条用例钉住其中一道限制。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.me = User.objects.create_user(username='search_me', password='pw12345678')
+        cls.alice = User.objects.create_user(username='alice_farmer', password='pw12345678')
+        cls.alice2 = User.objects.create_user(username='alice_worker', password='pw12345678')
+        cls.bob = User.objects.create_user(username='bob_grower', password='pw12345678')
+        # 注销冷静期里的账号（is_active=False）不该被搜到
+        cls.gone = User.objects.create_user(username='alice_gone', password='pw12345678')
+        cls.gone.is_active = False
+        cls.gone.save(update_fields=['is_active'])
+
+    def setUp(self):
+        cache.clear()
+        self.client_auth = APIClient()
+        self.client_auth.force_authenticate(user=self.me)
+
+    def _search(self, keyword):
+        return self.client_auth.get('/api/users/search/', {'q': keyword})
+
+    def test_requires_login(self):
+        """未登录不能用来枚举用户名"""
+        response = APIClient().get('/api/users/search/', {'q': 'alice'})
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_finds_by_partial_username(self):
+        response = self._search('alice')
+        self.assertEqual(response.status_code, 200)
+        names = {item['username'] for item in response.data['results']}
+        self.assertIn('alice_farmer', names)
+        self.assertIn('alice_worker', names)
+        self.assertNotIn('bob_grower', names, '不该匹配到不含关键词的人')
+
+    def test_excludes_self(self):
+        """搜到自己没有意义（私信页也不需要给自己发消息）"""
+        names = {item['username'] for item in self._search('search_me').data['results']}
+        self.assertNotIn('search_me', names)
+
+    def test_excludes_inactive_user(self):
+        """注销冷静期里的账号（is_active=False）不该还能被搜到"""
+        names = {item['username'] for item in self._search('alice').data['results']}
+        self.assertNotIn('alice_gone', names)
+
+    def test_short_keyword_returns_empty_with_hint(self):
+        """
+        关键词太短 → 空列表 + 提示，而不是报错。
+
+        为什么必须有这条：没有最小长度限制时，`?q=a` 可以把全站用户名
+        **逐字母扫出来**（用户名常常就是手机号或真名，能枚举本身就是隐私问题）。
+        回空列表而不是 400，是因为用户只是还没输够字，不是操作错了 ——
+        弹错误框反而像"功能坏了"。
+        """
+        for keyword in ('', 'a', ' '):
+            with self.subTest(keyword=keyword):
+                response = self._search(keyword)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data['results'], [])
+                self.assertIn('至少', response.data['detail'])
+
+    def test_result_is_capped(self):
+        """一次最多 10 条 —— 不能靠翻页把整站用户拉走"""
+        for index in range(15):
+            User.objects.create_user(username=f'cap_user_{index}', password='pw12345678')
+        response = self._search('cap_user')
+        self.assertEqual(len(response.data['results']), 10)
+
+    def test_only_minimal_fields_returned(self):
+        """
+        只回最少字段 —— 不回 email、积分、登录时间等。
+
+        允许 `role`：它不是敏感信息，而且是**展示需要**的
+        （前端要在候选列表里标出"专家/管理员"），
+        `follow-suggestions` 回的也是同一组字段（两条共用 `_user_brief`）。
+        最初我按"id/username/avatar/bio"写死了四个，测试红了 ——
+        红得对：**该由"这个字段该不该公开"来决定，而不是由我以为的清单决定**。
+
+        这条测试的真正价值是**挡住以后往上加字段**：接口对所有登录用户开放，
+        多回一个字段就是多泄露一份信息（比如 email、`last_login`）。
+        """
+        item = self._search('alice_farmer').data['results'][0]
+        allowed = {'id', 'username', 'avatar', 'bio', 'role'}
+        self.assertEqual(
+            set(item.keys()) - allowed,
+            set(),
+            f'多回了字段：{sorted(set(item.keys()) - allowed)} —— '
+            '这个接口对所有登录用户开放，加字段前先想清楚是否必要',
+        )
+
+    def test_search_path_does_not_shadow_user_detail(self):
+        """
+        `/api/users/search/` 必须排在 `/api/users/<int:user_id>/` 之前。
+
+        这条不只是"顺序约定"：如果顺序反了，`search` 会被当成 user_id 去匹配
+        int 转换器 → 匹配不上 → **404**，而搜索功能会整个失效。
+        （同 `users/check-username/` 那条的理由，见 urls.py 的注释。）
+        """
+        from django.urls import resolve
+
+        match = resolve('/api/users/search/')
+        self.assertEqual(match.url_name, 'user-search')

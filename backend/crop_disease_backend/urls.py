@@ -81,6 +81,7 @@ FollowToggleView = import_view('api.views_social', 'FollowToggleView')
 FollowListView = import_view('api.views_social', 'FollowListView')
 MyFollowingStatsView = import_view('api.views_social', 'MyFollowingStatsView')
 FollowSuggestionView = import_view('api.views_social', 'FollowSuggestionView')
+UserSearchView = import_view('api.views_social', 'UserSearchView')  # 第 112 批：发起私信时搜人
 # 第 41 批：举报
 ReportViewSet = import_view('api.views_report', 'ReportViewSet')
 ReportHandleView = import_view('api.views_report', 'ReportHandleView')
@@ -197,6 +198,10 @@ api_urlpatterns = [
     path('users/me/following/', FollowListView.as_view(), {'direction': 'following'}, name='my-following'),
     path('users/me/follow-stats/', MyFollowingStatsView.as_view(), name='my-follow-stats'),
     path('users/follow-suggestions/', FollowSuggestionView.as_view(), name='follow-suggestions'),
+    # 第 112 批：按用户名搜索用户 —— 给"发起新私信"用。
+    # 必须放在 `users/<int:user_id>/` **之前**（同 check-username 那条的理由：
+    # "search" 不是 int，匹配不上 int 规则会 404）。
+    path('users/search/', UserSearchView.as_view(), name='user-search'),
     path('site-config/', SiteConfigView.as_view(), name='site-config'),  # 第 38 批：发帖审核开关
 
     # 敏感词词库（第 38 批，仅管理员）
