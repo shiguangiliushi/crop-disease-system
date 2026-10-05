@@ -1338,6 +1338,16 @@ export const zhCN = {
     searchEmpty: '没有找到这个用户',
     searchTooShort: '请至少输入 2 个字',
     startChat: '开始聊天',
+    // 第 114 批：往上翻历史 / 已读回执 / 图片消息 / 删除会话
+    loadOlder: '查看更早的消息',
+    loadOlderFailed: '加载更早的消息失败',
+    read: '已读',
+    unread: '未读',
+    sendImage: '发送图片',
+    sendImageFailed: '图片发送失败',
+    deleteConfirm: '删除与「{name}」的整个会话？仅对你隐藏，对方仍然看得到。',
+    deleted: '会话已删除',
+    deleteFailed: '删除会话失败',
   },
   news: {
     title: '行业动态',
@@ -3674,6 +3684,16 @@ export const en = {
     searchEmpty: 'No user found with that name',
     searchTooShort: 'Type at least 2 characters',
     startChat: 'Start chatting',
+    // Batch 114: older history / read receipts / image messages / delete
+    loadOlder: 'Load earlier messages',
+    loadOlderFailed: 'Could not load earlier messages',
+    read: 'Read',
+    unread: 'Unread',
+    sendImage: 'Send an image',
+    sendImageFailed: 'Could not send the image',
+    deleteConfirm: 'Delete the whole conversation with “{name}”? It is hidden only for you — they still see it.',
+    deleted: 'Conversation deleted',
+    deleteFailed: 'Could not delete the conversation',
   },
   news: {
     title: 'Industry News',

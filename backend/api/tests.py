@@ -43,6 +43,7 @@ from .models_report import Report  # 第 41 批：举报
 from .models_calendar import CalendarTask  # 第 47 批：种植日历
 from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile  # 第 49 批：专家咨询
 from .models_message import DirectMessage  # 第 42 批：私信
+from .models_message import conversation_key_for  # 第 114 批：私信测试要自己造会话消息
 from .models_points import PointLog  # 第 42 批：积分流水
 from .image_validation import MAX_IMAGE_SIZE  # 第 91 批：图片上传大小上限
 
@@ -7534,3 +7535,315 @@ class UserSearchViewTests(TestCase):
 
         match = resolve('/api/users/search/')
         self.assertEqual(match.url_name, 'user-search')
+
+
+# ============================================================================
+# 第 114 批：私信重做（分页 / 已读反馈 / 单侧删除 / 摘要）
+# ============================================================================
+class DirectMessagePaginationTests(TestCase):
+    """
+    `GET /api/messages/with/<id>/?before_id=`
+
+    修的是**结构性缺陷**：原来 `list(queryset)` 把整个会话读进内存再切最后 100 条，
+    于是更早的消息**没有任何接口能取到** —— 聊久了就等于丢历史。
+    现在用 `before_id` 游标分页。
+
+    为什么用游标而不是 offset：聊天时随时会插入新消息，
+    offset 分页会因为插入而**错位/重复**（经典坑）。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.me = User.objects.create_user(username='pg_me', password='pw12345678')
+        cls.other = User.objects.create_user(username='pg_other', password='pw12345678')
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.me)
+        self.key = conversation_key_for(self.me.id, self.other.id)
+
+    def _make_history(self, count, *, sender=None):
+        """造 `count` 条**对方发给我**的消息（这样也能顺便验证未读逻辑）"""
+        sender = sender or self.other
+        recipient = self.me if sender == self.other else self.other
+        return [
+            DirectMessage.objects.create(
+                sender=sender, recipient=recipient, content=f'第 {index} 条',
+                conversation_key=self.key, is_read=False,
+            )
+            for index in range(count)
+        ]
+
+    def test_returns_newest_page_by_default(self):
+        """默认回**最新**一页（打开聊天就该看到最近的）"""
+        self._make_history(60)
+        response = self.client.get(f'/api/messages/with/{self.other.id}/', {'page_size': 20})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 20)
+        contents = [item['content'] for item in response.data['results']]
+        # 返回顺序是"从旧到新"（聊天记录该有的顺序）
+        self.assertEqual(contents[0], '第 40 条')
+        self.assertEqual(contents[-1], '第 59 条')
+        self.assertTrue(response.data['has_more'], '还有更早的消息，has_more 应为 True')
+
+    def test_before_id_walks_backwards(self):
+        """带 before_id 能取到更早的一页 —— 这正是原来取不到的部分"""
+        self._make_history(60)
+        first = self.client.get(f'/api/messages/with/{self.other.id}/', {'page_size': 20}).data
+        self.assertEqual(first['results'][0]['content'], '第 40 条')
+
+        second = self.client.get(
+            f'/api/messages/with/{self.other.id}/',
+            {'page_size': 20, 'before_id': first['oldest_id']},
+        ).data
+        contents = [item['content'] for item in second['results']]
+        self.assertEqual(len(contents), 20)
+        self.assertEqual(contents[-1], '第 39 条', '上一页的最后一条应当紧挨着这一页的第一条')
+        self.assertEqual(contents[0], '第 20 条')
+        self.assertTrue(second['has_more'])
+
+    def test_walk_to_the_very_beginning(self):
+        """一直翻能翻到第一条，并且最后 has_more=False（不会无限翻）"""
+        self._make_history(35)
+        collected = []
+        before = None
+        for _ in range(10):  # 上限防止死循环
+            params = {'page_size': 10}
+            if before:
+                params['before_id'] = before
+            page = self.client.get(f'/api/messages/with/{self.other.id}/', params).data
+            collected = [item['content'] for item in page['results']] + collected
+            if not page['has_more']:
+                break
+            before = page['oldest_id']
+        self.assertEqual(len(collected), 35, '应当正好把 35 条全部翻完')
+        self.assertEqual(collected[0], '第 0 条')
+        self.assertEqual(collected[-1], '第 34 条')
+
+    def test_older_page_does_not_mark_new_messages_read(self):
+        """
+        **往上翻历史不该把新消息标成已读。**
+
+        这条很要紧：用户翻历史时并没有看到最新那条，
+        如果把未读清零，红点会凭空消失、消息再也不会被注意到。
+        """
+        self._make_history(30)
+        first = self.client.get(f'/api/messages/with/{self.other.id}/', {'page_size': 10}).data
+        self.assertGreaterEqual(first['marked_read'], 1, '打开最新一页应当清零未读')
+
+        # 再翻历史页：不该有任何"标记已读"
+        second = self.client.get(
+            f'/api/messages/with/{self.other.id}/',
+            {'page_size': 10, 'before_id': first['oldest_id']},
+        ).data
+        self.assertEqual(second['marked_read'], 0, '翻历史页不该标记已读')
+
+    def test_fresh_unread_survives_walking_history(self):
+        """对方刚发来的未读，在我只翻历史时**必须还是未读**"""
+        self._make_history(20)
+        first = self.client.get(f'/api/messages/with/{self.other.id}/', {'page_size': 10}).data
+        self.assertGreater(first['marked_read'], 0)
+
+        fresh = DirectMessage.objects.create(
+            sender=self.other, recipient=self.me, content='刚发来的',
+            conversation_key=self.key, is_read=False,
+        )
+        self.client.get(
+            f'/api/messages/with/{self.other.id}/',
+            {'page_size': 10, 'before_id': first['oldest_id']},
+        )
+        fresh.refresh_from_db()
+        self.assertFalse(fresh.is_read, '只翻历史时，最新那条未读不该被标记')
+
+    def test_invalid_cursor_falls_back_to_newest_page(self):
+        """
+        游标无效（消息被删了 / 不是这个会话的）时回**最新一页**，而不是报错。
+
+        为什么：前端往上滚的一瞬间，对方可能正好删了那条消息 ——
+        报错会让整个聊天窗口红掉，而用户只是想看更早的记录。
+        """
+        self._make_history(5)
+        response = self.client.get(
+            f'/api/messages/with/{self.other.id}/', {'before_id': 99999999, 'page_size': 10},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 5, '应当回退到最新一页')
+
+
+class DirectMessageReadReceiptTests(TestCase):
+    """
+    `read_at` 要在序列化里返回（第 114 批）。
+
+    原来这个字段一直在写（打开会话时 `update(is_read=True, read_at=now)`），
+    但**从不返回** —— 前端想显示"已读"也没有数据可用。典型的"写了没人读"。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.me = User.objects.create_user(username='rr_me', password='pw12345678')
+        cls.other = User.objects.create_user(username='rr_other', password='pw12345678')
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.me)
+
+    def test_read_at_is_returned(self):
+        sent = DirectMessage.objects.create(
+            sender=self.me, recipient=self.other, content='你好',
+            conversation_key=conversation_key_for(self.me.id, self.other.id),
+        )
+        response = self.client.get(f'/api/messages/with/{self.other.id}/')
+        self.assertIsNone(response.data['results'][0]['read_at'], '还没读 → read_at 为 None')
+
+        # 对方读了（直接改库模拟"对方打开会话"）
+        sent.is_read = True
+        sent.read_at = timezone.now()
+        sent.save(update_fields=['is_read', 'read_at'])
+
+        response = self.client.get(f'/api/messages/with/{self.other.id}/')
+        self.assertIsNotNone(
+            response.data['results'][0]['read_at'],
+            '读过的消息必须带上 read_at —— 否则前端做不了"已读"标记',
+        )
+
+
+class DirectMessageDeleteTests(TestCase):
+    """
+    `DELETE /api/messages/with/<id>/`（第 114 批）
+
+    `sender_deleted` / `recipient_deleted` 两个字段从第 42 批起就在库里，
+    但**一直没有接口写它们**（死字段）。补上删除时最关键的一点是
+    **单侧**：我删掉不该让对方也看不到 —— 这是模型注释里就写明的设计。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.me = User.objects.create_user(username='del_me', password='pw12345678')
+        cls.other = User.objects.create_user(username='del_other', password='pw12345678')
+
+    def setUp(self):
+        cache.clear()
+        self.key = conversation_key_for(self.me.id, self.other.id)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.me)
+        self.other_client = APIClient()
+        self.other_client.force_authenticate(user=self.other)
+
+    def test_delete_only_hides_for_me(self):
+        mine = DirectMessage.objects.create(
+            sender=self.me, recipient=self.other, content='我发的', conversation_key=self.key,
+        )
+        theirs = DirectMessage.objects.create(
+            sender=self.other, recipient=self.me, content='他发的', conversation_key=self.key,
+        )
+
+        response = self.client.delete(f'/api/messages/with/{self.other.id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['deleted'], 2)
+
+        mine.refresh_from_db()
+        theirs.refresh_from_db()
+        self.assertTrue(mine.sender_deleted, '我发的、我删了 → sender_deleted')
+        self.assertTrue(theirs.recipient_deleted, '他发的、我删了 → recipient_deleted')
+        self.assertEqual(self.client.get('/api/messages/').data['count'], 0, '我的会话列表应当空了')
+
+        # 对方那边：完全不受影响
+        self.assertEqual(
+            self.other_client.get('/api/messages/').data['count'], 1,
+            '我删会话不该让对方的会话也消失（单侧软删）',
+        )
+        detail = self.other_client.get(f'/api/messages/with/{self.me.id}/').data
+        self.assertEqual(detail['count'], 2, '对方仍然能看到两条消息')
+
+    def test_new_message_restores_the_other_side(self):
+        """
+        对方删过会话后，我再发一条 —— 对方那边必须能重新看到。
+
+        否则从对方视角看就是**这条新消息凭空消失**（他的 `recipient_deleted`
+        还挂着，那一侧过滤掉了整个会话）。
+        """
+        DirectMessage.objects.create(
+            sender=self.me, recipient=self.other, content='旧消息', conversation_key=self.key,
+        )
+        self.other_client.delete(f'/api/messages/with/{self.me.id}/')
+        self.assertEqual(self.other_client.get('/api/messages/').data['count'], 0)
+
+        self.client.post(f'/api/messages/with/{self.other.id}/', {'content': '新消息'}, format='json')
+        self.assertEqual(
+            self.other_client.get('/api/messages/').data['count'], 1,
+            '收到新消息后，对方那一侧的删除标记应当被清掉',
+        )
+
+    def test_delete_does_not_restore_my_own_deleted_messages(self):
+        """
+        发新消息时只清 `recipient_deleted`，**不能连 `sender_deleted` 一起清**。
+
+        后者是"这条消息的发件人不想要它了"，与收件人无关；
+        一起清会把发件人自己删过的消息又恢复出来（我第一版就是这么写的）。
+        """
+        old = DirectMessage.objects.create(
+            sender=self.me, recipient=self.other, content='我早先删掉的', conversation_key=self.key,
+        )
+        DirectMessage.objects.filter(pk=old.pk).update(sender_deleted=True)
+        self.client.post(f'/api/messages/with/{self.other.id}/', {'content': '新的一条'}, format='json')
+
+        old.refresh_from_db()
+        self.assertTrue(old.sender_deleted, '我自己删过的消息不该被恢复出来')
+
+    def test_cannot_delete_conversation_with_self(self):
+        """不能给自己发私信 —— 删除同样应当被拒（否则会误删自己的另一半消息）"""
+        response = self.client.delete(f'/api/messages/with/{self.me.id}/')
+        self.assertEqual(response.status_code, 400)
+
+
+class DirectMessagePreviewTests(TestCase):
+    """会话列表的"最后一条"摘要（第 114 批）"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.me = User.objects.create_user(username='pv_me', password='pw12345678')
+        cls.other = User.objects.create_user(username='pv_other', password='pw12345678')
+
+    def setUp(self):
+        cache.clear()
+        self.key = conversation_key_for(self.me.id, self.other.id)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.me)
+
+    def _preview(self):
+        return self.client.get('/api/messages/').data['results'][0]['last_message']
+
+    def test_image_message_shows_label_not_raw_json(self):
+        """
+        图片消息的正文是 JSON，摘要必须是 `[图片]` 而不是原始 JSON。
+
+        原来直接 `content[:60]`，会话列表里会显示
+        `{"type":"image","url":"http://…` —— 用户看到的是半个 URL。
+        """
+        DirectMessage.objects.create(
+            sender=self.other, recipient=self.me,
+            content='{"type": "image", "url": "http://x/y.jpg"}',
+            conversation_key=self.key,
+        )
+        preview = self._preview()
+        self.assertEqual(preview, '[图片]')
+        self.assertNotIn('http', preview)
+
+    def test_text_message_preview_unchanged(self):
+        DirectMessage.objects.create(
+            sender=self.other, recipient=self.me, content='普通文字消息',
+            conversation_key=self.key,
+        )
+        self.assertEqual(self._preview(), '普通文字消息')
+
+    def test_broken_json_falls_back_to_text(self):
+        """正文是坏 JSON（以 `{` 开头但解析不了）时按普通文字处理，不该 500"""
+        DirectMessage.objects.create(
+            sender=self.other, recipient=self.me, content='{这不是合法 JSON',
+            conversation_key=self.key,
+        )
+        response = self.client.get('/api/messages/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['results'][0]['last_message'], '{这不是合法 JSON')

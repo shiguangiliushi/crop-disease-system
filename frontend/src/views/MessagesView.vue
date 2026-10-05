@@ -79,12 +79,30 @@
               <el-button size="small" text @click="goProfile(activeUser.id)">
                 <i class="fas fa-id-card"></i> {{ t('messages.viewProfile') }}
               </el-button>
+              <!-- 删除会话（第 114 批）：两个软删字段从第 42 批就在库里，一直没有接口去写 -->
+              <el-button
+                size="small"
+                text
+                type="danger"
+                :title="t('messages.deleteConversation')"
+                @click="confirmDeleteConversation"
+              >
+                <i class="fas fa-trash-can"></i>
+              </el-button>
             </div>
           </div>
 
-          <div ref="threadRef" class="chat-thread">
+          <div ref="threadRef" class="chat-thread" @scroll.passive="onThreadScroll">
             <el-skeleton v-if="loadingMessages" :rows="5" animated />
             <template v-else>
+              <!-- 往上翻历史（第 114 批）。原来只能看最近一页，更早的取不到。 -->
+              <div v-if="hasMore" class="load-older">
+                <el-button size="small" text :loading="loadingOlder" @click="loadOlder">
+                  <i class="fas fa-clock-rotate-left"></i>
+                  {{ t('messages.loadOlder') }}
+                </el-button>
+              </div>
+
               <p v-if="messages.length === 0" class="chat-empty">
                 {{ t('messages.emptyThread') }}
               </p>
@@ -98,8 +116,23 @@
                   {{ message.sender.username[0]?.toUpperCase() }}
                 </el-avatar>
                 <div class="chat-bubble">
-                  <p class="chat-text">{{ message.content }}</p>
-                  <span class="chat-time">{{ formatTime(message.created_at) }}</span>
+                  <!-- 图片消息（第 114 批）：点开看大图 -->
+                  <el-image
+                    v-if="parsed(message).kind === 'image'"
+                    class="chat-image"
+                    :src="parsed(message).url"
+                    :preview-src-list="[parsed(message).url]"
+                    :preview-teleported="true"
+                    fit="cover"
+                  />
+                  <p v-else class="chat-text">{{ parsed(message).text }}</p>
+                  <span class="chat-time">
+                    {{ formatTime(message.created_at) }}
+                    <!-- 已读回执（第 114 批）：只标我发的最后一条，避免每条都挂一个"已读" -->
+                    <em v-if="isMine(message) && message.id === lastMineId" class="chat-read-state">
+                      · {{ message.read_at ? t('messages.read') : t('messages.unread') }}
+                    </em>
+                  </span>
                 </div>
               </div>
             </template>
@@ -120,6 +153,21 @@
               <span class="compose-hint">
                 <i class="fas fa-shield-halved"></i> {{ t('messages.sensitiveHint') }}
               </span>
+              <!-- 发图片（第 114 批）：复用已有的上传接口，不另开一套 -->
+              <input
+                ref="imageInput"
+                type="file"
+                accept="image/*"
+                class="d-none"
+                @change="sendImage"
+              />
+              <el-button
+                :loading="sendingImage"
+                :title="t('messages.sendImage')"
+                @click="pickImage"
+              >
+                <i class="fas fa-image"></i>
+              </el-button>
               <el-button type="primary" :loading="sending" :disabled="!draft.trim()" @click="send">
                 <i class="fas fa-paper-plane"></i> {{ t('messages.send') }}
               </el-button>
@@ -193,15 +241,30 @@
  * （通知里点"XX 给你发了私信"就是这个地址）。
  * 打开会话会把对方发来的未读标记为已读（后端在 GET 里做）。
  */
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
 import { formatTime, timeAgo } from '@/utils/date';  // 第 84 批：相对时间跟随语言
-import { fetchConversation, fetchConversations, searchUsers, sendMessage } from '@/api/message';
+import {
+  deleteConversation,
+  encodeImageMessage,
+  fetchConversation,
+  fetchConversations,
+  parseMessageContent,
+  searchUsers,
+  sendMessage,
+} from '@/api/message';
+import { uploadImage } from '@/api/forum';  // 第 114 批：图片消息复用帖子插图的上传接口
 import { useI18n } from '@/i18n';  // 第 64 批：多语言
 import { formatApiError } from '@/api/http';
 import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
+
+/** 每页聊天记录条数（与后端的默认值一致即可，这里显式写出来便于调） */
+const PAGE_SIZE = 50;
+
+/** 打开会话时的自动刷新间隔（毫秒）。与通知铃铛/私信红点一样走轮询 */
+const POLL_MS = 15000;
 
 export default {
   name: 'MessagesView',
@@ -219,7 +282,41 @@ export default {
     const activeUser = ref(null);
     const draft = ref('');
     const sending = ref(false);
+    const sendingImage = ref(false);
+    const imageInput = ref(null);
     const threadRef = ref(null);
+
+    // ---- 往上翻历史（第 114 批）------------------------------------------
+    // 后端原来的实现只能回"最近 100 条"，更早的**取不到**。
+    // 现在有了 `before_id` 游标，这里就要把翻页做出来 —— 否则接口白改。
+    const hasMore = ref(false);
+    const loadingOlder = ref(false);
+    /** 往上翻的游标：上一次响应里的 `oldest_id` */
+    let oldestId = null;
+
+    // ---- 自动刷新（第 114 批）--------------------------------------------
+    // 原来的私信页**完全不会自动更新** —— 对方回了消息，我得手动点"刷新"
+    // 或者退出重进才看得到。这是"看起来像坏了"的典型：消息明明发出去了。
+    let pollTimer = null;
+
+    /** 解析一条消息的正文（图片 or 文字）。解析逻辑收在 api/message.js 里，便于测试 */
+    const parsed = (message) => parseMessageContent(message.content);
+
+    /**
+     * 这条消息是不是我发的。
+     * ⚠️ 必须定义在 `lastMineId` **之前**：后者在 computed 里调它，
+     *    `const` 有暂时性死区，顺序反了会在某些求值时机抛
+     *    `Cannot access 'isMine' before initialization`（不是每次必现，更难查）。
+     */
+    const isMine = (message) => message.sender?.id === authStore.user?.id;
+
+    /** 我发的最后一条消息的 id（只给它挂"已读/未读"，避免每条都挂一个） */
+    const lastMineId = computed(() => {
+      for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+        if (isMine(messages.value[i])) return messages.value[i].id;
+      }
+      return null;
+    });
 
     // ---- 发起新私信（第 112 批）------------------------------------------
     const newMessageVisible = ref(false);
@@ -277,7 +374,7 @@ export default {
 
     const activeUserId = computed(() => activeUser.value?.id ?? null);
 
-    const isMine = (message) => message.sender?.id === authStore.user?.id;
+    // （`isMine` 已在上面定义 —— 它要早于 `lastMineId`，见那处的说明。）
 
     // 第 84 批：本地这份相对时间实现已并入共享的 timeAgo（跟随界面语言），
     // 这里只留一层薄封装，避免同一套逻辑两处各写一份、改一处漏一处。
@@ -307,9 +404,12 @@ export default {
       loadingMessages.value = true;
       activeUser.value = { id: userId, username: t('common.loading'), avatar: null };
       try {
-        const data = await fetchConversation(userId);
+        // 不带 before_id → 最新一页，同时后端会把未读标记为已读
+        const data = await fetchConversation(userId, { page_size: PAGE_SIZE });
         activeUser.value = data.other;
         messages.value = data.results || [];
+        hasMore.value = Boolean(data.has_more);
+        oldestId = data.oldest_id ?? null;
         await scrollToBottom();
         // 打开会话后刷新会话列表（未读数会变）
         loadConversations();
@@ -318,6 +418,89 @@ export default {
         activeUser.value = null;
       } finally {
         loadingMessages.value = false;
+      }
+    };
+
+    /**
+     * 往上翻历史（第 114 批）。
+     *
+     * ⚠️ 关键点：**翻页后要把滚动位置补回去**。
+     * 在顶部插入内容时浏览器不会保持视口 —— 不补偿的话用户会"跳"到
+     * 刚插入内容的中间，看起来像页面自己乱滚。
+     * 做法：记下插入前的 `scrollHeight`，插入后把 `scrollTop` 加上增量。
+     */
+    const loadOlder = async () => {
+      if (!activeUser.value || !hasMore.value || loadingOlder.value || !oldestId) return;
+      loadingOlder.value = true;
+      const el = threadRef.value;
+      const prevHeight = el ? el.scrollHeight : 0;
+      const prevTop = el ? el.scrollTop : 0;
+      try {
+        const data = await fetchConversation(activeUser.value.id, {
+          page_size: PAGE_SIZE,
+          before_id: oldestId,
+        });
+        const older = data.results || [];
+        if (older.length) {
+          messages.value = [...older, ...messages.value];
+        }
+        hasMore.value = Boolean(data.has_more);
+        oldestId = data.oldest_id ?? oldestId;
+        await nextTick();
+        if (el) {
+          // 补回滚动位置：新增内容的高度差加到原来的 scrollTop 上
+          el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+        }
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('messages.loadOlderFailed')));
+      } finally {
+        loadingOlder.value = false;
+      }
+    };
+
+    /**
+     * 滚到顶部附近时自动加载更早的消息。
+     *
+     * 阈值 80px 而不是 0：用户几乎不可能正好停在 0，
+     * 而且要等"滚动事件恰好落在 0"才加载，体验上像是卡住了。
+     */
+    const onThreadScroll = () => {
+      const el = threadRef.value;
+      if (!el) return;
+      if (el.scrollTop <= 80) loadOlder();
+    };
+
+    /** 静默刷新当前会话（轮询用）：不显示骨架屏、不打断滚动 */
+    const refreshActiveConversation = async () => {
+      const userId = activeUser.value?.id;
+      if (!userId) return;
+      if (document.visibilityState !== 'visible') return;  // 页面不在前台就别打扰后端
+      try {
+        const data = await fetchConversation(userId, { page_size: PAGE_SIZE });
+        const incoming = data.results || [];
+        // 只在"有新消息"时替换，避免把用户正在往上翻的历史整段冲掉
+        const lastKnown = messages.value.length ? messages.value[messages.value.length - 1].id : null;
+        const newest = incoming.length ? incoming[incoming.length - 1].id : null;
+        const grew = newest !== null && newest !== lastKnown;
+        const unreadArrived = incoming.some((m) => !m.is_read && !isMine(m));
+        if (grew) {
+          // 新消息来了才整体替换 + 滚到底（用户本来就在看最新）
+          messages.value = incoming;
+          hasMore.value = Boolean(data.has_more);
+          await scrollToBottom();
+          if (unreadArrived) loadConversations();
+        } else {
+          // 没有新消息，但**已读状态可能变了**（对方刚读了我发的）——
+          // 只把 read_at / is_read 同步过来，不动列表结构，也就不影响滚动位置。
+          const byId = new Map(incoming.map((m) => [m.id, m]));
+          messages.value = messages.value.map((m) => {
+            const fresh = byId.get(m.id);
+            return fresh ? { ...m, is_read: fresh.is_read, read_at: fresh.read_at } : m;
+          });
+        }
+      } catch (error) {
+        // 轮询失败**不打扰用户**：下一轮会再试，弹错误框反而像功能坏了
+        console.warn('刷新会话失败:', error);
       }
     };
 
@@ -330,10 +513,70 @@ export default {
         messages.value.push(message);
         draft.value = '';
         await scrollToBottom();
+        loadConversations();  // 会话列表的"最后一条"要跟着更新
       } catch (error) {
         ElMessage.error(formatApiError(error, t('msg.requestFailed')));
       } finally {
         sending.value = false;
+      }
+    };
+
+    /** 触发隐藏的图片选择框（与识别页同一套做法：不点系统对话框，转发 click） */
+    const pickImage = () => imageInput.value?.click();
+
+    /** 发一张图片（第 114 批） */
+    const sendImage = async (event) => {
+      const file = event?.target?.files?.[0];
+      // 必须清空 input 的 value：否则选同一个文件第二次不会触发 change
+      if (event?.target) event.target.value = '';
+      if (!file || !activeUser.value) return;
+
+      sendingImage.value = true;
+      try {
+        // ⚠️ 两点容易写错（我都踩了）：
+        //   1. `uploadImage()` 收的是 **FormData**，不是裸 File；
+        //   2. 它**已经解包过**（`.then(res => res.data)`），所以拿的是
+        //      `{url, image_url, message}`，不要再 `.data`。
+        // 后端会做大小（5MB）/真实格式/文件名随机化三重校验，这里不重复判。
+        const form = new FormData();
+        form.append('image', file);
+        const { url } = await uploadImage(form);
+        if (!url) throw new Error('上传接口没有返回图片地址');
+        const message = await sendMessage(activeUser.value.id, encodeImageMessage(url));
+        messages.value.push(message);
+        await scrollToBottom();
+        loadConversations();  // 会话列表的"最后一条"会显示成 [图片]
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('messages.sendImageFailed')));
+      } finally {
+        sendingImage.value = false;
+      }
+    };
+
+    /** 删除与当前对象的整个会话（第 114 批） */
+    const confirmDeleteConversation = async () => {
+      const user = activeUser.value;
+      if (!user) return;
+      try {
+        await ElMessageBox.confirm(
+          t('messages.deleteConfirm', { name: user.username }),
+          t('messages.deleteConversation'),
+          { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') },
+        );
+      } catch {
+        return;  // 用户取消
+      }
+      try {
+        await deleteConversation(user.id);
+        ElMessage.success(t('messages.deleted'));
+        // 当前会话已经不属于我了 → 清空右侧，回到"选一个会话"的状态
+        activeUser.value = null;
+        messages.value = [];
+        hasMore.value = false;
+        oldestId = null;
+        await loadConversations();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('messages.deleteFailed')));
       }
     };
 
@@ -353,6 +596,23 @@ export default {
       } else if (conversations.value.length) {
         openConversation(conversations.value[0].other.id);
       }
+      // 第 114 批：自动刷新。原来私信页**完全不会更新** ——
+      // 对方回了消息必须手动点"刷新"或退出重进才看得到，
+      // 表现上就和"消息没发出去/收不到"一样。
+      // 与通知铃铛、未读红点保持同一套约定：15 秒一轮，页面不可见时跳过
+      // （`refreshActiveConversation` 内部会判断，这里不必重复）。
+      pollTimer = setInterval(() => {
+        refreshActiveConversation();
+        // 会话列表也顺带刷新 —— 别人给我发的新会话要能出现
+        if (document.visibilityState === 'visible') loadConversations();
+      }, POLL_MS);
+    });
+
+    onBeforeUnmount(() => {
+      // 不清理的话，离开页面后计时器还在跑（会一直请求后端，还会在
+      // 组件已销毁后改 ref）。轮询类功能最容易漏这一步。
+      if (pollTimer) clearInterval(pollTimer);
+      if (searchTimer) clearTimeout(searchTimer);
     });
 
     return {
@@ -365,6 +625,8 @@ export default {
       activeUserId,
       draft,
       sending,
+      sendingImage,
+      imageInput,
       threadRef,
       isMine,
       relativeTime,
@@ -372,6 +634,8 @@ export default {
       loadConversations,
       openConversation,
       send,
+      pickImage,
+      sendImage,
       goProfile,
       // 第 112 批：发起新私信。**必须全部 return** ——
       // 本项目在"setup 里定义了却没 return"上踩过三次
@@ -386,6 +650,14 @@ export default {
       openNewMessage,
       onSearchInput,
       startChatWith,
+      // 第 114 批：翻历史 / 已读回执 / 删除会话
+      parsed,
+      lastMineId,
+      hasMore,
+      loadingOlder,
+      loadOlder,
+      onThreadScroll,
+      confirmDeleteConversation,
     };
   },
 };
@@ -510,6 +782,31 @@ export default {
   text-align: center;
   font-size: 13px;
   color: var(--ink-400);
+}
+
+/* ---- 第 114 批：往上翻历史 / 图片消息 / 已读状态 ---------------------- */
+.load-older {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 10px;
+}
+
+/* 图片消息：限制最大宽度与高度，别让一张大图把整个聊天窗口撑爆。
+   点开可看原图（el-image 的 preview）。 */
+.chat-image {
+  display: block;
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+/* 已读/未读：跟在时间后面，字号更小、颜色更淡 ——
+   它是次要信息，不该和消息正文争注意力。 */
+.chat-read-state {
+  margin-left: 4px;
+  font-style: normal;
+  opacity: 0.75;
 }
 
 .chat-row {
