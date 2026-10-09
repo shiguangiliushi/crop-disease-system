@@ -47,6 +47,14 @@ service.interceptors.response.use(
     if (error.response) {
       // 401: 未登录或 token 过期
       if (error.response.status === 401) {
+        // 第 117 批：少数请求**明知可能 401、也不要被强制跳转** —— 目前只有"登出"
+        // （它带的是刚被本地清掉的旧 token；失效就失效，不该把已经准备离开的人
+        //   再拽到登录页一次，在管理后台里那意味着被丢回农户登录页）。
+        // 传 `skipAuthRedirect: true` 的请求仍然会 reject，只是不做全局跳转。
+        if (error.config?.skipAuthRedirect) {
+          return Promise.reject(error);
+        }
+
         // 本文件顶部已经静态导入了 useAuthStore，这里无需再动态 import。
         // 原来的 import('@/stores/auth') 既没有绕开循环依赖（静态导入已存在），
         // 又会让构建报 “dynamically imported but also statically imported” 告警。

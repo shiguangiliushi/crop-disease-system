@@ -94,8 +94,14 @@ const initDialog = async () => {
   resetForm();
 
   if (!props.pestId) {
-    // 新增时默认给一条空的防治方法，方便直接填写
-    form.prevention_methods = [{ category: 'AGRICULTURAL', measure: '' }];
+    // 新增时默认给一条空的防治方法，方便直接填写。
+    //
+    // ⚠️ 第 122 批修：这一行原来默认带着 `category: 'AGRICULTURAL'`，
+    //    而 `normalizeMethods()` 判定"空行"的依据是**分类与措施都为空** ——
+    //    于是这条默认行永远算"填了一半"，新增时只要没动过它，
+    //    点「保存」就会被拦下（只弹一句 3 秒后消失的 warning，看起来就像"保存没反应"）。
+    //    默认行改成真正空行：不填就跳过，填了才校验。
+    form.prevention_methods = [{ category: '', measure: '' }];
     return;
   }
 
@@ -167,7 +173,8 @@ const previewUrl = computed(() => imagePreview.value || existingImageUrl.value);
 
 // ---------- 防治方法 ----------
 const addMethod = () => {
-  form.prevention_methods.push({ category: 'AGRICULTURAL', measure: '' });
+  // 同上：新增的行也留成真正空行，不填就跳过（分类下拉自带 placeholder「分类」）
+  form.prevention_methods.push({ category: '', measure: '' });
 };
 
 const removeMethod = (index) => {

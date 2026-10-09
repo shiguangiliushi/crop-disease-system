@@ -1,8 +1,7 @@
 <template>
   <div class="review-page">
-    <!-- 返回入口（第 87 批：本页只能从顶栏「管理」下拉进来，此前没有返回按钮；
-         页头右侧那个「去论坛」是去**审核对象**所在的页面，不等于返回） -->
-    <BackButton />
+    <!-- 第 117 批：原来的「返回」按钮已移除（本页现在在管理后台外壳里，左侧栏就是导航）。
+         页头右侧那个「去论坛」是去**审核对象**所在的页面，不等于返回，保留。 -->
 
     <!-- 页头 -->
     <header class="admin-hero">
@@ -163,9 +162,18 @@
         </div>
       </section>
 
-      <!-- 敏感词词库 -->
-      <aside class="review-side">
-        <section class="panel-card">
+      <!--
+        右侧栏：举报处理 + 敏感词词库
+        ------------------------------------------------------------------
+        第 128 批：两块都**只给全权管理员**：
+          · 举报处理（列表/处理）仍归管理员 —— 回包含举报人与被举报人标识，
+            且"下架内容"不可逆（第 124 批的决策，未列入编辑员矩阵）；
+          · 敏感词是 BROADCAST（全站内容策略开关）。
+        内容编辑员（review 模块）只看左边的待审帖子 —— 这里不显示，
+        也不去请求（否则会拉回一个空列表，看起来像"功能坏了"）。
+      -->
+      <aside v-if="canHandleReports || canManageWords" class="review-side">
+        <section v-if="canHandleReports" class="panel-card">
           <div class="panel-head">
             <span class="panel-icon"><i class="fas fa-flag"></i></span>
             <h3 class="panel-title">{{ t('review.reportsTitle') }}</h3>
@@ -216,7 +224,7 @@
           </div>
         </section>
 
-        <section class="panel-card">
+        <section v-if="canManageWords" class="panel-card">
           <div class="panel-head">
             <span class="panel-icon"><i class="fas fa-filter"></i></span>
             <h3 class="panel-title">{{ t('review.wordsTitle') }}</h3>
@@ -238,13 +246,37 @@
                 <i class="fas fa-plus"></i>
               </el-button>
             </div>
+            <!--
+              第 135 批：英文对照（选填、只用于显示）
+              ----------------------------------------------------------------
+              词条是**被拦截的字面串**，所以中文词库在英文界面下就是一串中文，
+              英文管理员看不出每条拦的是什么（用户就是这么反馈的）。
+              这里让管理员顺手写一句英文说法，列表里会并排显示。
+              ⚠️ 它**不参与拦截** —— 想拦英文垃圾词请直接新增一条英文词条。
+            -->
+            <div class="word-add word-add--en">
+              <el-input
+                v-model="newWordEn"
+                size="small"
+                maxlength="80"
+                :placeholder="t('review.wordEnPlaceholder')"
+                @keyup.enter="addWord"
+              />
+            </div>
             <p class="field-hint">
               {{ t('review.wordsHint') }}
+            </p>
+            <p class="field-hint field-hint--muted">
+              <i class="fas fa-circle-info"></i> {{ t('review.wordEnHint') }}
             </p>
 
             <ul v-if="words.length" class="word-list">
               <li v-for="item in words" :key="item.id" class="word-item">
-                <span class="word-text">{{ item.word }}</span>
+                <!-- 第 135 批：词条 + 英文对照**竖排**（横排会把"兼职刷单"这种词挤到换行） -->
+                <span class="word-main">
+                  <span class="word-text">{{ item.word }}</span>
+                  <span v-if="item.word_en" class="word-en">{{ item.word_en }}</span>
+                </span>
                 <span class="word-cat">{{ categoryLabel(item.category) }}</span>
                 <span v-if="!item.is_active" class="word-off">{{ t('review.disabled') }}</span>
                 <button type="button" class="word-del" :title="t('review.delete')" @click="removeWord(item)">
@@ -377,8 +409,20 @@ import {
 import { fetchReports, handleReport as apiHandleReport } from '@/api/report';  // 第 41 批：举报处理
 import { useI18n } from '@/i18n';  // 第 65 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 85 批：帖子预览用英文译文
-import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
 import { sanitizeRichText } from '@/utils/richText';  // 第 91 批：预览正文净化（存储型 XSS）
+import { useAuthStore } from '@/stores/auth';  // 第 128 批：右侧栏两块按能力/模块显示
+// 第 117 批：去掉 BackButton（本页已挪进管理后台外壳，侧栏就是导航）
+
+// ---------------------------------------------------------------------------
+// 第 128 批：右侧栏两块的可见性（只给全权管理员）
+// ---------------------------------------------------------------------------
+// · 举报处理：后端 `_can_handle_reports` 用的是 `is_full_admin()`
+//   （回包含举报人/被举报人标识，且"下架内容"不可逆，未列入编辑员矩阵）；
+// · 敏感词：BROADCAST 能力（全站内容策略开关）。
+// 内容编辑员（review 模块）只看左边的待审帖子。前端只是"不画"，接口那边是 403。
+const authStore = useAuthStore();
+const canHandleReports = computed(() => Boolean(authStore.isAdmin));
+const canManageWords = computed(() => authStore.hasCapability(authStore.CAP_BROADCAST));
 
 // 敏感词分类标签（文案走 i18n，value 保持后端约定的英文标识）
 const CATEGORY_KEYS = [
@@ -401,7 +445,6 @@ const REASON_KEYS = {
 
 export default {
   name: 'ContentReviewView',
-  components: { BackButton },  // 第 87 批：返回按钮
   setup() {
     const { t } = useI18n();  // 必须在 setup 内取，模板才能拿到
     const { localizedField } = useLocalized();  // 第 85 批：审核预览也显示英文译文
@@ -433,6 +476,7 @@ export default {
 
     const words = ref([]);
     const newWord = ref('');
+    const newWordEn = ref('');   // 第 135 批：英文对照（只用于显示）
     const newWordCategory = ref('ad');
     const addingWord = ref(false);
 
@@ -649,12 +693,16 @@ export default {
     const loadAll = async () => {
       loading.value = true;
       try {
+        // 第 128 批：举报与敏感词只给全权管理员 —— 编辑员（review 模块）
+        // 不该去请求它们（既不显示、也省掉两个必然没用的请求）
+        const sideTasks = [];
+        if (canManageWords.value) sideTasks.push(loadWords());
+        if (canHandleReports.value) sideTasks.push(loadReports());
         const [config] = await Promise.all([
           fetchSiteConfig().catch(() => ({ post_require_review: false })),
           loadPending(),
           loadPublishedCount(),
-          loadWords(),
-          loadReports(),
+          ...sideTasks,
         ]);
         siteConfig.value = config || { post_require_review: false };
       } catch (error) {
@@ -720,9 +768,15 @@ export default {
       }
       addingWord.value = true;
       try {
-        await createSensitiveWord({ word, category: newWordCategory.value });
+        // 第 135 批：顺带提交英文对照（只用于显示，不参与拦截）
+        await createSensitiveWord({
+          word,
+          word_en: newWordEn.value.trim(),
+          category: newWordCategory.value,
+        });
         ElMessage.success(t('msg.addingWord', { word }));
         newWord.value = '';
+        newWordEn.value = '';
         await loadWords();
       } catch (error) {
         const data = error?.response?.data;
@@ -757,6 +811,9 @@ export default {
 
     return {
       loading,
+      // 第 128 批：右侧栏两块（举报 / 敏感词）只给全权管理员
+      canHandleReports,
+      canManageWords,
       pendingPosts,
       pendingTotal,
       publishedTotal,
@@ -773,6 +830,7 @@ export default {
       reportReasonLabel,
       words,
       newWord,
+      newWordEn,   // 第 135 批：英文对照输入框（模板里用到就必须 return，第 71 批接线测试会查）
       newWordCategory,
       addingWord,
       // 第 41 批：举报处理
@@ -825,10 +883,7 @@ export default {
   padding: 24px 20px 40px;
 }
 
-/* 第 87 批：返回按钮紧贴左边缘，和下面的深绿页头留出间距 */
-.review-page > .back-button {
-  margin-bottom: 12px;
-}
+/* 第 117 批：删掉了 `.review-page > .back-button` 的间距规则（返回按钮已随管理后台外壳一起移除） */
 
 .policy-bar {
   display: flex;
@@ -934,6 +989,34 @@ export default {
   margin-left: 0;
 }
 
+/* 第 135 批：敏感词的英文对照（第二行输入 + 列表里的灰字说明） */
+.word-add--en {
+  margin-top: 6px;
+}
+
+/* 词条与英文对照竖排：占据剩余宽度，长词不换行，对照过长时省略号 */
+.word-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.word-en {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-400, #9dada5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-hint--muted {
+  margin-top: 4px;
+  color: var(--ink-500, #78897f);
+  font-size: 11.5px;
+}
+
 /* 敏感词 */
 .word-add {
   display: flex;
@@ -1036,6 +1119,9 @@ export default {
 .word-text {
   font-weight: 600;
   color: var(--ink-800);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;   /* 第 135 批：词条本身不换行（换行会把整行撑高、右侧标签错位） */
 }
 
 .word-cat {

@@ -127,8 +127,12 @@ export const zhCN = {
   // 文案与各路由原来的 meta.title 保持一致，只是改成跟随语言。
   docTitle: {
     home: '首页',
-    login: '客服登录',
-    register: '客服注册',
+    login: '登录',
+    register: '注册',
+    // 第 116 批：管理端登录单独一页（key = 路由名 admin-login）
+    'admin-login': '管理员登录',
+    // 第 122 批：病害百科维护（管理后台）
+    'admin-pests': '病害百科维护',
     'forgot-password': '找回密码',
     'reset-password': '重置密码',
     about: '关于我们',
@@ -174,6 +178,45 @@ export const zhCN = {
     users: '用户管理',
     pests: '病害百科维护',
     notifications: '通知中心',
+    // 第 117 批：农户端顶栏那个下拉不再重复列 5 个管理页，
+    // 只留"进入管理后台"这一个入口（其余都在后台的侧栏里）
+    enterConsole: '进入管理后台',
+  },
+  // ==========================================================================
+  // 内容模块名（第 128 批）
+  // --------------------------------------------------------------------------
+  // 内容能力被拆成四个互不干扰的模块，按人授权。这里的名字用于：
+  //   · 路由守卫的提示（"你的账号没有「新闻管理」权限"）
+  //   · 用户管理里"改角色"弹窗的勾选项
+  //   · 列表里编辑员的模块标签
+  // ⚠️ 与 `manage.*` 有意区分：`manage.news` 是"新闻管理"这个**页面**的名字，
+  //    这里是"新闻管理"这个**权限模块**的名字；目前文案相同，但改页面名时
+  //    不该顺带改权限名，所以不复用（免得某天把权限名改成"行业动态维护"）。
+  // ==========================================================================
+  contentModule: {
+    review: '内容审核',
+    news: '新闻管理',
+    pests: '病害百科',
+    feedback: '意见反馈',
+  },
+  // ==========================================================================
+  // 管理后台外壳（/admin/**，第 117 批）
+  // --------------------------------------------------------------------------
+  // 注意：侧栏那 5 个导航项**复用 manage.*** 的文案（与顶栏下拉同源），
+  // 所以这里只放"外壳自己"的字：标题、返回、退出、身份。
+  // 管理端与农户端是两套页面，文案各自独立，别混着改。
+  // ==========================================================================
+  adminLayout: {
+    title: '管理后台',
+    subtitle: '作物病害识别系统',
+    menu: '菜单',
+    backToSite: '返回用户端',
+    sidebarHint: '这里只显示管理功能；识别、百科、论坛等农户端页面请用「返回用户端」进入。',
+    collapseSidebar: '收起侧栏（把宽度还给表格）',
+    expandSidebar: '展开侧栏',
+    roleAdmin: '管理员',
+    roleEditor: '信息编辑员',   // 第 126 批：信息编辑员也能进后台了，身份标签要如实显示
+    roleUser: '普通用户',
   },
   language: {
     label: '语言',
@@ -262,10 +305,15 @@ export const zhCN = {
     diseaseGrapeBlackRot: '黑腐病',
   },
   auth: {
+    // 第 116 批：这一块是**农户侧**（/login /register /forgot-password /reset-password）。
+    // 原来这里同时住着两套文案 —— 一套农户的、一套「客服工作台」的（consoleLoginSubtitle /
+    // consoleUsernameLabel / signInConsole / noAgentAccount / employeeIdHint …），
+    // 页面拼出来就是"内部管理系统"。现在客服那套已删除，管理端的文案搬到下面的
+    // `adminAuth`；key 名里也不再出现 console / agent。
     welcome: '欢迎回来',
     // 第 84 批：登录页兜底错误（脚本里写死中文）
     networkError: '登录失败，请检查网络连接或稍后再试。',
-    loginSubtitle: '登录后即可使用识别、百科与社区功能',
+    loginSubtitle: '登录后即可拍照识别作物病害，获取科学防治方案。',
     username: '用户名',
     password: '密码',
     usernamePlaceholder: '请输入用户名',
@@ -284,26 +332,20 @@ export const zhCN = {
     loginButton: '登录',
     noAccount: '还没有账号？',
     registerNow: '立即注册',
-    noAgentAccount: '还没有客服账号？',
-    consoleLoginSubtitle: '请使用管理员分配的客服账号登录，登录后可受理用户咨询与反馈工单。',
-    consoleUsernameLabel: '客服账号 / 用户名',
-    employeeIdHint: '支持工号登录',
-    consoleUsernamePlaceholder: '请输入客服账号或工号',
     passwordOnlyPlaceholder: '请输入密码',
     recentAccounts: '最近登录的账号',
     rememberLogin: '记住登录状态',
     signingIn: '正在登录...',
-    signInConsole: '登录工作台',
-    registerTitle: '注册客服账号',
+    registerTitle: '创建账号',
     registering: '正在注册...',
-    registerSubtitle: '填写账号信息完成注册，注册后由管理员分配坐席权限与服务队列。',
-    hasAccount: '已有客服账号？',
+    registerSubtitle: '填写账号信息完成注册，开启智能病害识别之旅。',
+    hasAccount: '已有账号？',
     loginNow: '立即登录',
-    usernameLabel: '客服账号 / 用户名',
+    usernameLabel: '用户名',
     usernameRequired: '必填',
-    regUsernamePlaceholder: '请输入客服账号，如 kefu_001',
+    regUsernamePlaceholder: '请输入用户名',
     emailLabel: '邮箱',
-    emailOptional: '选填，用于接收服务通知',
+    emailOptional: '选填，用于找回密码',
     emailPlaceholder: '请输入邮箱地址',
     passwordLabel: '登录密码',
     // 第 106 批：原来这两个 key 叫 passwordAtLeast6 / 「至少6位」，
@@ -326,14 +368,16 @@ export const zhCN = {
     terms: '《用户协议》',
     and: '与',
     privacy: '《隐私政策》',
-    agreeSuffix: '，客服权限将在管理员审核后生效。',
+    agreeSuffix: '。',
     invalidEmail: '请输入有效的邮箱地址',
     registerOkAuto: '注册成功，已自动登录！',
-    registerOk: '客服账号注册成功！',
+    registerOk: '注册成功！',
     registerFailed: '注册失败，请检查网络连接或稍后再试。',
-    usernameEmpty: '客服账号不能为空！',
+    usernameEmpty: '用户名不能为空！',
     usernameUnavailable: '该用户名不可用',
-    passwordTooShort: '密码长度至少需要6位',
+    // 第 116 批顺带修：这句话原来写"至少需要6位"，而第 106 批已把口径统一为
+    // 8 位 + 不能纯数字（真源 backend/api/password_policy.py）—— 提示与实际规则不一致。
+    passwordTooShort: '密码至少 8 位，且不能是纯数字',
     sendFailed: '发送失败，请稍后再试',
     sending: '正在发送...',
     sendResetLink: '发送重置链接',
@@ -372,30 +416,87 @@ export const zhCN = {
     confirmNewPassword: '确认新密码',
     confirmNewPasswordPlaceholder: '再输入一次新密码',
     brandName: '智能农作物叶片病虫害识别系统',
-    brandSub: '客服工作台 Customer Service Console',
-    eyebrowDefault: '客服工作台 · Agent Console',
-    loginTitleDefault: '登录客服工作台',
-    backToSite: '返回用户端',
-    asideBadge: '客服坐席专用入口',
-    asideTitle: '一站式受理农户咨询的智能客服工作台',
-    asideDesc: '登录后即可处理用户咨询与反馈、协同查看病害识别记录、查询防治知识，让每一次服务响应都准确、可追溯。',
-    featureQueue: '会话集中受理',
-    featureQueueDesc: '用户咨询、留言与反馈统一排队，按坐席分派跟进',
-    featureTicket: '工单全流程',
-    featureTicketDesc: '受理、处理中、已解决状态清晰可追踪，不遗漏任何诉求',
-    featureKnowledge: '知识库联动',
-    featureKnowledgeDesc: '一键检索病害百科与防治方案，回复有据可依',
-    featureDashboard: '服务数据看板',
-    featureDashboardDesc: '咨询量、响应时长与满意度沉淀为可复用经验',
-    serviceTime: '服务时间 周一至周五 09:00 - 18:00',
-    internalSupport: '内部支持 400-123-4567',
-    accountHint: '请使用客服账号登录，账号由系统管理员统一开通与授权',
-    consoleVersion: '客服端 v1.0',
+    brandSub: '智能识别 · 科学防治',
+    eyebrowDefault: '欢迎使用',
+    loginTitleDefault: '欢迎回来',
+    backToSite: '返回首页',
+    // 左侧那一栏：原来是「客服坐席专用入口 / 工单全流程 / 服务数据看板 / 内部支持 400-123-4567」——
+    // 那是给坐席看的，而打开这一屏的人是农户。现在按"农户想知道什么"重写。
+    asideBadge: 'AI 病害识别 · 免费使用',
+    asideTitle: '叶子出了什么问题？拍张照片就知道',
+    asideDesc: '上传叶片照片，几秒内给出病害名称、置信度与防治方法；配套 38 种常见作物病害百科与种植户社区，拿不准的时候还能问问别人。',
+    featureQueue: '拍照识别',
+    featureQueueDesc: '上传叶片照片，自动识别病害类型与置信度',
+    featureTicket: '防治方法',
+    featureTicketDesc: '对症给出用药与农事建议，照着做就行',
+    featureKnowledge: '病害百科',
+    featureKnowledgeDesc: '症状、发病规律、防治方法，按键就能查',
+    featureDashboard: '识别记录',
+    featureDashboardDesc: '历次结果自动保存，跟踪作物健康变化',
+    serviceTime: '7×24 小时随时可用',
+    internalSupport: '已收录 38 种常见作物病害',
+    accountHint: '登录后即可使用病害识别、百科查询等全部功能',
+    // 页脚那句免责说明（改前这里是「用户端 v1.0」这种内部版本号，C 端页面不需要）
+    footerNote: '识别结果仅供参考，实际防治请以当地植保部门意见和农药标签为准。',
+  },
+  // ==========================================================================
+  // 管理端（/admin/login）
+  // --------------------------------------------------------------------------
+  // 第 116 批新增、第 119 批定稿：管理端登录是**一张独立页面**
+  // （views/AdminLoginView.vue：深色整屏 + 居中卡片），文案只在这里，
+  // 不再和农户侧的 `auth.*` 混着用。
+  // ⚠️ 刻意**没有注册相关文案**：管理员账号由超管开通，不给自助注册的口子。
+  // ==========================================================================
+  adminAuth: {
+    // C 端登录页页脚那个不抢眼的小入口
+    entryLink: '管理员登录',
+    badge: '管理后台',
+    eyebrow: '管理后台',
+    title: '管理员登录',
+    subtitle: '请使用管理员账号登录。',
+    usernameLabel: '管理员账号',
+    usernamePlaceholder: '请输入管理员账号',
+    submit: '登录',
+    backToUser: '返回用户登录',
+    notAdmin: '该账号不是管理员账号，已按普通用户登录。',
+    // 第 120 批：「忘记密码」对管理员常常走不通，必须说清楚（否则会干等一封不会来的邮件）
+    forgotHint: '管理员账号若已绑定邮箱，可以自助重置；没绑邮箱的请联系超级管理员，他可以在「用户管理 → 重置密码」里签发一条一次性链接给你。',
+    accountHint: '管理员账号由超级管理员在后台开通与授权，不支持自助注册。',
+    footerNote: '管理员操作会被记录，请勿在公共设备上保持登录。',
+  },
+  // ==========================================================================
+  // 病害百科维护（管理后台 /admin/pests，第 122 批）
+  // --------------------------------------------------------------------------
+  // 这一页原来**长在农户端的百科页上**（顶部「管理员模式」工具条 + 卡片上的按钮）。
+  // 现在 `/pests` 是纯阅读页，管理动作都在这里，所以文案也拆开了：
+  // 通用动作（新增/编辑/删除/批量导入）继续用 `wiki.*`，本页独有的放这里。
+  // ==========================================================================
+  pestAdmin: {
+    title: '病害百科维护',
+    subtitle: '新增、修改、删除病害词条；可按名称/症状搜索、按作物筛选，也支持批量导入',
+    statTotal: '词条总数',
+    statCrops: '作物种类',
+    statFiltered: '当前筛选结果',
+    searchPlaceholder: '搜索病害名称 / 症状 / 描述',
+    cropPlaceholder: '按作物筛选',
+    query: '查询',
+    reset: '重置',
+    filterHint: '搜索与筛选在服务端执行，不受分页影响',
+    listTitle: '词条列表',
+    listNote: '「详情」会在新标签页打开农户端页面，便于核对实际展示效果',
+    colPest: '病害',
+    colCrop: '作物',
+    colSymptoms: '症状',
+    colActions: '操作',
+    viewOnSite: '详情',
+    empty: '没有符合条件的病害词条',
+    loadFailed: '获取病害列表失败',
+    deleteConfirm: '确定要删除病害「{name}」吗？该词条及其防治方法会一并删除，且不可恢复。',
+    deleted: '已删除病害「{name}」',
   },
   wiki: {
     title: '病害百科',
     subtitle: '全面了解常见农作物病害的症状特征、发生规律和防治方法，帮助您及时发现并处理病害问题，保障作物健康生长。',
-    adminMode: '管理员模式：可直接新增、编辑、删除病害百科内容',
     addPest: '新增病害',
     bulkImport: '批量导入',
     offlineNote: '当前处于离线模式，显示的是本地缓存的病害资料',
@@ -409,8 +510,9 @@ export const zhCN = {
     empty: '未找到符合条件的病害信息。',
     editTitle: '编辑该病害信息',
     deleteTitle: '删除该病害',
-    // 第 77 批：删除确认框正文（原来直接拼中文，英文界面下会露出中文）
-    deleteConfirm: '确定要删除「{name}」吗？该病害下的防治方法会一并删除，且不可恢复。',
+    // 第 122 批：`adminMode`（"管理员模式：可直接新增…"）与 `deleteConfirm` / `pestDeleted`
+    // 三个 key 已删除 —— 它们服务的工具条/按钮都搬到管理后台了（见 pestAdmin 块），
+    // 留在农户端语言包里只会让人以为这里还能管理。
     details: '了解详情',
     edit: '编辑',
     delete: '删除',
@@ -435,7 +537,6 @@ export const zhCN = {
     notSure4Desc: '带上照片、地区和最近天气发到论坛，有经验的种植户会帮你一起判断。',
     notSure4Link: '去论坛提问',
     allCrops: '全部',
-    pestDeleted: '病害已删除',
   },
   legal: {
     toc: '目录',
@@ -900,6 +1001,9 @@ export const zhCN = {
     contentMin: '新闻内容不能少于 10 个字符',
     subtitle: '发布、编辑、上下架行业动态新闻',
     newNews: '新增新闻',
+    // 第 121 批：旧的 /news/create、/news/:id/edit 深链重定向进本页时用
+    editMissingId: '这条编辑链接里没有新闻编号，已打开新闻列表',
+    editLoadFailed: '打开这条新闻失败（可能已被删除）',
     searchPlaceholder: '搜索标题或内容',
     allCategories: '全部分类',
     allStatus: '全部状态',
@@ -995,6 +1099,9 @@ export const zhCN = {
     handle: '处理',
     hideContent: '同时隐藏内容',
     wordsTitle: '敏感词词库',
+    // 第 135 批：敏感词的"英文对照"（只用于显示，不参与拦截）
+    wordEnPlaceholder: '英文对照（选填，例如 fake invoices）',
+    wordEnHint: '词条本身是「被拦截的字面串」，所以列表里显示的是录入时的原文；上面这行可以给它一句英文说法，方便英文界面下看懂。它不参与拦截 —— 想拦英文垃圾词，请直接新增一条英文词条。',
     wordPlaceholder: '输入敏感词，如：加微信',
     wordsEmpty: '词库为空，当前不会拦截任何内容',
     wordsHint: '命中敏感词的发帖 / 评论 / 反馈会被直接拒绝，并提示用户改哪几个词。',
@@ -1193,6 +1300,54 @@ export const zhCN = {
     bulkDeleteConfirmAction: '确认删除 {count} 人',
     bulkDeleteOk: '已删除 {count} 个用户',
     bulkDeletePartial: '完成 {ok} 个，{failed} 个未处理：',
+    // ========================================================================
+    // 第 120 批：签发一次性密码重置链接
+    // ------------------------------------------------------------------------
+    // 为什么需要：自助找回密码只在**账号绑了邮箱**时才真的发信，没绑邮箱时后端
+    // 按防枚举策略静默什么都不做（页面却显示"已发送"）。管理端账号大多是超管开通的、
+    // 常常没绑邮箱 —— 所以"管理员忘了密码"这条路是断的。这里给管理员一条走得通的路。
+    // ========================================================================
+    resetLinkAction: '重置密码',
+    resetLinkTitle: '签发密码重置链接',
+    resetLinkWarning: '链接 {minutes} 分钟内有效，且只能用一次（对方设置新密码后立即失效）。',
+    resetLinkMailed: '该账号绑了邮箱，我们也顺手发了一封邮件。',
+    resetLinkMailFailed: '该账号绑了邮箱，但邮件发送失败 —— 请直接把下面的链接发给本人。',
+    resetLinkNoEmail: '该账号「没有绑定邮箱」，自助找回密码对它无效（后端不会发信），请把下面的链接直接发给本人。',
+    resetLinkCopy: '复制链接',
+    resetLinkCopied: '链接已复制，发给本人即可',
+    resetLinkCopyManual: '浏览器不允许自动复制，请手动选中链接复制',
+    resetLinkHowTo: '把链接发给本人（微信/短信都行），对方打开后自己设置新密码 —— 你全程看不到他的新密码。',
+    resetLinkFailed: '签发重置链接失败',
+    resetBlockedInactive: '该账号已停用或已注销，请先恢复账号',
+    resetBlockedElevated: '只有超级管理员可以为管理员账号签发重置链接',
+    // ========================================================================
+    // 第 127 批：改角色（仅超级管理员；只能在 信息编辑员 ↔ 普通用户 之间调）
+    // ========================================================================
+    roleAction: '改角色',
+    roleActionHint: '把该账号设为信息编辑员（可维护内容）或普通用户',
+    roleDialogTitle: '调整角色',
+    roleDialogHint: '改成「信息编辑员」后，对方能进入管理后台维护内容（病害百科、新闻、内容审核、反馈回复），但没有用户管理权限。角色变更需要对方重新登录后才生效。',
+    roleModulesTitle: '可以管理的内容模块',
+    roleModulesHint: '四个模块互不干扰：只勾「新闻管理」的人进后台只看到新闻管理，打不开其他模块（后端同样会拒绝）。',
+    roleChangedWithModules: '已把 {name} 设为信息编辑员，可管理：{modules}',
+    roleChanged: '已把 {name} 的角色改成「{role}」',
+    roleChangeFailed: '调整角色失败',
+    // ========================================================================
+    // 第 131 批：开通编辑员账号（仅超管；账号无可用密码 + 一次性设置密码链接）
+    // ========================================================================
+    createEditorAction: '新增编辑员',
+    createEditorTitle: '开通信息编辑员账号',
+    createEditorUsername: '登录用户名',
+    createEditorUsernamePlaceholder: '例如：news_editor',
+    createEditorUsernameHint: '3-20 位，字母开头，只能用字母、数字、下划线',
+    createEditorEmail: '邮箱（选填）',
+    createEditorEmailPlaceholder: '填了就把设置密码链接也发一封邮件',
+    createEditorEmailHint: '编辑员常常没有邮箱，留空没问题 —— 把链接直接发给他即可',
+    createEditorSubmit: '开通并生成设置密码链接',
+    createEditorFailed: '开通编辑员失败',
+    createEditorOk: '已开通「{name}」，把下面的链接发给他设置密码',
+    createEditorNoEmail: '该账号没填邮箱，请把下面的链接直接发给本人（后端不会发信）。',
+    createEditorHowTo: '链接 1 小时有效、只能用一次，且**只显示这一次** —— 关掉弹窗后要用行内的「重置密码」重新签发。',
   },
   profile: {
     back: '返回',
@@ -2003,6 +2158,10 @@ export const zhCN = {
     notFoundResource: '请求的资源不存在',
     serverError: '服务器错误，请稍后重试',
     noPermission: '您没有权限访问该页面',
+    // 第 126 批：信息编辑员手输 /admin/users 时要说清"为什么"，而不是笼统一句没权限
+    needUserAdmin: '这一页只有管理员可以访问（信息编辑员没有用户管理权限）',
+    // 第 128 批：内容侧按模块隔离 —— 手输别的模块网址时告诉他缺哪一块
+    needModule: '你的账号没有「{module}」权限，请联系超级管理员开通',
     imageOnly: '只能上传图片文件',
     imageTooLarge5: '图片大小不能超过 5MB',
     confirm: '确定',
@@ -2462,7 +2621,9 @@ export const en = {
     home: 'Home',
     news: 'News',
     detect: 'Diagnose',
-    pests: 'Disease Wiki',
+    // 第 134 批：农户端导航是「病害百科」（公开页），因此用模块名；
+    // 管理后台侧栏那一条对应 zh 的「病害百科维护」，写作 'Disease wiki admin'（见 manage.pests）。
+    pests: 'Disease wiki',
     alerts: 'Outbreak Alerts',
     calendar: 'Farming Calendar',
     forum: 'Forum',
@@ -2492,6 +2653,10 @@ export const en = {
     home: 'Home',
     login: 'Sign in',
     register: 'Sign up',
+    // 第 116 批：管理端登录单独一页（key = 路由名 admin-login）
+    'admin-login': 'Admin sign-in',
+    // 第 122 批：病害百科维护（管理后台）
+    'admin-pests': 'Disease wiki admin',
     'forgot-password': 'Reset password',
     'reset-password': 'Set a new password',
     about: 'About us',
@@ -2531,12 +2696,40 @@ export const en = {
   manage: {
     title: 'Manage',
     dashboard: 'Dashboard',
-    review: 'Content Review',
-    news: 'News Admin',
-    feedback: 'Feedback Admin',
-    users: 'User Admin',
-    pests: 'Wiki Admin',
+    // 第 134 批：这几个名字**同时是权限名**（第 128 批起内容拆成四个模块），
+    // 所以侧栏、浏览器标签页、权限提示、页面标题必须**完全一致** ——
+    // 以前同一个功能在侧栏叫 "News Admin"、在标签页叫 "News management"，
+    // 用户会以为是两件事。现在统一成下面这一套（由
+    // scripts/check-i18n-consistency.mjs 的术语表盯着）。
+    review: 'Content review',
+    news: 'News management',
+    feedback: 'Feedback management',
+    users: 'User management',
+    // 第 134 批：侧栏这一条与页面 H1 / 标签页同名（zh 侧是「病害百科维护」；
+    // 农户端导航里的「病害百科」是另一条，写作 'Disease wiki'）。
+    pests: 'Disease wiki admin',
     notifications: 'Notifications',
+    enterConsole: 'Open admin console',
+  },
+  // 第 128 批：内容模块名（见中文侧说明）
+  contentModule: {
+    review: 'Content review',
+    news: 'News management',
+    pests: 'Disease wiki',
+    feedback: 'Feedback',
+  },
+  // 管理后台外壳（/admin/**，第 117 批）—— 侧栏导航文案复用 manage.*，这里只放外壳自己的字
+  adminLayout: {
+    title: 'Admin console',
+    subtitle: 'Crop Disease Recognition',
+    menu: 'Menu',
+    backToSite: 'Back to site',
+    sidebarHint: 'Only management tools live here. Use “Back to site” for detection, the wiki, the forum and other grower pages.',
+    collapseSidebar: 'Collapse sidebar (give the width back to tables)',
+    expandSidebar: 'Expand sidebar',
+    roleAdmin: 'Administrator',
+    roleEditor: 'Editor',   // 第 126 批：信息编辑员也能进后台了（英文侧）
+    roleUser: 'Regular user',
   },
   language: {
     label: 'Language',
@@ -2578,7 +2771,7 @@ export const en = {
     slideDetectDesc: 'Upload a crop photo to identify the disease and get a professional diagnosis',
     slideDetectButton: 'Try it now',
     slideDetectFeatures: ['AI recognition', 'Fast diagnosis', 'High accuracy'],
-    slideWikiTitle: 'Disease Wiki',
+    slideWikiTitle: 'Disease wiki',
     slideWikiDesc: 'Illustrated guide to common diseases, their treatments and crop management',
     slideWikiButton: 'Browse the wiki',
     slideWikiFeatures: ['Disease lookup', 'Treatments', 'Crop management'],
@@ -2628,7 +2821,7 @@ export const en = {
     welcome: 'Welcome back',
     // 第 84 批
     networkError: 'Sign-in failed — check your connection and try again.',
-    loginSubtitle: 'Sign in to use diagnosis, the wiki and the community',
+    loginSubtitle: 'Sign in to identify crop diseases from photos and get treatment advice.',
     username: 'Username',
     password: 'Password',
     usernamePlaceholder: 'Enter your username',
@@ -2647,26 +2840,20 @@ export const en = {
     loginButton: 'Sign in',
     noAccount: 'No account yet?',
     registerNow: 'Sign up',
-    noAgentAccount: 'No agent account yet?',
-    consoleLoginSubtitle: 'Sign in with the agent account issued by your administrator to handle user questions and feedback.',
-    consoleUsernameLabel: 'Agent account / username',
-    employeeIdHint: 'Employee ID works too',
-    consoleUsernamePlaceholder: 'Enter your agent account or employee ID',
     passwordOnlyPlaceholder: 'Enter your password',
     recentAccounts: 'Recently signed-in accounts',
     rememberLogin: 'Keep me signed in',
     signingIn: 'Signing in...',
-    signInConsole: 'Sign in to console',
-    registerTitle: 'Create an agent account',
+    registerTitle: 'Create your account',
     registering: 'Creating account...',
-    registerSubtitle: 'Fill in your details to register; an administrator will assign agent permissions and a service queue.',
-    hasAccount: 'Already have an agent account?',
+    registerSubtitle: 'Fill in your details to start identifying crop diseases from photos.',
+    hasAccount: 'Already have an account?',
     loginNow: 'Sign in',
-    usernameLabel: 'Agent account / username',
+    usernameLabel: 'Username',
     usernameRequired: 'Required',
-    regUsernamePlaceholder: 'e.g. kefu_001',
+    regUsernamePlaceholder: 'Enter a username',
     emailLabel: 'Email',
-    emailOptional: 'Optional, for service notifications',
+    emailOptional: 'Optional, for password recovery',
     emailPlaceholder: 'Enter your email address',
     passwordLabel: 'Password',
     passwordAtLeast8: 'At least 8 characters and not all digits',
@@ -2685,12 +2872,12 @@ export const en = {
     terms: 'Terms of Service',
     and: 'and',
     privacy: 'Privacy Policy',
-    agreeSuffix: '. Agent permissions take effect after admin review.',
+    agreeSuffix: '.',
     invalidEmail: 'Please enter a valid email address',
     registerOkAuto: 'Registered and signed in automatically!',
-    registerOk: 'Agent account created!',
+    registerOk: 'Account created!',
     registerFailed: 'Registration failed — check your connection or try again later.',
-    usernameEmpty: 'The agent account cannot be empty!',
+    usernameEmpty: 'Username cannot be empty!',
     usernameUnavailable: 'That username is not available',
     passwordTooShort: 'At least 8 characters and not all digits',
     sendFailed: 'Sending failed — please try again later',
@@ -2731,30 +2918,69 @@ export const en = {
     confirmNewPassword: 'Confirm new password',
     confirmNewPasswordPlaceholder: 'Enter the new password again',
     brandName: 'Smart Crop Leaf Disease Recognition System',
-    brandSub: 'Customer Service Console',
-    eyebrowDefault: 'Agent Console',
-    loginTitleDefault: 'Sign in to the console',
-    backToSite: 'Back to site',
-    asideBadge: 'Agent access only',
-    asideTitle: 'One console for handling every farmer enquiry',
-    asideDesc: 'Sign in to handle user questions and feedback, review diagnosis records together, and look up treatment knowledge — so every reply is accurate and traceable.',
-    featureQueue: 'Unified intake',
-    featureQueueDesc: 'Questions, messages and feedback queue up together and are assigned to agents',
-    featureTicket: 'Full ticket lifecycle',
-    featureTicketDesc: 'Received, in progress and resolved states are tracked end to end',
-    featureKnowledge: 'Knowledge base built in',
-    featureKnowledgeDesc: 'Search the disease wiki and treatments in one click, with sources',
-    featureDashboard: 'Service dashboard',
-    featureDashboardDesc: 'Volume, response time and satisfaction accumulate into reusable insight',
-    serviceTime: 'Service hours Mon-Fri 09:00 - 18:00',
-    internalSupport: 'Internal support 400-123-4567',
-    accountHint: 'Please sign in with an agent account, issued by the system administrator',
-    consoleVersion: 'Console v1.0',
+    brandSub: 'Smart Identification · Science-based Treatment',
+    eyebrowDefault: 'Welcome',
+    loginTitleDefault: 'Welcome back',
+    backToSite: 'Back to home',
+    asideBadge: 'AI disease detection · Free to use',
+    asideTitle: 'Something wrong with your leaves? Take a photo.',
+    asideDesc: 'Upload a leaf photo and get the disease name, confidence and a treatment plan in seconds — plus a wiki of 38 common crop diseases and a grower community for the tricky cases.',
+    featureQueue: 'Photo detection',
+    featureQueueDesc: 'Upload a leaf photo — AI names the disease and its confidence',
+    featureTicket: 'Treatment advice',
+    featureTicketDesc: 'Concrete spraying and field advice you can follow',
+    featureKnowledge: 'Disease wiki',
+    featureKnowledgeDesc: 'Symptoms, development and control, in plain language',
+    featureDashboard: 'Detection history',
+    featureDashboardDesc: 'Every result saved, so you can track crop health',
+    serviceTime: 'Available 24/7',
+    internalSupport: '38 common crop diseases covered',
+    accountHint: 'Sign in to use disease detection, the wiki and everything else',
+    footerNote: 'Results are for reference only — follow local plant-protection guidance and pesticide labels.',
+  },
+  // 管理端（/admin/login）—— 第 116 批新增、第 119 批定稿：独立页面，文案只在这里
+  adminAuth: {
+    entryLink: 'Admin sign-in',
+    badge: 'Admin console',
+    eyebrow: 'Admin console',
+    title: 'Administrator sign-in',
+    subtitle: 'Sign in with your administrator account.',
+    usernameLabel: 'Administrator account',
+    usernamePlaceholder: 'Enter your administrator account',
+    submit: 'Sign in',
+    backToUser: 'Back to user sign-in',
+    notAdmin: 'This account is not an administrator — signed in as a regular user instead.',
+    forgotHint: 'If your administrator account has an email bound, you can reset it yourself; if not, ask a super administrator — they can issue a one-time link from “User Admin → Reset password”.',
+    accountHint: 'Administrator accounts are created and authorised by a super administrator; self sign-up is not available.',
+    footerNote: 'Administrator actions are logged. Do not stay signed in on shared devices.',
+  },
+  // Disease-wiki maintenance (admin console /admin/pests, batch 122)
+  pestAdmin: {
+    title: 'Disease wiki admin',
+    subtitle: 'Create, edit and delete wiki entries; search by name/symptom, filter by crop, or bulk-import',
+    statTotal: 'Total entries',
+    statCrops: 'Crops covered',
+    statFiltered: 'Matching now',
+    searchPlaceholder: 'Search name / symptoms / description',
+    cropPlaceholder: 'Filter by crop',
+    query: 'Search',
+    reset: 'Reset',
+    filterHint: 'Search and filtering run on the server, independent of paging',
+    listTitle: 'Entries',
+    listNote: '“View” opens the grower-facing page in a new tab so you can check how it reads',
+    colPest: 'Disease',
+    colCrop: 'Crop',
+    colSymptoms: 'Symptoms',
+    colActions: 'Actions',
+    viewOnSite: 'View',
+    empty: 'No entries match these filters',
+    loadFailed: 'Could not load the disease list',
+    deleteConfirm: 'Delete “{name}”? The entry and its treatment methods are removed for good.',
+    deleted: 'Deleted “{name}”',
   },
   wiki: {
-    title: 'Disease Wiki',
+    title: 'Disease wiki',
     subtitle: 'Understand the symptoms, development and control of common crop diseases, so problems are spotted and handled early.',
-    adminMode: 'Admin mode: you can add, edit and delete wiki entries here',
     addPest: 'Add entry',
     bulkImport: 'Bulk import',
     offlineNote: 'Offline mode: showing locally cached disease data',
@@ -2768,8 +2994,8 @@ export const en = {
     empty: 'No matching disease found.',
     editTitle: 'Edit this entry',
     deleteTitle: 'Delete this entry',
-    // 第 77 批：删除确认框正文
-    deleteConfirm: 'Delete “{name}”? Its prevention methods will be removed as well, and this cannot be undone.',
+    // 第 122 批：`adminMode` / `deleteConfirm` / `pestDeleted` 三个 key 已删除
+    // （工具条与卡片按钮都搬到管理后台了；新的删除确认文案在 pestAdmin 块里）
     details: 'Learn more',
     edit: 'Edit',
     delete: 'Delete',
@@ -2794,7 +3020,6 @@ export const en = {
     notSure4Desc: 'Post the photo, your region and recent weather in the forum — experienced growers will help.',
     notSure4Link: 'Ask in the forum',
     allCrops: 'All',
-    pestDeleted: 'Disease entry deleted',
   },
   legal: {
     toc: 'Contents',
@@ -3084,7 +3309,7 @@ export const en = {
     general: 'General advice',
   },
   feedbackAdmin: {
-    title: 'Feedback admin',
+    title: 'Feedback management',
     subtitle: 'Feedback from all users (including diagnosis corrections from the Detect page) — see the submitter, move the status and write a reply',
     statusFilter: 'Status',
     categoryFilter: 'Type',
@@ -3255,6 +3480,9 @@ export const en = {
     contentMin: 'The news content needs at least 10 characters',
     subtitle: 'Publish, edit and take industry news on or offline',
     newNews: 'New news',
+    // 第 121 批：legacy deep links（/news/create、/news/:id/edit）redirect into this page
+    editMissingId: 'That edit link carried no article id — showing the news list instead',
+    editLoadFailed: 'Could not open that article (it may have been deleted)',
     searchPlaceholder: 'Search titles or content',
     allCategories: 'All categories',
     allStatus: 'All statuses',
@@ -3294,7 +3522,7 @@ export const en = {
     scheduledHint: 'Leave empty to publish immediately',
     scheduledNote: 'Set a future time: until then only admins can see this news.',
     sourceLabel: 'Source: {source}',
-    systemAdmin: 'System admin',
+    systemAdmin: 'System administrator',
     unpublish: 'Unpublish',
     updatedOk: 'News updated',
     createdOk: 'News created',
@@ -3350,7 +3578,12 @@ export const en = {
     handle: 'Handle',
     hideContent: 'Also hide the content',
     wordsTitle: 'Sensitive words',
-    wordPlaceholder: 'Enter a word, e.g. 加微信',
+    // 第 135 批：English gloss for a sensitive word (display only, never matched)
+    wordEnPlaceholder: 'English gloss (optional, e.g. fake invoices)',
+    wordEnHint: 'The entry itself is the literal string being blocked, so the list shows it exactly as entered. The gloss above explains it in English. It is NOT matched — to block an English term, add it as its own entry.',
+    // 第 133 批修：原来这里是 `Enter a word, e.g. 加微信` —— 英文句子配中文示例，
+    // 切到英文一眼就能看出没翻干净。中文示例挪回中文侧，英文侧给英文例子。
+    wordPlaceholder: 'Enter a word, e.g. free money',
     wordsEmpty: 'The list is empty — nothing is blocked right now',
     wordsHint: 'Posts, comments and feedback containing these words are rejected, and the user is told which words to change.',
     disabled: 'Disabled',
@@ -3450,7 +3683,7 @@ export const en = {
     revokeFailed: 'Could not revoke expert status',
   },
   adminUsers: {
-    title: 'User Admin',
+    title: 'User management',
     subtitle: 'Review platform users, their roles and activity, and grant or revoke expert status here',
     refresh: 'Refresh',
     statTotal: 'Total users',
@@ -3542,6 +3775,48 @@ export const en = {
     bulkDeleteConfirmAction: 'Delete {count} accounts',
     bulkDeleteOk: 'Deleted {count} users',
     bulkDeletePartial: '{ok} done, {failed} skipped: ',
+    // 第 120 批：签发一次性密码重置链接（详见中文块注释）
+    resetLinkAction: 'Reset password',
+    resetLinkTitle: 'Issue a password reset link',
+    resetLinkWarning: 'The link is valid for {minutes} minutes and can be used once (it dies as soon as the new password is set).',
+    resetLinkMailed: 'This account has an email bound — we also sent them a mail.',
+    resetLinkMailFailed: 'This account has an email bound, but the mail failed — send the link below to them directly.',
+    resetLinkNoEmail: 'This account has no email bound, so the self-service reset cannot work for it (the server sends nothing). Send the link below to them directly.',
+    resetLinkCopy: 'Copy link',
+    resetLinkCopied: 'Link copied — hand it to the account owner',
+    resetLinkCopyManual: 'The browser blocked automatic copying — please select and copy the link manually',
+    resetLinkHowTo: 'Send the link to the owner (WeChat/SMS both fine). They set the new password themselves — you never see it.',
+    resetLinkFailed: 'Could not issue a reset link',
+    resetBlockedInactive: 'This account is disabled or deactivated — restore it first',
+    resetBlockedElevated: 'Only a superuser can issue a reset link for an administrator account',
+    // ========================================================================
+    // 第 127 批：role assignment (superuser only; EDITOR <-> USER only)
+    // ========================================================================
+    roleAction: 'Change role',
+    roleActionHint: 'Make this account an editor (can maintain content) or a regular user',
+    roleDialogHint: 'An editor can sign in to the console and maintain content but has no user management access. The change takes effect after they sign in again.',
+    roleModulesTitle: 'Content modules this editor can manage',
+    roleModulesHint: 'The four modules are independent: an editor granted only "News admin" sees only that page in the console (the API rejects the others too).',
+    roleChangedWithModules: '{name} is now an editor for: {modules}',
+    roleDialogTitle: 'Change role',
+    roleChanged: 'Changed {name} to "{role}"',
+    roleChangeFailed: 'Could not change the role',
+    // ========================================================================
+    // 第 131 批：create an editor account (superuser only)
+    // ========================================================================
+    createEditorAction: 'New editor',
+    createEditorTitle: 'Create an editor account',
+    createEditorUsername: 'Username',
+    createEditorUsernamePlaceholder: 'e.g. news_editor',
+    createEditorUsernameHint: '3-20 chars, starts with a letter, letters/digits/underscore only',
+    createEditorEmail: 'Email (optional)',
+    createEditorEmailPlaceholder: 'If given, the set-password link is emailed too',
+    createEditorEmailHint: 'Editors often have no email — leave it blank and hand over the link',
+    createEditorSubmit: 'Create and generate link',
+    createEditorFailed: 'Could not create the editor account',
+    createEditorOk: '“{name}” is created — send them the link below to set a password',
+    createEditorNoEmail: 'No email on this account — hand the link over directly (nothing is sent).',
+    createEditorHowTo: 'The link works for 1 hour, once, and is **shown only now** — after closing, use the row action “Reset password” to issue another.',
   },
   profile: {
     back: 'Back',
@@ -4348,6 +4623,10 @@ export const en = {
     notFoundResource: 'The requested resource does not exist',
     serverError: 'Server error, please try again later',
     noPermission: 'You do not have permission to view this page',
+    // 第 126 批：与中文侧同一条（信息编辑员打开用户管理页时的说明）
+    needUserAdmin: 'This page is for administrators only (editors have no user management access)',
+    // 第 128 批：内容模块隔离（手输别的模块网址时的提示）
+    needModule: 'Your account does not have the "{module}" permission — ask a superuser to grant it',
     imageOnly: 'Only image files can be uploaded',
     imageTooLarge5: 'Images must be 5MB or smaller',
     confirm: 'Confirm',
@@ -4432,7 +4711,9 @@ export const en = {
     tagPinned: 'Pinned',
     tagEssence: 'Featured',
     tagDraft: 'Draft',
-    tagPending: 'Pending',
+    // 第 134 批：原来这里是 'Pending'，与「内容审核」页的 "Pending review" 不一致 ——
+    // 同一个状态在两个页面显示成两个词。统一成更明确的那个。
+    tagPending: 'Pending review',
     views: 'Views',
     replies: 'Replies',
     likes: 'Likes',

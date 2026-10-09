@@ -1,7 +1,6 @@
 <template>
   <div class="admin-users tinted-page">
-    <!-- 返回入口（第 87 批：本页只能从顶栏「管理」下拉进来，此前没有返回按钮） -->
-    <BackButton />
+    <!-- 第 117 批：原来的「返回」按钮已移除（本页现在在管理后台外壳里，左侧栏就是导航） -->
 
     <!-- 页头（沿用全站 .admin-hero：深绿实底 + 白色文字） -->
     <header class="admin-hero">
@@ -13,6 +12,16 @@
         </div>
       </div>
       <div class="admin-hero-actions">
+        <!--
+          第 131 批：开通编辑员账号（仅超级管理员）
+          ----------------------------------------------------------------
+          在这之前"新建编辑员"必须去 Django admin 建号、再回来勾模块，
+          而且新建的账号还得自己想办法设密码。这里一次做完：
+          建号（**无可用密码**）→ 勾模块 → 返回一次性设置密码链接。
+        -->
+        <el-button v-if="canCreateEditor" class="btn-on-brand" @click="openCreateEditor">
+          <i class="fas fa-user-plus"></i> {{ t('adminUsers.createEditorAction') }}
+        </el-button>
         <el-button plain :loading="loading" @click="reload">
           <i class="fas fa-sync-alt"></i> {{ t('adminUsers.refresh') }}
         </el-button>
@@ -152,6 +161,14 @@
             <div class="user-cell-text">
               <span class="user-name">{{ row.username }}</span>
               <span class="user-email">{{ row.email || t('adminUsers.noEmail') }}</span>
+              <!--
+                第 128 批：编辑员要能一眼看出"他管哪几块" ——
+                否则列表里只剩一个"信息编辑员"标签，还得点开弹窗才知道细节。
+              -->
+              <span v-if="row.content_modules_display?.length" class="user-modules">
+                <i class="fas fa-shield-halved"></i>
+                {{ row.content_modules_display.join('、') }}
+              </span>
             </div>
           </div>
         </template>
@@ -193,7 +210,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="t('adminUsers.colActions')" width="290" fixed="right">
+      <el-table-column :label="t('adminUsers.colActions')" width="356" fixed="right">
         <template #default="{ row }">
           <el-button size="small" type="primary" link @click="openDetail(row)">
             {{ t('adminUsers.detailAction') }}
@@ -203,6 +220,17 @@
           </el-button>
           <el-button v-else size="small" type="danger" link @click="doRevoke(row)">
             {{ t('adminUsers.revokeAction') }}
+          </el-button>
+          <!-- 第 120 批：签发一次性密码重置链接（账号没绑邮箱时，这是唯一走得通的路） -->
+          <el-button
+            size="small"
+            type="warning"
+            link
+            :disabled="!canResetLink(row)"
+            :title="resetLinkBlockedReason(row)"
+            @click="openResetLink(row)"
+          >
+            {{ t('adminUsers.resetLinkAction') }}
           </el-button>
           <!-- 第 95 批：删除用户（软删除）。护栏在后端，这里只负责"别让人误点"。 -->
           <el-button
@@ -214,6 +242,21 @@
             @click="openDelete(row)"
           >
             {{ t('adminUsers.deleteAction') }}
+          </el-button>
+          <!--
+            第 127 批：改角色（信息编辑员 ↔ 普通用户）。
+            只在"当前登录者是超级管理员"且"这一行是普通账号"时出现 ——
+            ADMIN 账号、staff/超管账号都不在这里改（后端也会拒，见 AdminUserRoleView）。
+          -->
+          <el-button
+            v-if="canChangeRole(row)"
+            size="small"
+            type="info"
+            link
+            :title="t('adminUsers.roleActionHint')"
+            @click="openRoleDialog(row)"
+          >
+            {{ t('adminUsers.roleAction') }}
           </el-button>
         </template>
       </el-table-column>
@@ -318,6 +361,210 @@
       <template #footer>
         <el-button @click="grantVisible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="granting" @click="submitGrant">{{ t('adminUsers.grantSubmit') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!--
+      签发一次性密码重置链接（第 120 批）
+      ------------------------------------------------------------------
+      为什么是"链接"而不是"直接把密码改成 xxx"：后者等于管理员知道了对方的口令，
+      而且对方多半不会再去改它。链接是**一次性、1 小时有效、改过密码即失效**，
+      管理员全程看不到新密码（后端也不返回）。
+    -->
+    <el-dialog
+      v-model="resetLinkVisible"
+      :title="t('adminUsers.resetLinkTitle')"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <el-skeleton v-if="resetLinkLoading" :rows="3" animated />
+
+      <template v-else>
+        <el-alert v-if="resetLinkError" type="error" :closable="false" show-icon>
+          {{ resetLinkError }}
+        </el-alert>
+
+        <template v-else-if="resetLinkData">
+          <p class="reset-link-target">
+            <i class="fas fa-user"></i>
+            {{ resetLinkData.username }}
+          </p>
+
+          <el-alert type="warning" :closable="false" show-icon class="reset-link-warning">
+            <p>{{ t('adminUsers.resetLinkWarning', { minutes: resetLinkData.expires_in_minutes }) }}</p>
+            <p class="reset-link-sub">
+              {{ resetLinkData.has_email
+                ? (resetLinkData.mailed
+                  ? t('adminUsers.resetLinkMailed')
+                  : t('adminUsers.resetLinkMailFailed'))
+                : t('adminUsers.resetLinkNoEmail') }}
+            </p>
+          </el-alert>
+
+          <div class="reset-link-box">
+            <input :value="resetLinkData.url" readonly class="reset-link-input" @focus="$event.target.select()" />
+            <el-button type="primary" @click="copyResetLink">
+              <i class="fas fa-copy"></i> {{ t('adminUsers.resetLinkCopy') }}
+            </el-button>
+          </div>
+
+          <p class="reset-link-hint">
+            <i class="fas fa-circle-info"></i> {{ t('adminUsers.resetLinkHowTo') }}
+          </p>
+        </template>
+      </template>
+
+      <template #footer>
+        <el-button @click="resetLinkVisible = false">{{ t('common.close') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!--
+      开通编辑员账号（第 131 批）
+      ------------------------------------------------------------------
+      仅超级管理员可见。一次做完三件事：建号 → 勾模块 → 给出**一次性设置密码链接**。
+      账号是**无可用密码**建出来的（后端 set_unusable_password），所以全程没有明文密码
+      经过接口或界面；链接 1 小时有效、只能用一次，本人在 /reset-password 自己设密码。
+      ⚠️ 链接**只显示这一次**：关掉弹窗就找不回来了，需要时用行内的「重置密码」重新签发。
+    -->
+    <el-dialog
+      v-model="createEditorVisible"
+      :title="t('adminUsers.createEditorTitle')"
+      width="540px"
+      :close-on-click-modal="false"
+      @closed="resetCreateEditor"
+    >
+      <!-- 第一步：填账号信息 -->
+      <el-form v-if="!createdEditor" label-position="top">
+        <el-form-item :label="t('adminUsers.createEditorUsername')" required>
+          <el-input
+            v-model="createEditorForm.username"
+            maxlength="20"
+            :placeholder="t('adminUsers.createEditorUsernamePlaceholder')"
+          />
+          <p class="field-hint">{{ t('adminUsers.createEditorUsernameHint') }}</p>
+        </el-form-item>
+        <el-form-item :label="t('adminUsers.createEditorEmail')">
+          <el-input
+            v-model="createEditorForm.email"
+            :placeholder="t('adminUsers.createEditorEmailPlaceholder')"
+          />
+          <p class="field-hint">{{ t('adminUsers.createEditorEmailHint') }}</p>
+        </el-form-item>
+
+        <el-form-item :label="t('adminUsers.roleModulesTitle')" required>
+          <el-checkbox-group v-model="createEditorModules" class="role-options">
+            <el-checkbox v-for="module in moduleOptions" :key="module" :value="module">
+              {{ t(`contentModule.${module}`) }}
+            </el-checkbox>
+          </el-checkbox-group>
+          <p class="field-hint">{{ t('adminUsers.roleModulesHint') }}</p>
+        </el-form-item>
+      </el-form>
+
+      <!-- 第二步：给链接（只显示这一次） -->
+      <template v-else>
+        <el-alert type="success" :closable="false" show-icon class="create-editor-ok">
+          <!-- ⚠️ 名字在 `createdEditor.user.username` 里（接口把用户对象放在 user 下），
+               写成 createdEditor.username 会渲染出「undefined」——
+               浏览器端到端脚本第一次跑就是这样抓到它的。 -->
+          <p>{{ t('adminUsers.createEditorOk', { name: createdEditor.user?.username || '' }) }}</p>
+        </el-alert>
+
+        <el-alert type="warning" :closable="false" show-icon class="reset-link-warning">
+          <p>{{ t('adminUsers.resetLinkWarning', { minutes: createdEditor.expires_in_minutes }) }}</p>
+          <p class="reset-link-sub">
+            {{ createdEditor.has_email
+              ? (createdEditor.mailed
+                ? t('adminUsers.resetLinkMailed')
+                : t('adminUsers.resetLinkMailFailed'))
+              : t('adminUsers.createEditorNoEmail') }}
+          </p>
+        </el-alert>
+
+        <div class="reset-link-box">
+          <input :value="createdEditor.url" readonly class="reset-link-input" @focus="$event.target.select()" />
+          <el-button type="primary" @click="copyCreatedEditorLink">
+            <i class="fas fa-copy"></i> {{ t('adminUsers.resetLinkCopy') }}
+          </el-button>
+        </div>
+
+        <p class="reset-link-hint">
+          <i class="fas fa-circle-info"></i> {{ t('adminUsers.createEditorHowTo') }}
+        </p>
+      </template>
+
+      <template #footer>
+        <el-button @click="createEditorVisible = false">
+          {{ createdEditor ? t('common.close') : t('common.cancel') }}
+        </el-button>
+        <el-button
+          v-if="!createdEditor"
+          type="primary"
+          :loading="creatingEditor"
+          :disabled="!createEditorForm.username.trim() || createEditorModules.length === 0"
+          @click="submitCreateEditor"
+        >
+          {{ t('adminUsers.createEditorSubmit') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!--
+      改角色（第 127 批）
+      ------------------------------------------------------------------
+      只有超级管理员看得到这个入口，而且只能在「信息编辑员 ↔ 普通用户」之间切换。
+      为什么不做成下拉直接改：改角色会**立刻改变对方能进的后台页面**（编辑员能改
+      全站内容），属于要"看一眼再确认"的操作；同时弹窗里能写清"对方需要重新登录才生效"。
+    -->
+    <el-dialog
+      v-model="roleDialogVisible"
+      :title="t('adminUsers.roleDialogTitle')"
+      width="480px"
+      :close-on-click-modal="false"
+    >
+      <p class="role-target">
+        <i class="fas fa-user-gear"></i>
+        {{ roleTarget?.username }}
+      </p>
+
+      <el-radio-group v-model="roleDraft" class="role-options">
+        <el-radio value="USER">{{ t('adminUsers.roleUser') }}</el-radio>
+        <el-radio value="EDITOR">{{ t('adminUsers.roleEditor') }}</el-radio>
+      </el-radio-group>
+
+      <!--
+        第 128 批：内容模块勾选（内容审核 / 新闻管理 / 病害百科 / 意见反馈）
+        ----------------------------------------------------------------
+        选「信息编辑员」时才出现 —— 这四块**互不干扰**：只勾新闻管理的人，
+        进后台只看到新闻管理（后端也会 403）。至少勾一项，否则他进后台什么也做不了。
+      -->
+      <div v-if="roleDraft === 'EDITOR'" class="role-modules">
+        <p class="role-modules-title">
+          <i class="fas fa-shield-halved"></i> {{ t('adminUsers.roleModulesTitle') }}
+        </p>
+        <el-checkbox-group v-model="moduleDraft">
+          <el-checkbox v-for="module in moduleOptions" :key="module" :value="module">
+            {{ t(`contentModule.${module}`) }}
+          </el-checkbox>
+        </el-checkbox-group>
+        <p class="role-modules-hint">{{ t('adminUsers.roleModulesHint') }}</p>
+      </div>
+
+      <el-alert type="info" :closable="false" show-icon class="role-note">
+        <p>{{ t('adminUsers.roleDialogHint') }}</p>
+      </el-alert>
+
+      <template #footer>
+        <el-button @click="roleDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="roleSubmitting"
+          :disabled="roleDraft === 'EDITOR' && moduleDraft.length === 0"
+          @click="submitRole"
+        >
+          {{ t('common.confirm') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -458,18 +705,19 @@
  * 改它的返回结构会牵连咨询页。所以另开 /api/admin/users/。
  */
 import { computed, ref, watch } from 'vue';import { ElMessage, ElMessageBox } from 'element-plus';
-import { bulkDeleteAdminUsers, deleteAdminUser, fetchAdminUser, fetchAdminUsers } from '@/api/adminUser';
+import {
+  bulkDeleteAdminUsers, createAdminResetLink, createEditorAccount, deleteAdminUser,
+  fetchAdminUser, fetchAdminUsers, updateUserRole,
+} from '@/api/adminUser';
 import { grantExpert, revokeExpert } from '@/api/consult';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
 import { useAuthStore } from '@/stores/auth';  // 第 95 批：判断"这行是不是我自己"
 import { useI18n } from '@/i18n';
-import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
 import { useQueryState } from '@/composables/useQueryState';  // 第 98 批：筛选/分页进 URL
 
 export default {
   name: 'AdminUsersView',
-  components: { BackButton },  // 第 87 批：返回按钮
   setup() {
     const { t } = useI18n();
     const authStore = useAuthStore();  // 第 95 批
@@ -518,6 +766,187 @@ export default {
     };
 
     const canDelete = (row) => deleteBlockedReason(row) === '';
+
+    // -- 签发一次性密码重置链接（第 120 批）------------------------------
+    // 场景：账号**没绑邮箱**时自助找回密码是静默失败的（后端按防枚举策略什么都不做，
+    // 页面却显示"已发送"）。管理端账号大多由超管开通、常常没绑邮箱 ——
+    // 所以这里给管理员一条能走通的路：签发链接 → 线下发给本人 → 本人自己设新密码。
+    const resetLinkVisible = ref(false);
+    const resetLinkLoading = ref(false);
+    const resetLinkTarget = ref(null);
+    const resetLinkData = ref(null);
+    const resetLinkError = ref('');
+
+    /**
+     * 这行能不能签发重置链接 —— 与后端 `_check_reset_allowed` **同一套口径**：
+     *   · 已停用/已注销的不签发；
+     *   · 非超管不能给"权限不低于自己"的账号签发（否则等于顶号，是提权）。
+     * 前端这份只是"别让人白点一次"，真正的护栏在后端。
+     */
+    const resetLinkBlockedReason = (row) => {
+      if (!row) return '';
+      if (!row.is_active) return t('adminUsers.resetBlockedInactive');
+      if (row.id === currentUserId.value) return '';   // 自己：允许（本来就登着）
+      if ((row.is_staff || row.is_superuser || row.role === 'ADMIN') && !currentIsSuperuser.value) {
+        return t('adminUsers.resetBlockedElevated');
+      }
+      return '';
+    };
+
+    const canResetLink = (row) => resetLinkBlockedReason(row) === '';
+
+    // -- 改角色（第 127 批）------------------------------------------------
+    // 产品决策 #4：**只有超级管理员**能在 Console 里改角色，且只能在
+    // 「信息编辑员 EDITOR ↔ 普通用户 USER」之间调；ADMIN 只能走 Django admin。
+    // 后端 `AdminUserRoleView` 有同样的四条护栏，这里只是"别把做不到的按钮画出来"。
+    const roleDialogVisible = ref(false);
+    const roleSubmitting = ref(false);
+    const roleTarget = ref(null);
+    const roleDraft = ref('USER');
+    // 第 128 批：内容模块勾选（review / news / pests / feedback）
+    const moduleOptions = authStore.CONTENT_MODULES;
+    const moduleDraft = ref([]);
+
+    /** 这一行能不能改角色（不能改自己、不能改管理员/staff/超管） */
+    const canChangeRole = (row) => Boolean(
+      row
+      && currentIsSuperuser.value
+      && row.id !== currentUserId.value
+      && !row.is_staff
+      && !row.is_superuser
+      && row.role !== 'ADMIN'
+      && (row.role === 'EDITOR' || row.role === 'USER'),
+    );
+
+    const openRoleDialog = (row) => {
+      roleTarget.value = row;
+      roleDraft.value = row.role === 'EDITOR' ? 'EDITOR' : 'USER';
+      // 回填他现有的模块（后端在列表里给了 content_modules）；新建的编辑员默认全勾
+      const existing = Array.isArray(row.content_modules) ? row.content_modules : [];
+      moduleDraft.value = existing.length ? [...existing] : [...moduleOptions];
+      roleDialogVisible.value = true;
+    };
+
+    const submitRole = async () => {
+      const row = roleTarget.value;
+      if (!row) return;
+      const isEditor = roleDraft.value === 'EDITOR';
+      if (isEditor && moduleDraft.value.length === 0) return;   // 按钮已禁用，这里兜底
+      if (roleDraft.value === row.role && (!isEditor || sameModules(row))) {
+        roleDialogVisible.value = false;   // 没改就当作取消
+        return;
+      }
+      roleSubmitting.value = true;
+      try {
+        const result = await updateUserRole(
+          row.id, roleDraft.value, isEditor ? moduleDraft.value : undefined,
+        );
+        const modules = result?.content_modules || [];
+        ElMessage.success(
+          result?.role === 'EDITOR'
+            ? t('adminUsers.roleChangedWithModules', {
+                name: row.username,
+                modules: modules.map((m) => t(`contentModule.${m}`)).join('、'),
+              })
+            : t('adminUsers.roleChanged', {
+                name: row.username,
+                role: roleLabel({ role: result?.role || roleDraft.value }),
+              }),
+        );
+        roleDialogVisible.value = false;
+        await loadList();   // 刷新这一页（角色标签、模块标签与筛选结果都会变）
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.roleChangeFailed')));
+      } finally {
+        roleSubmitting.value = false;
+      }
+    };
+
+    /** 弹窗里的模块选择与库里一致？（用于"没改就当作取消"的判断） */
+    const sameModules = (row) => {
+      const existing = Array.isArray(row.content_modules) ? [...row.content_modules].sort() : [];
+      const draft = [...moduleDraft.value].sort();
+      return existing.length === draft.length && existing.every((m, i) => m === draft[i]);
+    };
+
+    // -- 开通编辑员账号（第 131 批）----------------------------------------
+    // 仅超管；账号无可用密码 + 一次性设置密码链接。与"改角色"是同一类提权操作，
+    // 因此护栏也一致（后端 AdminUserCreateEditorView 会再校验一遍）。
+    const createEditorVisible = ref(false);
+    const creatingEditor = ref(false);
+    const createEditorForm = ref({ username: '', email: '' });
+    const createEditorModules = ref([]);
+    const createdEditor = ref(null);   // 非空 = 已建好，弹窗切到"给链接"那一步
+
+    const canCreateEditor = computed(() => currentIsSuperuser.value);
+
+    const openCreateEditor = () => {
+      createEditorForm.value = { username: '', email: '' };
+      createEditorModules.value = [...moduleOptions];   // 默认全勾，再按需去掉
+      createdEditor.value = null;
+      createEditorVisible.value = true;
+    };
+
+    const resetCreateEditor = () => {
+      createEditorForm.value = { username: '', email: '' };
+      createdEditor.value = null;
+    };
+
+    const submitCreateEditor = async () => {
+      creatingEditor.value = true;
+      try {
+        const result = await createEditorAccount({
+          username: createEditorForm.value.username.trim(),
+          email: createEditorForm.value.email.trim(),
+          modules: createEditorModules.value,
+        });
+        createdEditor.value = result;
+        await loadList();   // 列表里立刻能看到新账号
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('adminUsers.createEditorFailed')));
+      } finally {
+        creatingEditor.value = false;
+      }
+    };
+
+    /** 复制设置密码链接（与"重置密码"共用同一套提示） */
+    const copyCreatedEditorLink = async () => {
+      const url = createdEditor.value?.url || '';
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        ElMessage.success(t('adminUsers.resetLinkCopied'));
+      } catch {
+        ElMessage.warning(t('adminUsers.resetLinkCopyManual'));
+      }
+    };
+
+    const openResetLink = async (row) => {
+      resetLinkTarget.value = row;
+      resetLinkData.value = null;
+      resetLinkError.value = '';
+      resetLinkVisible.value = true;
+      resetLinkLoading.value = true;
+      try {
+        resetLinkData.value = await createAdminResetLink(row.id);
+      } catch (error) {
+        resetLinkError.value = formatApiError(error, t('adminUsers.resetLinkFailed'));
+      } finally {
+        resetLinkLoading.value = false;
+      }
+    };
+
+    /** 复制链接：失败不抛错（http / 非安全上下文下 clipboard 可能不可用），给一句提示 */
+    const copyResetLink = async () => {
+      const url = resetLinkData.value?.url || '';
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        ElMessage.success(t('adminUsers.resetLinkCopied'));
+      } catch {
+        ElMessage.warning(t('adminUsers.resetLinkCopyManual'));
+      }
+    };
 
     const openDelete = (row) => {
       deleteTarget.value = row;
@@ -870,15 +1299,141 @@ export default {
       bulkDeleteVisible, bulkDeleting, bulkDeleteConfirmText, bulkDeleteWord,
       deletableSelected, blockedSelected, openBulkDelete, confirmBulkDelete,
       onSortChange,
+      // 第 120 批：签发一次性密码重置链接
+      resetLinkVisible, resetLinkLoading, resetLinkTarget, resetLinkData, resetLinkError,
+      canResetLink, resetLinkBlockedReason, openResetLink, copyResetLink,
+      // 第 127 批：改角色（超级管理员 + 普通账号 才出现）
+      canChangeRole, roleDialogVisible, roleSubmitting, roleTarget, roleDraft,
+      openRoleDialog, submitRole, roleLabel,
+      // 第 128 批：改角色时勾选内容模块
+      moduleOptions, moduleDraft,
+      // 第 131 批：开通编辑员账号
+      canCreateEditor, createEditorVisible, creatingEditor, createEditorForm,
+      createEditorModules, createdEditor, openCreateEditor, submitCreateEditor,
+      copyCreatedEditorLink, resetCreateEditor,   // resetCreateEditor 被模板的 @closed 用到
     };
   },
 };
 </script>
 
 <style scoped>
-/* 第 89 批：返回按钮紧贴左边缘，和下面的深绿页头留出间距 */
-.admin-users > .back-button {
+/* 第 117 批：删掉了 `.admin-users > .back-button` 的间距规则（返回按钮已随管理后台外壳一起移除） */
+
+/* 第 131 批：开通编辑员弹窗里的成功提示 */
+.create-editor-ok {
   margin-bottom: 12px;
+}
+
+.create-editor-ok p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+/* 第 127 批：改角色弹窗 */
+.role-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-800, #24352c);
+}
+
+.role-options {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+/* 第 128 批：内容模块勾选区 */
+.role-modules {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #e2ebe5);
+  border-radius: 10px;
+  background: var(--ink-50, #f8fbf9);
+}
+
+.role-modules-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-800, #24352c);
+}
+
+.role-modules-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-500, #78897f);
+}
+
+.role-note {
+  margin-top: 4px;
+}
+
+.role-note p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+/* 第 120 批：签发密码重置链接弹窗 */
+.reset-link-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-800, #24352c);
+}
+
+.reset-link-warning {
+  margin-bottom: 14px;
+}
+
+.reset-link-warning p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.reset-link-sub {
+  margin-top: 4px !important;
+  font-size: 12.5px;
+  opacity: 0.9;
+}
+
+/* 链接框：等宽字体 + 可整段选中，方便手动复制（clipboard 不可用时也有退路） */
+.reset-link-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reset-link-input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong, #d3dfd8);
+  border-radius: 10px;
+  background: var(--ink-50, #f8fbf9);
+  color: var(--ink-700, #3a4d43);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.reset-link-hint {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-500, #78897f);
+}
+
+.reset-link-hint i {
+  margin-right: 6px;
+  color: var(--brand-500, #3d9a68);
 }
 
 /* 第 95 批：删除用户弹窗里的提示与目标信息 */
@@ -981,6 +1536,21 @@ export default {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 第 128 批：编辑员的模块标签（列表里一眼看出"他管哪几块"） */
+.user-modules {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--brand-600, #2f7d54);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-modules i {
+  margin-right: 4px;
+  font-size: 10.5px;
 }
 
 .expert-tag {

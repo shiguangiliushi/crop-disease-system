@@ -18,6 +18,8 @@ const EditPostView = () => import('@/views/EditPostView.vue')
 const PestEncyclopediaView = () => import('@/views/PestEncyclopediaView.vue')
 const PestDetailView = () => import('@/views/PestDetailView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
+// 第 116 批：管理端登录独立成页（`/admin/login`），与农户侧的 /login 分开
+const AdminLoginView = () => import('@/views/AdminLoginView.vue')
 const RegisterView = () => import('@/views/RegisterView.vue')
 const PreventionView = () => import('@/views/PreventionView.vue')
 const AboutView = () => import('@/views/AboutView.vue')
@@ -57,13 +59,22 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: LoginView,
-      meta: { title: '客服登录', bareLayout: true }
+      meta: { title: '登录', bareLayout: true }
+    },
+    // 第 116 批：管理员登录**独立成页**。
+    // 改前 /login 一个页面既当农户第一屏、又写着「客服工作台/坐席专用入口」，
+    // 两边都不像；现在农户走 /login，管理员走这里（文案、左侧一栏、登录后的落点都不同）。
+    {
+      path: '/admin/login',
+      name: 'admin-login',
+      component: AdminLoginView,
+      meta: { title: '管理员登录', bareLayout: true }
     },
     {
       path: '/register',
       name: 'register',
       component: RegisterView,
-      meta: { title: '客服注册', bareLayout: true }
+      meta: { title: '注册', bareLayout: true }
     },
     // 第 35 批：忘记密码自助流程（此前只能"联系管理员重置"）
     {
@@ -131,6 +142,11 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
+        capability: 'CONTENT',   // 第 126 批：内容生产
+        module: 'review',    // 第 128 批：内容侧按模块隔离（内容审核）
+        // 第 117 批：`adminArea` = 走管理后台外壳（AdminLayout：左侧栏 + 顶部条），
+        // 不显示农户端的顶栏与页脚。App.vue 读这个标记（isAdminArea）。
+        adminArea: true,
         title: '内容审核',
         breadcrumb: ['管理', '内容审核']
       }
@@ -143,6 +159,8 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
+        capability: 'CONTENT',   // 第 126 批：看板只读，信息编辑员可看（用户明细由后端裁剪）
+        adminArea: true,   // 第 117 批：管理后台外壳
         title: '数据看板',
         breadcrumb: ['管理', '数据看板']
       }
@@ -156,6 +174,8 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
+        capability: 'USER_ADMIN',   // 第 126 批：用户管理只给全权管理员
+        adminArea: true,   // 第 117 批：管理后台外壳
         title: '用户管理',
         breadcrumb: ['管理', '用户管理']
       }
@@ -272,26 +292,29 @@ const router = createRouter({
       }
     },
     {
+      // 第 121 批：这两条是**历史深链**（"打开行业动态页并把新增/编辑弹窗打开"）。
+      // 它们以前直接渲染 `NewsView` —— 也就是**农户端外观**的页面 + 一个弹窗，
+      // 而这两条路由都要管理员权限，等于让管理员在管理动作上看到农户那张脸。
+      // 现在改成**重定向进管理后台的新闻管理页**（那一页本来就有自己的新增/编辑弹窗，
+      // 第 33 批做的），由它按 ?action= 打开对应弹窗。
+      // 保留路由名：`docTitle` 与任何 `{ name: 'news-create' }` 的老跳转都还认。
       path: '/news/create',
       name: 'news-create',
-      component: NewsView,
+      redirect: () => ({ name: 'news-management', query: { action: 'create' } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
-        title: '添加新闻',
-        breadcrumb: ['新闻', '添加']
+        title: '添加新闻'
       }
     },
     {
       path: '/news/:id/edit',
       name: 'news-edit',
-      component: NewsView,
-      props: true,
+      redirect: (to) => ({ name: 'news-management', query: { action: 'edit', id: to.params.id } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
-        title: '编辑新闻',
-        breadcrumb: ['新闻', '编辑']
+        title: '编辑新闻'
       }
     },
     {
@@ -407,8 +430,27 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
+        capability: 'CONTENT',   // 第 126 批：内容生产
+        module: 'news',      // 第 128 批：新闻管理模块
+        adminArea: true,   // 第 117 批：管理后台外壳
         title: '新闻管理',
         breadcrumb: ['管理', '新闻管理']
+      }
+    },
+    {
+      // 第 122 批：病害百科维护。此前它的维护入口长在**农户端**的百科页上
+      // （顶部「管理员模式」工具条 + 卡片上的编辑/删除），现在与新闻/用户/反馈一样
+      // 归进管理后台侧栏；农户端 `/pests` 因此变回纯阅读页。
+      path: '/admin/pests',
+      name: 'admin-pests',
+      component: () => import('@/views/AdminPestsView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        capability: 'CONTENT',   // 第 126 批：内容生产
+        module: 'pests',     // 第 128 批：病害百科模块
+        adminArea: true,
+        title: '病害百科维护'
       }
     },
     {
@@ -419,6 +461,9 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
+        capability: 'CONTENT',   // 第 126 批：内容生产
+        module: 'feedback',  // 第 128 批：意见反馈模块
+        adminArea: true,   // 第 117 批：管理后台外壳
         title: '意见反馈管理',
         breadcrumb: ['管理', '意见反馈']
       }
@@ -495,9 +540,17 @@ router.beforeEach(async (to, from, next) => {
   // 检查是否需要登录
   if (to.matched.some(record => record.meta.requiresAuth)) {
     if (!authStore.isAuthenticated) {
-      // 未登录，重定向到登录页
+      // 未登录，重定向到登录页。
+      //
+      // 第 116 批：**管理区送管理端登录页**。改前不管目标是什么一律送 `/login`，
+      // 于是管理员点开 /admin/dashboard 时看到的是农户那套"拍照识别/注册"页面，
+      // 与"入口分开"自相矛盾。这里按目标是否管理区选入口：
+      //   · /admin/**  → /admin/login（深色「管理后台」入口）
+      //   · 其它受保护页 → /login
+      // 仍然只传**原因码**（第 84 批的约定），由登录页按当前语言翻译后显示。
+      const targetIsAdminArea = to.matched.some(record => record.meta.requiresAdmin)
       next({
-        name: 'login',
+        name: targetIsAdminArea ? 'admin-login' : 'login',
         query: {
           redirect: to.fullPath,
           // 第 84 批：这里原来传的是 **已翻译好的句子** 且键名写错（auth.loginRequired
@@ -509,18 +562,52 @@ router.beforeEach(async (to, from, next) => {
       return
     }
 
-    // 检查是否需要管理员权限
+    // 检查是否需要管理端权限（第 126 批：从"是不是管理员"改成"有没有这个页面的能力"）
+    //
+    // 第 17 批原本用的是 `authStore.isAdmin`（is_staff / is_superuser / role=ADMIN）。
+    // 第 125 批起 `role=EDITOR`（信息编辑员）也能进后台，但他**不是**管理员 ——
+    // 用 isAdmin 会把他挡在门外；反过来只判断"能进后台"又会让他直接输
+    // `/admin/users` 就能打开用户管理页（虽然接口会 403，但页面白开）。
+    // 因此按每条路由的 `meta.capability` 逐个判断，并保留 `requiresAdmin` 作为
+    // 老路由（农户端页面上的管理员按钮）的兼容标记。
+    //
+    // 第 128 批：内容侧再按 `meta.module` 判断 —— 内容能力拆成四个互不干扰的模块
+    // （内容审核 / 新闻管理 / 病害百科 / 意见反馈），只勾其中一块的编辑员
+    // 手输别的模块网址会被弹回，并被告知"没有该模块权限"。
     if (to.matched.some(record => record.meta.requiresAdmin)) {
-      // 第 17 批：改用 store 的统一管理员口径（is_staff / is_superuser / role=ADMIN），
-      // 与后端权限类一致。原实现漏了 is_superuser，且依赖 role —— 而登录响应此前
-      // 不返回 role，导致"仅角色管理员"被挡在管理页外面（后端其实是允许的）。
-      if (!authStore.isAdmin) {
-        // 非管理员用户：提示并送回上一页；但直接输网址进来时 from 是空路径，
+      const required = to.matched
+        .map(record => record.meta.capability)
+        .find(Boolean);
+      const requiredModule = to.matched
+        .map(record => record.meta.module)
+        .find(Boolean);
+
+      // 没标能力的老路由：能进后台即可
+      let allowed = required ? authStore.hasCapability(required) : authStore.canAccessConsole;
+      let blockedByModule = false;
+      if (allowed && requiredModule) {
+        allowed = authStore.hasContentModule(requiredModule);
+        blockedByModule = !allowed;
+      }
+
+      if (!allowed) {
+        // 提示并送回上一页；但直接输网址进来时 from 是空路径，
         // 送 "/" 比留在管理页更合理（第 103 批补：原来 `from.path || '/'` 在
         // 直接进入时确实会回首页，这里保持并补上注释说明为什么不是留在原地）。
-        ElMessage.warning(t('msg.noPermission'))
-        next(from.path || '/')
-        return
+        //
+        // 第 126 批补充：如果这个人**能进后台、只是没有这一页的权限**（典型：信息编辑员
+        // 手输 /admin/users），把他丢回首页会让人以为是"页面坏了"；送回后台里他
+        // 有权限的那一页更说得通，并明确告诉他原因。
+        const fallback = authStore.canAccessConsole ? '/admin/dashboard' : (from.path || '/');
+        if (blockedByModule) {
+          ElMessage.warning(t('msg.needModule', { module: t(`contentModule.${requiredModule}`) }));
+        } else {
+          ElMessage.warning(required === 'USER_ADMIN'
+            ? t('msg.needUserAdmin')
+            : t('msg.noPermission'));
+        }
+        next(fallback);
+        return;
       }
     }
   }

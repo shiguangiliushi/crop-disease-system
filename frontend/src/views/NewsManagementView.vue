@@ -1,7 +1,6 @@
 <template>
   <div class="news-management tinted-page">
-    <!-- 返回入口（第 87 批：本页只能从顶栏「管理」下拉进来，此前没有返回按钮） -->
-    <BackButton />
+    <!-- 第 117 批：原来的「返回」按钮已移除（本页现在在管理后台外壳里，左侧栏就是导航） -->
 
     <!-- 页头（第 29 批：改用全局 .admin-hero 的深绿实底样式，
          原来浅绿页头铺在浅绿工作区底上会糊成一片） -->
@@ -372,6 +371,7 @@ import {
   NEWS_CATEGORIES,
   createNews,
   deleteNews,
+  fetchNewsDetail,
   fetchNewsList,
   formatNewsError,
   getNewsCategoryLabel,
@@ -379,9 +379,10 @@ import {
   updateNews,
 } from '@/api/news';
 import { toAbsoluteMediaUrl } from '@/api/http';
+import { useRoute, useRouter } from 'vue-router';  // 第 121 批：旧深链重定向进来的 ?action=
 import { useI18n } from '@/i18n';  // 第 66 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 79 批：新闻标题/来源等内容数据
-import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
+// 第 117 批：去掉 BackButton（本页已挪进管理后台外壳，侧栏就是导航）
 
 const { t } = useI18n();
 const { localizedField } = useLocalized();
@@ -679,7 +680,47 @@ const formatDate = (value) => {
   }
 };
 
-onMounted(fetchData);</script>
+// ============================================================================
+// 深链：由旧路由 `/news/create`、`/news/:id/edit` 重定向进来（第 121 批）
+// ----------------------------------------------------------------------------
+// 那两条历史深链过去是渲染**农户端外观**的行业动态页 + 弹窗，而它们都要管理员权限 ——
+// 等于让管理员在管理动作上看到农户那张脸。现在它们重定向到这里，并带上：
+//     ?action=create            打开"新增新闻"弹窗
+//     ?action=edit&id=<新闻 id>  拉取该新闻并打开"编辑新闻"弹窗
+// 处理完把 query 清掉（router.replace）：否则管理员关掉弹窗再点别的行时，
+// 地址栏里还挂着 action=create，刷新一下弹窗又自己冒出来。
+// ============================================================================
+const route = useRoute();
+const router = useRouter();
+
+const openFromQuery = async () => {
+  const action = String(route.query.action || '');
+  if (!action) return;
+
+  if (action === 'create') {
+    handleCreate();
+  } else if (action === 'edit') {
+    const id = Number(route.query.id);
+    if (!id) {
+      ElMessage.warning(t('newsMgmt.editMissingId'));
+    } else {
+      try {
+        const detail = await fetchNewsDetail(id);
+        handleEdit(detail);
+      } catch (error) {
+        // 文章可能已被删掉（老书签）—— 明说，不要静默什么都不发生
+        ElMessage.error(formatNewsError(error, t('newsMgmt.editLoadFailed')));
+      }
+    }
+  }
+
+  router.replace({ name: 'news-management', query: {} });
+};
+
+onMounted(async () => {
+  await fetchData();
+  await openFromQuery();
+});</script>
 
 <style scoped>
 .news-management {
@@ -696,10 +737,7 @@ onMounted(fetchData);</script>
   color: var(--nm-text);
 }
 
-/* 第 87 批：返回按钮紧贴左边缘，和下面的深绿页头留出间距 */
-.news-management > .back-button {
-  margin-bottom: 12px;
-}
+/* 第 117 批：删掉了 `.news-management > .back-button` 的间距规则（返回按钮已随管理后台外壳一起移除） */
 
 /* 说明（第 29 批）：页头已改用全局 .admin-hero 的深绿实底样式，
    原来这里的 .page-head 浅绿渐变已删除 —— 浅绿页头铺在浅绿工作区底上会糊成一片。 */

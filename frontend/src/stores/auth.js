@@ -142,19 +142,96 @@ export const useAuthStore = defineStore('auth', () => {
     return hasToken;
   });
 
-  const isAdmin = computed(() => {
-    // 管理员判定必须与后端口径一致（否则前端放行、后端 403）：
-    //   - permissions.IsAdminOrReadOnly：认 is_staff / is_superuser / role=ADMIN
-    //   - DetectionHistoryView.get_queryset 的 user / search / all_users 分支同理
-    //     （对应第 22 批把「识别记录管理」并入 HistoryView 之后的 /history 范围切换）
-    // 第 17 批曾用过 `role === 'EDITOR'`，但 role 的取值里**没有** EDITOR
-    // （以 grep models.py 的 ROLE_CHOICES 为准），所以这里不再引用它。
-    // 结论：能进 /admin/* 的只有 role=ADMIN 或 is_staff，二者按"或"合并。
-    return Boolean(
+  // ==========================================================================
+  // 能力（capabilities）—— 第 124 批
+  // --------------------------------------------------------------------------
+  // 后端 `api/capabilities.py` 是**唯一**口径，并通过 `/api/login/`、
+  // `/api/check-auth/` 的 `user.capabilities` 字段下发。前端不再自己拿
+  // is_staff / role 推"我是不是管理员"—— 因为那样必然与后端漂移
+  // （第 17 批就踩过：前端认 `role === 'EDITOR'`，后端根本不认它）。
+  //
+  // 三个能力（见后端 capabilities.py）：
+  //   CONTENT      内容生产：病害百科 / 新闻 / 内容审核 / 反馈回复 / 日历 / 只读看板
+  //   USER_ADMIN   用户与他人数据：用户管理 / 重置链接 / 专家授予 / 他人识别记录
+  //   BROADCAST    对外发声与系统开关：公告 / 预警推送 / 敏感词 / 论坛版块
+  //
+  // ⚠️ 前端只负责"别把做不到的东西画出来"（菜单、按钮），**边界始终在后端**。
+  // ==========================================================================
+  const CAP_CONTENT = 'CONTENT';
+  const CAP_USER_ADMIN = 'USER_ADMIN';
+  const CAP_BROADCAST = 'BROADCAST';
+
+  /**
+   * 当前账号的能力清单
+   *
+   * 优先用后端下发的 `user.capabilities`；**缺失时按老口径兜底**：
+   * 老版本登录响应没有这个字段（或用户资料来自旧缓存），此时按
+   * is_staff / is_superuser / role==='ADMIN' 给全部三项 —— 与后端
+   * `is_full_admin()` 完全一致，因此兜底不会放行后端不允许的事。
+   */
+  const capabilities = computed(() => {
+    const raw = user.value?.capabilities;
+    if (Array.isArray(raw)) return raw;
+    const isLegacyFullAdmin = Boolean(
       user.value?.is_staff ||
       user.value?.is_superuser ||
       user.value?.role === 'ADMIN'
     );
+    return isLegacyFullAdmin ? [CAP_CONTENT, CAP_USER_ADMIN, CAP_BROADCAST] : [];
+  });
+
+  // ==========================================================================
+  // 内容模块（第 128 批）
+  // --------------------------------------------------------------------------
+  // `CONTENT` 这一个能力内部再分四个**互不干扰**的模块，按人授权（后端
+  // `EditorModuleGrant`）：内容审核 / 新闻管理 / 病害百科 / 意见反馈。
+  // 侧栏与路由守卫都要看它 —— 只勾了「新闻管理」的编辑员**看不到**也算不进
+  // 病害百科维护（后端同样会 403）。
+  // ==========================================================================
+  const MODULE_REVIEW = 'review';
+  const MODULE_NEWS = 'news';
+  const MODULE_PESTS = 'pests';
+  const MODULE_FEEDBACK = 'feedback';
+  const CONTENT_MODULES = [MODULE_REVIEW, MODULE_NEWS, MODULE_PESTS, MODULE_FEEDBACK];
+
+  /**
+   * 当前账号拥有的内容模块
+   *
+   * 后端在 `/api/login/`、`/api/check-auth/` 的 `user.content_modules` 里下发。
+   * 兜底规则与后端 `is_full_admin()` 一致：全权管理员四个模块全给
+   * （老缓存里没有这个字段时也不会把管理员的菜单弄丢）。
+   */
+  const contentModules = computed(() => {
+    const raw = user.value?.content_modules;
+    if (Array.isArray(raw)) return raw;
+    return capabilities.value.length === 3 ? [...CONTENT_MODULES] : [];
+  });
+
+  /** 是否有某个内容模块（页面/菜单用它，不要再用 hasCapability(CONTENT)） */
+  const hasContentModule = (module) => contentModules.value.includes(module);
+
+  /** 是否具备某个能力（页面/按钮用它，不要再用 isAdmin） */
+  const hasCapability = (capability) => capabilities.value.includes(capability);
+
+  /**
+   * 能否进入管理后台（侧栏里至少有一项可看）
+   *
+   * 路由守卫 `requiresAdmin` 用的是它 —— 比 isAdmin 更准：
+   * 第 125 批起 `role=EDITOR`（信息编辑员）能进后台，但要**进来的不是管理员**。
+   */
+  const canAccessConsole = computed(() => capabilities.value.length > 0);
+
+  const isAdmin = computed(() => {
+    // 全权管理员（is_staff / is_superuser / role=ADMIN）—— **保留原名**，
+    // 因为农户端页面上还有一批"管理员才有"的入口（识别记录全站视图、公告发布、
+    // 预警推送、敏感词、版块管理…），它们分散在十几个视图里，逐个改名的风险大于收益。
+    //
+    // 第 124 批：语义收紧为"**三项能力全都有**"（而不是"is_staff 或 role=ADMIN"），
+    // 于是信息编辑员不会因为能进后台就被当成管理员（否则他会看到公告发布、
+    // 清空识别记录这些按钮，点了必然 403）。
+    // ⚠️ 新代码请优先用 hasCapability(cap) / canAccessConsole，
+    //    需要"全权管理员"时才用 isAdmin。
+    return capabilities.value.length === 3;
   });
 
   function setAuth({ userData, token, remember = true }) {
@@ -361,31 +438,70 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function logout(router) {
+  /**
+   * 登出。
+   *
+   * 第 117 批改了**顺序**，并加了 `redirectTo`：
+   *   · 改前：`await api.post('logout/')` → 再 `clearAuth()` + 跳转。
+   *     开发机上这个注销请求实测要 5 秒以上，于是用户点完"退出登录"会**盯着管理后台
+   *     发呆好几秒**，看起来像按钮没反应（管理端尤其明显，因为它就在顶部条上）。
+   *   · 现在：先取 token → 立刻 `clearAuth()` + 跳转 → 再**尽力**通知服务端。
+   *     本地登出是用户能感知的那一半，不该等服务端。
+   *
+   * ⚠️ 顺序换了之后有个坑：`clearAuth()` 会把内存里的 token 清掉，而两个请求拦截器
+   *    正是从 `authStore.authToken` 取 `Authorization` —— 服务端那一步必须**显式带上**
+   *    刚才取出来的 token，否则后端删不掉这个 token（`LogoutView` 是靠
+   *    `request.user.auth_token.delete()` 作废它的）。
+   *
+   * `redirectTo` 默认仍是农户登录页；管理后台传 `/admin/login`（第 117 批），
+   * 免得管理员退出后被丢到农户登录页、以为自己走错了站。
+   */
+  async function logout(router, redirectTo = '/login') {
+    const token = authToken.value;
+
+    clearAuth();
+
+    if (router && typeof router.push === 'function') {
+      router.push(redirectTo);
+    } else {
+      // 没有 router（极少见）就整页跳转
+      window.location.href = redirectTo;
+    }
+
     try {
-      // 通知后端注销（失败也不影响本地登出）
-      try {
-        await api.post('logout/');  // 更新为正确的登出端点
-      } catch (error) {
-        console.warn("Logout API call failed, but continuing with local logout:", error);
-      }
-    } finally {
-      clearAuth();
-      // 有 router 就跳登录页
-      if (router && typeof router.push === 'function') {
-        router.push('/login');
-      } else {
-        // 没有 router（极少见）就整页跳转
-        window.location.href = '/login';
-      }
+      await api.post('logout/', {}, {
+        headers: token ? { Authorization: `Token ${token}` } : {},
+        // 这一请求 401 只说明"这个 token 早就失效了"，不该再把人往登录页拽一次
+        // （在管理后台里那就是被丢回农户登录页）——见 utils/axios.js 的 skipAuthRedirect
+        skipAuthRedirect: true,
+      });
+    } catch (error) {
+      // 本地已经登出，通知服务端失败不影响用户；最坏情况是这个 token 留到服务端过期
+      console.warn('Logout API call failed, but local logout already done:', error);
     }
   }
 
+  /**
+   * 恢复登录态（**只读本地**，不请求后端）
+   *
+   * ⚠️ 第 123 批把话说明白：这里以前叫"检查认证状态"，日志也写
+   *    "checking auth status"，但实现**只是读 sessionStorage/localStorage**，
+   *    对"token 还有没有效"一无所知 —— 于是失效 token 也会被判定为已登录
+   *    （打印 "assuming user is authenticated"），接着一整屏接口 401。
+   *
+   * 为什么不在这里补一次网络校验：
+   *   · 真正该管这件事的是**接口层**：任何请求 401 都由 `api/http.js` 的响应
+   *     拦截器统一清登录态 + 跳对应端的登录页（第 123 批补的），
+   *     所以"第一次真正需要数据的时候"就会被纠正，不需要额外加一次开机请求；
+   *   · 开机多打一个请求对**离线场景**不友好：本项目有离线模式，
+   *     断网时不该因为"校验不了"就把用户登出。
+   * 需要主动校验时用 `verifyToken()`（会打后端，只在明确需要时调用）。
+   */
   async function checkAuth() {
     try {
       // 内存里已有 token
       if (authToken.value) {
-        console.log('Auth token found in store, assuming user is authenticated.');
+        console.log('Auth token found in store, using cached login state (validity is enforced on API 401).');
         return true;
       }
 
@@ -417,17 +533,61 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * 主动向后端校验 token（第 123 批）
+   *
+   * 与 `checkAuth()` 的区别：这个**会发请求**，返回 boolean，并在 401 时清掉本地登录态。
+   * 断网（请求根本没发出去）时**不动登录态**，返回 true —— 离线模式仍然可用。
+   */
+  async function verifyToken() {
+    if (!authToken.value) return false;
+    try {
+      const response = await api.get('check-auth/');
+      const payload = unwrapAuthPayload(response);
+      const data = payload?.data ?? payload;
+      if (data?.username) {
+        user.value = { ...(user.value || {}), ...data };
+      }
+      return true;
+    } catch (error) {
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        clearAuth();
+        return false;
+      }
+      // 网络问题（断网 / 后端没起）不该把人登出：离线模式还要用
+      console.warn('Token 校验请求失败（按离线处理，不清登录态）:', error?.message || error);
+      return true;
+    }
+  }
+
 
   return {
     user,
     authToken,
     isAuthenticated,
     isAdmin,
+    // 第 124 批：能力口径（后端 capabilities.py 是唯一正源）
+    capabilities,
+    hasCapability,
+    canAccessConsole,
+    CAP_CONTENT,
+    CAP_USER_ADMIN,
+    CAP_BROADCAST,
+    // 第 128 批：内容模块（内容审核 / 新闻管理 / 病害百科 / 意见反馈）
+    contentModules,
+    hasContentModule,
+    CONTENT_MODULES,
+    MODULE_REVIEW,
+    MODULE_NEWS,
+    MODULE_PESTS,
+    MODULE_FEEDBACK,
     setupAuthInterceptors,  // 拦截器注册与清理
     login,
     register,
     logout,
     checkAuth,
+    verifyToken,   // 第 123 批：主动向后端校验 token（会发请求，断网时不清登录态）
     setAuth,
     updateUser,
     // 必须导出 clearAuth：main.js 的 initAuth 与 utils/axios.js 的 401 处理

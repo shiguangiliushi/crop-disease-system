@@ -442,9 +442,9 @@ const authStore = useAuthStore();
 // 检查是否是管理员
 const isAdmin = computed(() => authStore.isAdmin);
 
-// 检查当前是否是编辑模式
-const isEditMode = computed(() => route.name === 'news-edit');
-const isCreateMode = computed(() => route.name === 'news-create');
+// 第 121 批：`isEditMode` / `isCreateMode` 已删除 —— 那两条历史深链
+// （`/news/create`、`/news/:id/edit`）现在重定向进管理后台的新闻管理页，
+// 本页只剩下"行业动态列表 + 就地弹窗"这一种身份（新增/编辑都走页面里的按钮）。
 
 // 新闻列表相关
 const newsList = ref([]);
@@ -845,11 +845,6 @@ const submitNews = async () => {
 
     // 重置表单
     resetForm();
-
-    // 如果是编辑模式，返回新闻列表
-    if (isEditMode.value) {
-      router.push({ name: 'news' });
-    }
   } catch (error) {
     console.error('保存失败:', error);
     // 原来只读 error.response.data.detail，字段级错误（典型："已存在同标题的新闻"）
@@ -1014,29 +1009,13 @@ const goToNewsDetail = (id) => {
 
 // 初始化
 onMounted(() => {
-  // 如果是编辑模式，加载新闻详情
-  if (isEditMode.value && route.params.id) {
-    loadNewsDetail(route.params.id);
-  }
-  // 如果是创建模式，显示添加对话框
-  else if (isCreateMode.value) {
-    resetForm();
-    showAddDialog.value = true;
-  }
-  // 否则加载新闻列表
-  else {
-    fetchNews();
-  }
+  fetchNews();
 });
 
-// 监听路由变化
+// 监听路由变化：从任何"新闻相关"的深链回到本页列表时，把弹窗收起来并刷新列表
+// （第 121 批：原先这里还要处理"编辑模式/创建模式"，那两条深链现在重定向走了）
 watch(() => route.name, (newVal) => {
-  if (newVal === 'news-edit' && route.params.id) {
-    loadNewsDetail(route.params.id);
-  } else if (newVal === 'news-create') {
-    resetForm();
-    showAddDialog.value = true;
-  } else if (newVal === 'news') {
+  if (newVal === 'news') {
     showAddDialog.value = false;
     fetchNews();
   }

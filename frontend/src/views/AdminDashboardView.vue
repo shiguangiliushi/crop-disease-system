@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-page">
-    <!-- 返回入口（第 87 批：本页只能从顶栏「管理」下拉进来，此前没有返回按钮） -->
-    <BackButton />
+    <!-- 第 117 批：原来的「返回」按钮已移除 —— 本页现在在管理后台外壳里，
+         左侧栏就是导航，页脚还有「返回用户端」，再放一个"返回上一页"只会让人犹豫点哪个。 -->
 
     <!-- 页头 -->
     <header class="admin-hero">
@@ -136,7 +136,7 @@
           </div>
         </section>
 
-        <section class="panel-card">
+        <section v-if="includesUserDetail" class="panel-card">
           <div class="panel-head">
             <span class="panel-icon"><i class="fas fa-trophy"></i></span>
             <h2 class="panel-title">{{ t('dashboard.topContributors') }}</h2>
@@ -157,7 +157,7 @@
         </section>
       </div>
 
-      <section class="panel-card">
+      <section v-if="includesUserDetail" class="panel-card">
         <div class="panel-head">
           <span class="panel-icon"><i class="fas fa-users"></i></span>
           <h2 class="panel-title">{{ t('dashboard.recentUsers') }}</h2>
@@ -224,7 +224,7 @@ import { fetchDashboard } from '@/api/dashboard';
 import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 54 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 77 批：分布图的内容数据（病害名/作物名）
-import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
+// 第 117 批：去掉 BackButton（本页已挪进管理后台外壳，侧栏就是导航）
 
 ChartJS.register(
   BarController, BarElement, LineController, LineElement, PointElement,
@@ -238,7 +238,7 @@ const PALETTE = ['#3d9a68', '#5fb088', '#93cdad', '#2a7f53', '#d9922f', '#3d7ea6
 
 export default {
   name: 'AdminDashboardView',
-  components: { Line, Bar, Doughnut, BackButton },  // 第 87 批：加返回按钮
+  components: { Line, Bar, Doughnut },
   setup() {
     const { t, locale } = useI18n();  // 第 54 批：多语言（第 77 批起也要 locale）
     const { localizedField } = useLocalized();  // 第 77 批：分布图的内容数据
@@ -273,6 +273,21 @@ export default {
     const feedbackByStatus = computed(() => data.value.feedback_by_status || {});
     const topContributors = computed(() => data.value.top_contributors || []);
     const recentUsers = computed(() => data.value.recent_users || []);
+
+    /**
+     * 看板里的"能定位到具体用户"的两块（贡献榜 / 最近注册）能不能显示（第 126 批）
+     *
+     * 产品口径：**信息编辑员可以看看板，但看不到人**。后端
+     * `AdminDashboardView` 已经按 `is_full_admin()` 把这两个键裁剪成空数组
+     * （不是靠前端隐藏 —— 抓包也拿不到），这里读它给的 `includes_user_detail`
+     * 来决定要不要渲染这两张卡片。
+     *
+     * 为什么不直接用 `authStore.isAdmin`：这份数据也能由别的入口带回来，
+     * 以"后端到底给没给"为准最不容易出错（前端只是不画空卡片）。
+     */
+    const includesUserDetail = computed(
+      () => data.value.includes_user_detail === true,
+    );
 
     const todoCount = computed(
       () =>
@@ -404,6 +419,7 @@ export default {
       feedbackByStatus,
       topContributors,
       recentUsers,
+      includesUserDetail,   // 第 126 批：用户明细两块是否渲染
       todoCount,
       kpis,
       detectionChart,
@@ -431,10 +447,7 @@ export default {
   padding: 24px 20px 40px;
 }
 
-/* 第 87 批：返回按钮紧贴左边缘，和下面的深绿页头留出间距 */
-.dashboard-page > .back-button {
-  margin-bottom: 12px;
-}
+/* 第 117 批：删掉了 `.dashboard-page > .back-button` 的间距规则（返回按钮已随管理后台外壳一起移除） */
 
 .range-select {
   width: 130px;

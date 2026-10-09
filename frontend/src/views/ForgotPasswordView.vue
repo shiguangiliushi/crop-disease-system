@@ -8,7 +8,7 @@
  */
 import { ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import ConsoleAuthShell from '@/components/ConsoleAuthShell.vue';
+import AuthShell from '@/components/AuthShell.vue';
 import { requestPasswordReset } from '@/api/account';
 import { useI18n } from '@/i18n';  // 第 61 批：多语言
 
@@ -44,46 +44,46 @@ const handleSubmit = async () => {
 </script>
 
 <template>
-  <ConsoleAuthShell
+  <AuthShell
     :eyebrow="t('auth.eyebrowDefault')"
     :title="t('auth.forgotTitle')"
     :subtitle="t('auth.forgotSubtitle')"
   >
     <template #topbar-actions>
-      {{ t('auth.rememberIt') }}<RouterLink to="/login" class="cs-inline-link">{{ t('auth.backToLogin') }}</RouterLink>
+      {{ t('auth.rememberIt') }}<RouterLink to="/login" class="auth-inline-link">{{ t('auth.backToLogin') }}</RouterLink>
     </template>
 
     <!-- 发送成功 -->
-    <div v-if="sent" class="cs-done">
-      <div class="cs-done-icon"><i class="fas fa-envelope-circle-check"></i></div>
+    <div v-if="sent" class="auth-done">
+      <div class="auth-done-icon"><i class="fas fa-envelope-circle-check"></i></div>
       <h3>{{ t('auth.forgotSentTitle') }}</h3>
       <p>
         {{ t('auth.forgotSentBody') }}
         <strong>{{ t('auth.oneHour') }}</strong>{{ t('auth.forgotSentTail') }}
       </p>
-      <p class="cs-done-tip">
+      <p class="auth-done-tip">
         <i class="fas fa-circle-info"></i>
         {{ t('auth.forgotNotReceived') }}
       </p>
-      <RouterLink to="/login" class="cs-submit cs-submit-link">{{ t('auth.backToLogin') }}</RouterLink>
-      <button type="button" class="cs-link-btn" @click="sent = false">
+      <RouterLink to="/login" class="auth-submit auth-submit-link">{{ t('auth.backToLogin') }}</RouterLink>
+      <button type="button" class="auth-link-btn" @click="sent = false">
         {{ t('auth.tryAnother') }}
       </button>
     </div>
 
     <!-- 输入账号 -->
-    <form v-else class="cs-form" @submit.prevent="handleSubmit">
-      <div class="cs-field">
-        <label class="cs-label" for="account">
+    <form v-else class="auth-form" @submit.prevent="handleSubmit">
+      <div class="auth-field">
+        <label class="auth-label" for="account">
           <span>{{ t('auth.usernameOrEmail') }}</span>
-          <span class="cs-label-hint">{{ t('auth.eitherOne') }}</span>
+          <span class="auth-label-hint">{{ t('auth.eitherOne') }}</span>
         </label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-user cs-lead-icon"></i>
+        <div class="auth-input-wrap">
+          <i class="fas fa-user auth-lead-icon"></i>
           <input
             id="account"
             v-model="account"
-            class="cs-input"
+            class="auth-input"
             type="text"
             autocomplete="username"
             :placeholder="t('auth.usernameOrEmailPlaceholder')"
@@ -93,26 +93,26 @@ const handleSubmit = async () => {
         </div>
       </div>
 
-      <div v-if="errorMessage" class="cs-alert">
+      <div v-if="errorMessage" class="auth-alert">
         <i class="fas fa-exclamation-circle"></i>
         <span>{{ errorMessage }}</span>
       </div>
 
-      <button type="submit" class="cs-submit" :disabled="isLoading">
-        <span v-if="isLoading" class="cs-spinner"></span>
+      <button type="submit" class="auth-submit" :disabled="isLoading">
+        <span v-if="isLoading" class="auth-spinner"></span>
         <i v-else class="fas fa-paper-plane"></i>
         {{ isLoading ? t('auth.sending') : t('auth.sendResetLink') }}
       </button>
     </form>
-  </ConsoleAuthShell>
+  </AuthShell>
 </template>
 
 <style scoped>
-.cs-done {
+.auth-done {
   text-align: center;
 }
 
-.cs-done-icon {
+.auth-done-icon {
   width: 56px;
   height: 56px;
   margin: 4px auto 14px;
@@ -125,21 +125,21 @@ const handleSubmit = async () => {
   box-shadow: 0 10px 22px rgba(25, 79, 55, 0.24);
 }
 
-.cs-done h3 {
+.auth-done h3 {
   margin: 0 0 8px;
   font-size: 17px;
   font-weight: 800;
   color: var(--ink-900);
 }
 
-.cs-done p {
+.auth-done p {
   margin: 0 0 10px;
   font-size: 13.5px;
   line-height: 1.8;
   color: var(--ink-600);
 }
 
-.cs-done-tip {
+.auth-done-tip {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -148,7 +148,7 @@ const handleSubmit = async () => {
   color: var(--ink-500);
 }
 
-.cs-submit-link {
+.auth-submit-link {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -156,7 +156,7 @@ const handleSubmit = async () => {
   text-decoration: none;
 }
 
-.cs-link-btn {
+.auth-link-btn {
   margin-top: 10px;
   border: none;
   background: none;

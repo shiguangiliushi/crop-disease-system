@@ -8,7 +8,7 @@
  */
 import { computed, ref } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import ConsoleAuthShell from '@/components/ConsoleAuthShell.vue';
+import AuthShell from '@/components/AuthShell.vue';
 import { confirmPasswordReset } from '@/api/account';
 import { useI18n } from '@/i18n';  // 第 61 批：多语言
 
@@ -28,8 +28,10 @@ const isLoading = ref(false);
 const done = ref(false);
 const errorMessage = ref('');
 
+// ⚠️ 第 116 批修：同 RegisterView —— 返回空字符串会让 `:disabled=""` 生效，
+// 空表单时按钮就是灰的（Vue 把空字符串也算作"该布尔属性存在"）。收敛成布尔值。
 const mismatch = computed(
-  () => password.value && confirmPassword.value && password.value !== confirmPassword.value,
+  () => Boolean(password.value && confirmPassword.value && password.value !== confirmPassword.value),
 );
 
 const strength = computed(() => {
@@ -72,42 +74,42 @@ const handleSubmit = async () => {
 </script>
 
 <template>
-  <ConsoleAuthShell
+  <AuthShell
     :eyebrow="t('auth.eyebrowDefault')"
     :title="t('auth.resetTitle')"
     :subtitle="t('auth.resetSubtitle')"
   >
     <template #topbar-actions>
-      <RouterLink to="/login" class="cs-inline-link">{{ t('auth.backToLogin') }}</RouterLink>
+      <RouterLink to="/login" class="auth-inline-link">{{ t('auth.backToLogin') }}</RouterLink>
     </template>
 
     <!-- 链接不完整 -->
-    <div v-if="!linkValid" class="cs-alert">
+    <div v-if="!linkValid" class="auth-alert">
       <i class="fas fa-triangle-exclamation"></i>
       <span>{{ t('auth.resetInvalid') }}</span>
     </div>
-    <RouterLink v-if="!linkValid" to="/forgot-password" class="cs-submit cs-submit-link">
+    <RouterLink v-if="!linkValid" to="/forgot-password" class="auth-submit auth-submit-link">
       {{ t('auth.requestNewLink') }}
     </RouterLink>
 
     <!-- 成功 -->
-    <div v-else-if="done" class="cs-done">
-      <div class="cs-done-icon"><i class="fas fa-circle-check"></i></div>
+    <div v-else-if="done" class="auth-done">
+      <div class="auth-done-icon"><i class="fas fa-circle-check"></i></div>
       <h3>{{ t('auth.resetDoneTitle') }}</h3>
       <p>{{ t('auth.resetDoneBody') }}</p>
-      <RouterLink to="/login" class="cs-submit cs-submit-link">{{ t('auth.loginNowButton') }}</RouterLink>
+      <RouterLink to="/login" class="auth-submit auth-submit-link">{{ t('auth.loginNowButton') }}</RouterLink>
     </div>
 
     <!-- 设置新密码 -->
-    <form v-else class="cs-form" @submit.prevent="handleSubmit">
-      <div class="cs-field">
-        <label class="cs-label" for="newPassword">{{ t('auth.newPassword') }}</label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-lock cs-lead-icon"></i>
+    <form v-else class="auth-form" @submit.prevent="handleSubmit">
+      <div class="auth-field">
+        <label class="auth-label" for="newPassword">{{ t('auth.newPassword') }}</label>
+        <div class="auth-input-wrap">
+          <i class="fas fa-lock auth-lead-icon"></i>
           <input
             id="newPassword"
             v-model="password"
-            class="cs-input has-trailing"
+            class="auth-input has-trailing"
             :type="showPassword ? 'text' : 'password'"
             autocomplete="new-password"
             :placeholder="t('auth.newPasswordPlaceholder')"
@@ -116,27 +118,27 @@ const handleSubmit = async () => {
           />
           <button
             type="button"
-            class="cs-input-trailing"
+            class="auth-input-trailing"
             :title="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
             @click="showPassword = !showPassword"
           >
             <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
           </button>
         </div>
-        <div v-if="password" class="cs-strength">
-          <span class="cs-strength-bar" :class="`level-${strength.level}`"></span>
-          <span class="cs-strength-text">{{ strength.text }}</span>
+        <div v-if="password" class="auth-strength">
+          <span class="auth-strength-bar" :class="`level-${strength.level}`"></span>
+          <span class="auth-strength-text">{{ strength.text }}</span>
         </div>
       </div>
 
-      <div class="cs-field">
-        <label class="cs-label" for="confirmPassword">{{ t('auth.confirmNewPassword') }}</label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-lock cs-lead-icon"></i>
+      <div class="auth-field">
+        <label class="auth-label" for="confirmPassword">{{ t('auth.confirmNewPassword') }}</label>
+        <div class="auth-input-wrap">
+          <i class="fas fa-lock auth-lead-icon"></i>
           <input
             id="confirmPassword"
             v-model="confirmPassword"
-            class="cs-input"
+            class="auth-input"
             type="password"
             autocomplete="new-password"
             :placeholder="t('auth.confirmNewPasswordPlaceholder')"
@@ -146,30 +148,30 @@ const handleSubmit = async () => {
         </div>
       </div>
 
-      <div v-if="mismatch" class="cs-alert">
+      <div v-if="mismatch" class="auth-alert">
         <i class="fas fa-exclamation-circle"></i>
         <span>{{ t('auth.passwordMismatch') }}</span>
       </div>
-      <div v-else-if="errorMessage" class="cs-alert">
+      <div v-else-if="errorMessage" class="auth-alert">
         <i class="fas fa-exclamation-circle"></i>
         <span>{{ errorMessage }}</span>
       </div>
 
-      <button type="submit" class="cs-submit" :disabled="isLoading || mismatch">
-        <span v-if="isLoading" class="cs-spinner"></span>
+      <button type="submit" class="auth-submit" :disabled="isLoading || mismatch">
+        <span v-if="isLoading" class="auth-spinner"></span>
         <i v-else class="fas fa-key"></i>
         {{ isLoading ? t('auth.resetting') : t('auth.confirmReset') }}
       </button>
     </form>
-  </ConsoleAuthShell>
+  </AuthShell>
 </template>
 
 <style scoped>
-.cs-done {
+.auth-done {
   text-align: center;
 }
 
-.cs-done-icon {
+.auth-done-icon {
   width: 56px;
   height: 56px;
   margin: 4px auto 14px;
@@ -182,21 +184,21 @@ const handleSubmit = async () => {
   box-shadow: 0 10px 22px rgba(25, 79, 55, 0.24);
 }
 
-.cs-done h3 {
+.auth-done h3 {
   margin: 0 0 8px;
   font-size: 17px;
   font-weight: 800;
   color: var(--ink-900);
 }
 
-.cs-done p {
+.auth-done p {
   margin: 0 0 14px;
   font-size: 13.5px;
   line-height: 1.8;
   color: var(--ink-600);
 }
 
-.cs-submit-link {
+.auth-submit-link {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -204,26 +206,26 @@ const handleSubmit = async () => {
   text-decoration: none;
 }
 
-.cs-strength {
+.auth-strength {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: 8px;
 }
 
-.cs-strength-bar {
+.auth-strength-bar {
   flex: 1;
   height: 5px;
   border-radius: 999px;
   background: var(--ink-200);
 }
 
-.cs-strength-bar.level-1 { background: #e0574a; }
-.cs-strength-bar.level-2 { background: #e0a13a; }
-.cs-strength-bar.level-3 { background: #4a9f6b; }
-.cs-strength-bar.level-4 { background: var(--brand-600); }
+.auth-strength-bar.level-1 { background: #e0574a; }
+.auth-strength-bar.level-2 { background: #e0a13a; }
+.auth-strength-bar.level-3 { background: #4a9f6b; }
+.auth-strength-bar.level-4 { background: var(--brand-600); }
 
-.cs-strength-text {
+.auth-strength-text {
   font-size: 12px;
   color: var(--ink-500);
 }

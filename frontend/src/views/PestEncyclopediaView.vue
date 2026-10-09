@@ -5,20 +5,15 @@
       <p>{{ t('wiki.subtitle') }}</p>
     </div>
 
-    <!-- 管理员操作区：登录管理员账号后可在此直接维护病害百科内容，无需进入 Django 后台 -->
-    <div v-if="canManage" class="admin-toolbar">
-      <div class="admin-toolbar-info">
-        <i class="bi bi-shield-check"></i>
-        <span>{{ t('wiki.adminMode') }}</span>
-      </div>
-      <button class="admin-add-btn" @click="openCreateDialog">
-        <i class="bi bi-plus-lg"></i> {{ t('wiki.addPest') }}
-      </button>
-      <!-- 第 44 批：Excel/CSV 批量导入 -->
-      <button class="admin-import-btn" @click="importDialogVisible = true">
-        <i class="fas fa-file-import"></i> {{ t('wiki.bulkImport') }}
-      </button>
-    </div>
+    <!--
+      第 122 批：这里的**管理员工具条已移走**。
+      ------------------------------------------------------------------
+      改前：管理员登录后本页顶部会出现「管理员模式：可直接新增、编辑、删除…」
+      加两个按钮，卡片上还有编辑/删除 —— 但这一页是**农户读资料**的地方，
+      农户打开却先看到"管理员模式"几个字。
+      现在维护入口统一在管理后台的「病害百科维护」（`/admin/pests`，侧栏进入），
+      本页对所有人都是纯阅读页。
+    -->
 
     <!-- 第 50 批：离线模式提示（显示的是本地缓存资料，图片可能缺失） -->
     <div v-if="offlineMode" class="offline-note">
@@ -80,14 +75,7 @@
                 <router-link :to="{ name: 'PestDetail', params: { english_identifier: pest.english_identifier } }" class="details-button">
                   {{ t('wiki.details') }} &gt;
                 </router-link>
-                <div v-if="canManage" class="card-admin-actions">
-                  <button class="admin-action-btn" :title="t('wiki.editTitle')" @click.stop.prevent="openEditDialog(pest)">
-                    <i class="bi bi-pencil-square"></i> {{ t('wiki.edit') }}
-                  </button>
-                  <button class="admin-action-btn danger" :title="t('wiki.deleteTitle')" @click.stop.prevent="handleDeletePest(pest)">
-                    <i class="bi bi-trash"></i> {{ t('wiki.delete') }}
-                  </button>
-                </div>
+                <!-- 第 122 批：卡片上的编辑/删除按钮已移走（见页面顶部的说明） -->
               </div>
             </div>
           </div>
@@ -191,16 +179,8 @@
       :items="notSureItems"
     />
 
-    <!-- 管理员编辑 / 新增弹窗 -->
-    <PestEditDialog
-      v-model="editDialogVisible"
-      :pest-id="editingPestId"
-      :crop-types="adminCropTypeOptions"
-      @saved="handlePestSaved"
-    />
-
-    <!-- 第 44 批：批量导入（Excel / CSV） -->
-    <PestImportDialog v-model="importDialogVisible" @imported="handleImported" />
+    <!-- 第 122 批：新增/编辑/批量导入三个弹窗已随管理功能一起搬到
+         `/admin/pests`（管理后台「病害百科维护」），本页不再挂载它们。 -->
   </div>
 </template>
 
@@ -209,16 +189,14 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'vue-toast-notification';
 import 'vue-toast-notification/dist/theme-sugar.css';
-import { ElMessage, ElMessageBox } from 'element-plus';
 import apiClient from '@/api';
-import { useAuthStore } from '@/stores/auth';
-import PestEditDialog from '@/components/PestEditDialog.vue';
-// 第 44 批：批量导入弹窗
-import PestImportDialog from '@/components/PestImportDialog.vue';
 // 第 31 批：页面底部"看图识病"补充信息区
 import PageExtras from '@/components/PageExtras.vue';
-import { deletePest, formatPestError } from '@/api/pest';
+// 第 122 批：写接口（deletePest / formatPestError）已随管理功能搬到 AdminPestsView，
+// 本页只保留"读"用的东西
 import { toAbsoluteMediaUrl } from '@/api/http';
+// 第 122 批：作物筛选按钮的来源（别用 pest-types/，那个返回的是病害名称）
+import { fetchCalendarCrops } from '@/api/calendar';
 // 第 50 批：离线资料包（断网时百科走本地缓存）
 import { refreshOfflinePack } from '@/api/offline';
 import { readWikiPack } from '@/utils/offlineStorage';
@@ -230,16 +208,9 @@ const { t } = useI18n();
 // 第 69 批：内容数据（病害名/作物名）按当前语言取值
 const { localizedField } = useLocalized();
 
-// ============ 管理员编辑能力 ============
-const authStore = useAuthStore();
-const editDialogVisible = ref(false);
-const editingPestId = ref(null);
-
-// 是否为可维护病害百科的管理员（与后端权限保持一致：is_staff / is_superuser / role=ADMIN）
-const canManage = computed(() => {
-  const user = authStore.user;
-  return !!(user?.is_staff || user?.is_superuser || user?.role === 'ADMIN');
-});
+// 第 122 批：本页的"管理员编辑能力"（canManage / 两个弹窗 / 删除）已整体搬到
+// 管理后台的「病害百科维护」`/admin/pests`（views/AdminPestsView.vue）。
+// 本页现在对所有人都是**纯阅读页** —— 农户打开不会再看到"管理员模式"。
 
 const pests = ref([]);
 const isLoading = ref(true);
@@ -505,69 +476,31 @@ const refreshOfflineCache = async () => {
     }
 };
 
+/**
+ * 作物筛选按钮的来源
+ * ----------------------------------------------------------------------------
+ * ⚠️ 第 122 批修：这里原来打的是 `pest-types/`，而**那个接口返回的是病害名称**
+ * （`PestInfo.name`，38 条，还包含"健康大豆"这类占位条目）。于是**登录用户**的
+ * 筛选条里会多出一堆「健康大豆 / 南瓜白粉病」这样的按钮；
+ * 匿名用户因为该接口要登录（401）而走下面的兜底分支，反而看不出问题 ——
+ * 这就是它一直没被发现的原因。
+ * 正确的来源是 `/api/calendar/crops/`（取自百科里真实存在的作物）。
+ */
 const fetchCropTypes = async () => {
   try {
-    const response = await apiClient.get('pest-types/');
-    // 保留API返回的作物类型，但使用预设顺序进行展示
-    cropTypes.value = response.data;
+    const data = await fetchCalendarCrops();
+    const crops = Array.isArray(data?.crops) ? data.crops : [];
+    cropTypes.value = crops.length ? crops : [...presetCropOrder];
   } catch (error) {
     console.error('Failed to fetch crop types:', error);
-    // 如果API调用失败，使用预设的作物类型作为备选
+    // 接口不可用（未登录 / 断网）时用预设作物兜底，筛选条不至于空掉
     cropTypes.value = [...presetCropOrder];
   }
 };
 
-// ---- 管理员维护病害百科 ----
-// 作物类型下拉选项：接口返回的 + 预设的 + 当前列表里已出现的
-const adminCropTypeOptions = computed(() => {
-  const merged = [...getAllCropTypes(), ...pests.value.map((pest) => pest?.crop_type)];
-  return Array.from(new Set(merged.filter(Boolean)));
-});
-
-const openCreateDialog = () => {
-  editingPestId.value = null;
-  editDialogVisible.value = true;
-};
-
-const openEditDialog = (pest) => {
-  if (!pest?.id) return;
-  editingPestId.value = pest.id;
-  editDialogVisible.value = true;
-};
-
-const handlePestSaved = async () => {
-  await fetchPests();
-};
-
-// 第 44 批：批量导入相关
-const importDialogVisible = ref(false);
-const handleImported = async () => {
-  // 导入完刷新列表，让新数据立刻出现
-  await fetchPests();
-};
-
-const handleDeletePest = async (pest) => {
-  if (!pest?.id) return;
-
-  try {
-    await ElMessageBox.confirm(
-      t('wiki.deleteConfirm', { name: localizedField(pest, 'name') }),
-      t('wiki.deleteTitle'),
-      { type: 'warning', confirmButtonText: t('msg.confirmDelete'), cancelButtonText: t('msg.cancel') },
-    );
-  } catch {
-    return; // 用户取消
-  }
-
-  try {
-    await deletePest(pest.id);
-    ElMessage.success(t('wiki.pestDeleted'));
-    await fetchPests();
-  } catch (error) {
-    console.error('删除病害失败:', error);
-    ElMessage.error(formatPestError(error, t('msg.deleteFailedRetry')));
-  }
-};
+// 第 122 批：管理相关的函数（adminCropTypeOptions / openCreateDialog / openEditDialog /
+// handlePestSaved / importDialogVisible / handleImported / handleDeletePest）
+// 已随管理功能一起搬到 `views/AdminPestsView.vue`。
 
 const toast = useToast();
 const selectCrop = async (cropKey) => {
@@ -1010,72 +943,10 @@ color: #fff;
 border-color: #007bff;
 }
 
-/* ===== 管理员操作区 ===== */
-.admin-toolbar {
-display: flex;
-align-items: center;
-justify-content: space-between;
-gap: 1rem;
-flex-wrap: wrap;
-margin: -1rem 0 2rem;
-padding: 0.9rem 1.4rem;
-background: linear-gradient(90deg, #eef8f1 0%, #f8fcfa 100%);
-border: 1px solid #cfe7d8;
-border-left: 4px solid #2a7f53;
-border-radius: 10px;
-}
-
-.admin-toolbar-info {
-display: flex;
-align-items: center;
-gap: 0.6rem;
-color: #24684a;
-font-size: 0.95rem;
-font-weight: 500;
-}
-
-.admin-toolbar-info i {
-font-size: 1.1rem;
-}
-
-.admin-add-btn {
-display: inline-flex;
-align-items: center;
-gap: 0.4rem;
-padding: 0.55rem 1.2rem;
-border: none;
-border-radius: 20px;
-background: #2a7f53;
-color: #fff;
-font-size: 0.95rem;
-cursor: pointer;
-transition: background 0.25s ease, transform 0.25s ease;
-}
-
-.admin-add-btn:hover {
-background: #1f6343;
-transform: translateY(-1px);
-}
-
-/* 第 44 批：批量导入按钮（描边，与"新增病害"区分主次） */
-.admin-import-btn {
-display: inline-flex;
-align-items: center;
-gap: 0.4rem;
-padding: 0.55rem 1.2rem;
-border: 1px solid #2a7f53;
-border-radius: 20px;
-background: #fff;
-color: #2a7f53;
-font-size: 0.95rem;
-cursor: pointer;
-transition: background 0.25s ease, transform 0.25s ease;
-}
-
-.admin-import-btn:hover {
-background: #eaf7f0;
-transform: translateY(-1px);
-}
+/* ===== 管理员操作区 =====
+   第 122 批：`.admin-toolbar` / `.admin-add-btn` / `.admin-import-btn` 以及卡片上的
+   `.card-admin-actions` / `.admin-action-btn` 样式**已随管理功能一起删除** ——
+   它们现在由管理后台的「病害百科维护」页负责（用 Element Plus 的表格与按钮）。 */
 
 /* 第 50 批：离线模式提示条 */
 .offline-note {
@@ -1108,42 +979,6 @@ margin-top: auto;
 
 .card-actions .details-button {
 margin-top: 0;
-}
-
-.card-admin-actions {
-display: flex;
-align-items: center;
-gap: 0.5rem;
-}
-
-.admin-action-btn {
-display: inline-flex;
-align-items: center;
-gap: 0.35rem;
-padding: 0.45rem 0.85rem;
-border: 1px solid #cfe7d8;
-border-radius: 18px;
-background: #f4faf6;
-color: #2a7f53;
-font-size: 0.85rem;
-cursor: pointer;
-transition: all 0.25s ease;
-}
-
-.admin-action-btn:hover {
-background: #e3f3e9;
-border-color: #2a7f53;
-}
-
-.admin-action-btn.danger {
-border-color: #f0d3d3;
-background: #fdf5f5;
-color: #c0392b;
-}
-
-.admin-action-btn.danger:hover {
-background: #fbe9e9;
-border-color: #c0392b;
 }
 
 /* 搜索栏样式统一在下方 .search-bar 处定义（第 74 批：此处原有一整套
@@ -1457,9 +1292,16 @@ margin: 0 0 1.5rem 0;
   transform: translateY(-1px);
 }
 
-/* 卡片网格自适应 */
+/* 卡片网格：**固定 3 列**（每页 6 条 = 3 列 × 2 行）
+   ------------------------------------------------------------------
+   第 115 批：这里原来是 `repeat(auto-fill, minmax(260px, 1fr))`，列数跟着容器宽度变。
+   内容区宽 1132px 时能塞下 4 列（4×260 + 3×22 = 1106 ≤ 1132），所以
+   **1920 / 1600 这类宽屏上 6 条病害排成"4 + 2"**（实测：4 列 266px），
+   第二行右侧空出一大块，与 `pageSize = 6`（2 行 × 3 列）的设定对不上。
+   现在写死 3 列：宽屏每行 3 条、正好 2 行；窄屏在文件末尾的断点里降到 2 列 / 1 列。
+   用 `minmax(0, 1fr)` 而不是 `1fr`：卡片里的长病害名/长描述撑开时不会顶破网格。 */
 .pest-grid {
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 22px;
 }
 
@@ -1614,6 +1456,20 @@ margin: 0 0 1.5rem 0;
 @media (max-width: 1200px) {
   .encyclopedia-sidebar {
     display: none;
+  }
+}
+
+/* 第 115 批：固定 3 列之后的窄屏降级 —— 与改造前 `auto-fill` 的实际表现一致
+   （768px 左右本来就是 2 列，390px 左右本来就是 1 列），宽屏才是这次真正改的地方。 */
+@media (max-width: 900px) {
+  .pest-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .pest-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -26,6 +26,7 @@ import {
   ElButtonGroup,
   ElCard,
   ElCheckbox,
+  ElCheckboxGroup,  // 第 128 批：漏注册会导致 group 里的 v-model 静默失效
   ElCol,
   ElCollapse,
   ElCollapseItem,
@@ -47,6 +48,7 @@ import {
   ElIcon,
   ElImage,
   ElInput,
+  ElInputNumber,  // 第 128 批：种植日历的任务表单（此前漏注册，月份填不进去）
   ElLoading,
   ElMessage,
   ElMessageBox,
@@ -82,6 +84,11 @@ const components = [
   ElButtonGroup,
   ElCard,
   ElCheckbox,
+  // 第 128 批：<el-checkbox-group> 此前**没有注册**（只注册了 ElCheckbox）。
+  // 后果比"少个样式"隐蔽得多：单个 checkbox 看着正常，但它拿不到 group 的上下文，
+  // 于是 v-model 完全不生效 —— 用户管理里"改角色 → 勾选内容模块"的四个框
+  // 全是未勾选、点一下只改 DOM，提交上去还是老值（浏览器 E2E 才抓出来）。
+  ElCheckboxGroup,
   ElCol,
   ElCollapse,
   ElCollapseItem,
@@ -100,6 +107,10 @@ const components = [
   ElIcon,
   ElImage,
   ElInput,
+  // 第 128 批：<el-input-number> 同样**没有注册**（种植日历里"农事任务"表单用它填月份）。
+  // 这是上一轮跑检查脚本才发现的**既有**问题：那个输入框一直是坏的
+  // （渲染成未知元素，数字填不进去）。
+  ElInputNumber,
   ElOption,
   ElPagination,
   ElPopconfirm,

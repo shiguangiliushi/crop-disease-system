@@ -1,7 +1,6 @@
 <template>
   <div class="admin-feedback tinted-page">
-    <!-- 返回入口（第 87 批：本页只能从顶栏「管理」下拉进来，此前没有返回按钮） -->
-    <BackButton />
+    <!-- 第 117 批：原来的「返回」按钮已移除（本页现在在管理后台外壳里，左侧栏就是导航） -->
 
     <!-- 页头（第 29 批：全局 .admin-hero 已升级为深绿实底 + 白色文字） -->
     <header class="admin-hero">
@@ -119,7 +118,20 @@
             <el-button size="small" type="primary" plain @click="openReply(item)">
               <i class="fas fa-reply"></i> {{ item.admin_reply ? t('feedbackAdmin.editReply') : t('feedbackAdmin.replyAction') }}
             </el-button>
-            <el-button size="small" text type="danger" :loading="deletingId === item.id" @click="removeItem(item)">
+            <!--
+              第 126 批：删除只给**全权管理员**。
+              产品口径：信息编辑员可以看、可以回复，但"删别人的反馈"是不可逆动作，
+              不给编辑员（后端 FeedbackView.destroy 也有同一道守卫，见 views.py）。
+              前端隐藏只是不画这个按钮；接口那边是 403。
+            -->
+            <el-button
+              v-if="canDeleteOthers"
+              size="small"
+              text
+              type="danger"
+              :loading="deletingId === item.id"
+              @click="removeItem(item)"
+            >
               <i class="fas fa-trash"></i> {{ t('feedbackAdmin.delete') }}
             </el-button>
           </div>
@@ -219,22 +231,33 @@
  * 后端：GET /feedback/（管理员返回全部，支持 category/status/search 筛选）
  *      POST /feedback/{id}/reply/（管理员回复并流转状态）
  */
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { fetchMyFeedback, replyFeedback, deleteFeedback } from '@/api/feedback';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 67 批：多语言
-import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
 import { useLocalized } from '@/utils/localized';  // 第 79 批：病害名等内容数据
 import { useQueryState } from '@/composables/useQueryState';  // 第 98 批：筛选/分页进 URL
+import { useAuthStore } from '@/stores/auth';  // 第 126 批：按能力决定"删除"按钮是否显示
 
 export default {
   name: 'AdminFeedbackView',
-  components: { BackButton },  // 第 87 批：返回按钮
   setup() {
     const { t } = useI18n();  // 必须在 setup 内取，模板才能拿到
     const { localizedField } = useLocalized();  // 第 79 批：病害名（中文快照 → 英文）
+    const authStore = useAuthStore();
+
+    /**
+     * 能不能删除反馈（第 126 批）
+     *
+     * 产品口径：信息编辑员可以看、可以回复，但**不能删别人的反馈**（不可逆动作）。
+     * 判断用 `isAdmin`（= 三项能力齐全，即全权管理员），与后端
+     * `FeedbackView.destroy` 里的 `is_full_admin()` 守卫同一口径。
+     * 自己提交的反馈仍然可以撤回 —— 但这一页是管理端列表（不区分提交人），
+     * 所以这里按最严的来：非全权管理员不显示删除按钮。
+     */
+    const canDeleteOthers = computed(() => Boolean(authStore.isAdmin));
     const items = ref([]);
     const total = ref(0);
     const loading = ref(false);
@@ -445,6 +468,7 @@ export default {
       page,          // 第 89 批：分页
       pageSize,      // 第 89 批：分页
       deletingId,
+      canDeleteOthers,   // 第 126 批：删除按钮只给全权管理员
       filters,
       replyVisible,
       replying,
@@ -478,10 +502,7 @@ export default {
 /* 说明（第 29 批）：页头 / 头条 / 统计卡都改用主题里的公用块，
    原来这里是一段近白的 .page-header，整页观感"太白"。 */
 
-/* 第 87 批：返回按钮紧贴左边缘，和下面的深绿页头留出间距 */
-.admin-feedback > .back-button {
-  margin-bottom: 12px;
-}
+/* 第 117 批：删掉了 `.admin-feedback > .back-button` 的间距规则（返回按钮已随管理后台外壳一起移除） */
 
 /* 列表头条与下方卡片之间留一点间距 */
 .list-panel-head {

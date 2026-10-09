@@ -9,6 +9,7 @@ import NotificationBell from '@/components/NotificationBell.vue';  // 第 37 批
 import MessageEntry from '@/components/MessageEntry.vue';  // 第 42 批：私信入口
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue';  // 第 48 批：语言切换
 import OfflineIndicator from '@/components/OfflineIndicator.vue';  // 第 50 批：离线状态
+import AdminLayout from '@/components/AdminLayout.vue';  // 第 117 批：管理后台外壳（/admin/**）
 import { isNavActive as navIsActive } from '@/utils/navActive';  // 第 74 批：导航高亮判定
 import { locale, useI18n } from '@/i18n';  // 第 77 批：Element Plus 语言包；第 81 批：导航文案
 
@@ -385,8 +386,14 @@ if (typeof document !== 'undefined' && document.fonts?.ready) {
   document.fonts.ready.then(() => recomputeNav()).catch(() => {});
 }
 
-// 客服端登录 / 注册等页面使用独立全屏布局，不显示站点导航与页脚
+// 第 116 批：登录 / 注册 / 找回密码 / 管理员登录等**认证页**使用独立全屏布局，
+// 不显示站点导航与页脚（这些页面自己带品牌栏，见 AuthShell.vue）
 const isBareLayout = computed(() => route.meta?.bareLayout === true);
+
+// 第 117 批：管理后台（/admin/**）用自己的外壳 —— 左侧管理侧栏 + 顶部条，
+// **不显示**农户端的顶栏（首页/识别/百科/历史…）与页脚（快速导航/农事工具）。
+// 这里只判断"是不是管理区"，具体外壳由 AdminLayout.vue 提供。
+const isAdminArea = computed(() => route.meta?.adminArea === true);
 
 // 用户名首字母，用于头像占位
 const userInitial = computed(() => {
@@ -428,9 +435,12 @@ onMounted(async () => {
 <template>
   <!-- el-config-provider 不产生额外 DOM，仅用于下发 Element Plus 的语言包（跟随界面语言） -->
   <el-config-provider :locale="elementLocale" :z-index="3000">
-    <div id="app-container" :class="{ 'is-bare-layout': isBareLayout }">
+    <div
+      id="app-container"
+      :class="{ 'is-bare-layout': isBareLayout, 'is-admin-area': isAdminArea }"
+    >
     <header
-      v-if="!isBareLayout"
+      v-if="!isBareLayout && !isAdminArea"
       class="app-header"
       :class="{ 'is-nav-wrapped': isNavWrapped, 'is-tight-user': isTightUserArea }"
     >
@@ -506,8 +516,16 @@ onMounted(async () => {
           <LanguageSwitcher />
           <!-- 管理后台入口（管理员可见，避免管理页无处可进）
                ≤1500px 时只留盾牌图标（title 提示），把文字宽度让给导航，
-               使 10 个导航项在主流桌面宽度下保持单行。 -->
-          <el-dropdown v-if="authStore.isAdmin" trigger="click" @command="handleAdminCommand">
+               使 10 个导航项在主流桌面宽度下保持单行。
+
+               第 117 批：这个下拉**不再重复列 5 个管理页** —— 那些页面现在都在
+               管理后台的侧栏里（/admin/**，独立外壳）。农户端这边只留：
+               ① 进后台；② 通知中心。
+
+               第 126 批：判定从 `isAdmin` 改成 `canAccessConsole` ——
+               第 125 批起信息编辑员（EDITOR）也能进后台，他在这里必须看得到入口，
+               否则"有权限却没有门"。（通知中心里的"发布公告"按钮仍然只给全权管理员。） -->
+          <el-dropdown v-if="authStore.canAccessConsole" trigger="click" @command="handleAdminCommand">
             <span class="admin-entry" :title="$t('manage.title')">
               <i class="fas fa-user-shield"></i>
               <span class="admin-entry-text">{{ $t('manage.title') }}</span>
@@ -515,34 +533,15 @@ onMounted(async () => {
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="/admin/news">
-                  <i class="fas fa-newspaper"></i> {{ $t('manage.news') }}
-                </el-dropdown-item>
-                <!-- 第 27 批：管理端「意见反馈管理」入口（此前管理板块里没有反馈入口） -->
-                <el-dropdown-item command="/admin/feedback">
-                  <i class="fas fa-comment-dots"></i> {{ $t('manage.feedback') }}
-                </el-dropdown-item>
-                <!-- 第 38 批：内容审核（待审核帖子 + 敏感词词库） -->
-                <el-dropdown-item command="/admin/review">
-                  <i class="fas fa-clipboard-check"></i> {{ $t('manage.review') }}
-                </el-dropdown-item>
-                <!-- 第 39 批：数据看板 -->
                 <el-dropdown-item command="/admin/dashboard">
-                  <i class="fas fa-chart-line"></i> {{ $t('manage.dashboard') }}
-                </el-dropdown-item>
-                <!-- 第 76 批：用户管理（查看用户列表、授予/取消专家称号） -->
-                <el-dropdown-item command="/admin/users">
-                  <i class="fas fa-users-gear"></i> {{ $t('manage.users') }}
+                  <i class="fas fa-gauge-high"></i> {{ $t('manage.enterConsole') }}
                 </el-dropdown-item>
                 <!-- 第 37 批：通知中心（发布系统公告也在这里） -->
                 <el-dropdown-item command="/notifications">
                   <i class="fas fa-bell"></i> {{ $t('manage.notifications') }}
                 </el-dropdown-item>
-                <!-- 第 22 批：「识别记录管理」已合并进「历史记录」页（顶栏入口），
-                     这里不再放重复入口；管理员在 /history 用「查看全部用户」开关切换范围。 -->
-                <el-dropdown-item command="/pests">
-                  <i class="fas fa-book-medical"></i> {{ $t('manage.pests') }}
-                </el-dropdown-item>
+                <!-- 第 122 批：原来这里有一条「病害百科维护」指向 /pests（那一页头顶曾是
+                     管理员工具条）。维护功能已经搬进管理后台侧栏，这里不再重复列。 -->
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -567,7 +566,11 @@ onMounted(async () => {
               <span v-else class="user-avatar">{{ userInitial }}</span>
               <span class="user-name">{{ authStore.user?.username }}</span>
             </RouterLink>
-            <button type="button" class="logout-btn" :title="$t('app.logout')" @click="authStore.logout()">
+            <!-- 第 117/118 批：**要把 router 传进去**。不传的话 store 走
+                 `window.location.href = '/login'` 整页跳转，而整页卸载会让
+                 那个"通知服务端注销 token"的请求被浏览器掐掉（token 服务端仍然有效）。
+                 传了 router 就是 SPA 内跳转，页面不卸载，后台请求能跑完。 -->
+            <button type="button" class="logout-btn" :title="$t('app.logout')" @click="authStore.logout(router)">
               <i class="fas fa-sign-out-alt"></i>
             </button>
           </template>
@@ -580,14 +583,21 @@ onMounted(async () => {
     </header>
 
     <main class="main-content">
+      <!-- 第 117 批：管理页套管理后台外壳（侧栏 + 顶部条），其余页面照旧。
+           ⚠️ `<keep-alive>` 只允许**一个**子节点，且 v-if/v-else 必须紧挨着 ——
+              所以说明写在 keep-alive 外面（曾把注释写在里面，编译期直接报
+              "<KeepAlive> expects exactly one child component"，整站白屏）。 -->
       <RouterView v-slot="{ Component }">
         <keep-alive include="DetectView">
-          <component :is="Component" />
+          <AdminLayout v-if="isAdminArea">
+            <component :is="Component" />
+          </AdminLayout>
+          <component v-else :is="Component" />
         </keep-alive>
       </RouterView>
     </main>
 
-    <footer v-if="!isBareLayout" class="app-footer">
+    <footer v-if="!isBareLayout && !isAdminArea" class="app-footer">
       <div class="footer-content">
         <div class="footer-brand">
           <div class="footer-brand-head">
@@ -692,7 +702,7 @@ onMounted(async () => {
   background: var(--page-bg);
 }
 
-/* 客服端独立布局页面 */
+/* 认证页（登录/注册/找回密码/管理员登录）的独立布局 */
 #app-container.is-bare-layout {
   background: var(--page-bg);
 }
@@ -1059,6 +1069,14 @@ onMounted(async () => {
 }
 
 #app-container.is-bare-layout .main-content {
+  padding: 0;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+/* 第 117 批：管理后台的内容区由 AdminLayout 自己排（侧栏 + 顶部条 + 内容），
+   这里同样去掉主站的居中/内边距，让外壳铺满整屏 */
+#app-container.is-admin-area .main-content {
   padding: 0;
   min-height: 100vh;
   align-items: stretch;

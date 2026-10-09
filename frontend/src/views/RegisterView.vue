@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { useAuthStore } from '@/stores/auth.js';
-import ConsoleAuthShell from '@/components/ConsoleAuthShell.vue';
+import AuthShell from '@/components/AuthShell.vue';
 import { checkUsernameAvailability } from '@/api/account';  // 第 35 批：用户名实时校验
 import { useI18n } from '@/i18n';  // 第 61 批：多语言
 
@@ -52,8 +52,12 @@ watch(username, (value) => {
   }, 500);
 });
 
+// ⚠️ 第 116 批修：这里原来直接返回 `password && confirmPassword && …`，
+// 两个框都空时结果是**空字符串**；而 Vue 对 `:disabled=""` 的判定是
+// "空字符串也算存在"（includeBooleanAttr），于是**刚打开注册页时「创建账号」是灰的**——
+// 用户看到的就是一个按不动的死按钮。用 Boolean() 收敛成真正的布尔值。
 const passwordMismatch = computed(() => {
-  return password.value && confirmPassword.value && password.value !== confirmPassword.value;
+  return Boolean(password.value && confirmPassword.value && password.value !== confirmPassword.value);
 });
 
 // 密码强度：综合长度、字母、数字与符号
@@ -141,27 +145,24 @@ const handleRegister = async () => {
 </script>
 
 <template>
-  <ConsoleAuthShell
+  <AuthShell
     :eyebrow="t('auth.eyebrowDefault')"
     :title="t('auth.registerTitle')"
     :subtitle="t('auth.registerSubtitle')"
   >
-    <template #topbar-actions>
-      {{ t('auth.hasAccount') }}<RouterLink to="/login" class="cs-inline-link">{{ t('auth.loginNow') }}</RouterLink>
-    </template>
 
-    <form class="cs-form" @submit.prevent="handleRegister">
-      <div class="cs-field">
-        <label class="cs-label" for="username">
+    <form class="auth-form" @submit.prevent="handleRegister">
+      <div class="auth-field">
+        <label class="auth-label" for="username">
           <span>{{ t('auth.usernameLabel') }}</span>
-          <span class="cs-label-hint">{{ t('auth.usernameRequired') }}</span>
+          <span class="auth-label-hint">{{ t('auth.usernameRequired') }}</span>
         </label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-user cs-lead-icon"></i>
+        <div class="auth-input-wrap">
+          <i class="fas fa-user auth-lead-icon"></i>
           <input
             type="text"
             id="username"
-            class="cs-input"
+            class="auth-input"
             v-model="username"
             :disabled="isLoading"
             :placeholder="t('auth.regUsernamePlaceholder')"
@@ -172,7 +173,7 @@ const handleRegister = async () => {
         <!-- 第 35 批：实时反馈用户名是否可用 -->
         <p
           v-if="usernameState.message"
-          class="cs-field-feedback"
+          class="auth-field-feedback"
           :class="{
             'is-ok': usernameState.available === true,
             'is-bad': usernameState.available === false,
@@ -191,17 +192,17 @@ const handleRegister = async () => {
         </p>
       </div>
 
-      <div class="cs-field">
-        <label class="cs-label" for="email">
+      <div class="auth-field">
+        <label class="auth-label" for="email">
           <span>{{ t('auth.emailLabel') }}</span>
-          <span class="cs-label-hint">{{ t('auth.emailOptional') }}</span>
+          <span class="auth-label-hint">{{ t('auth.emailOptional') }}</span>
         </label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-envelope cs-lead-icon"></i>
+        <div class="auth-input-wrap">
+          <i class="fas fa-envelope auth-lead-icon"></i>
           <input
             type="email"
             id="email"
-            class="cs-input"
+            class="auth-input"
             v-model="email"
             :disabled="isLoading"
             :placeholder="t('auth.emailPlaceholder')"
@@ -210,17 +211,17 @@ const handleRegister = async () => {
         </div>
       </div>
 
-      <div class="cs-field">
-        <label class="cs-label" for="password">
+      <div class="auth-field">
+        <label class="auth-label" for="password">
           <span>{{ t('auth.passwordLabel') }}</span>
-          <span class="cs-label-hint">{{ t('auth.passwordAtLeast8') }}</span>
+          <span class="auth-label-hint">{{ t('auth.passwordAtLeast8') }}</span>
         </label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-lock cs-lead-icon"></i>
+        <div class="auth-input-wrap">
+          <i class="fas fa-lock auth-lead-icon"></i>
           <input
             :type="showPassword ? 'text' : 'password'"
             id="password"
-            class="cs-input has-trailing"
+            class="auth-input has-trailing"
             v-model="password"
             :disabled="isLoading"
             :placeholder="t('auth.regPasswordPlaceholder')"
@@ -229,7 +230,7 @@ const handleRegister = async () => {
           />
           <button
             type="button"
-            class="cs-input-trailing"
+            class="auth-input-trailing"
             :title="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
             :aria-label="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
             @click="showPassword = !showPassword"
@@ -237,30 +238,30 @@ const handleRegister = async () => {
             <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
           </button>
         </div>
-        <div v-if="passwordStrength.level > 0" class="cs-strength">
-          <span class="cs-strength-bars">
+        <div v-if="passwordStrength.level > 0" class="auth-strength">
+          <span class="auth-strength-bars">
             <span
               v-for="bar in 3"
               :key="bar"
-              class="cs-strength-bar"
+              class="auth-strength-bar"
               :class="[{ 'is-on': bar <= passwordStrength.level }, `level-${passwordStrength.level}`]"
             ></span>
           </span>
-          <span class="cs-strength-text">{{ passwordStrength.text }}</span>
+          <span class="auth-strength-text">{{ passwordStrength.text }}</span>
         </div>
       </div>
 
-      <div class="cs-field">
-        <label class="cs-label" for="confirmPassword">
+      <div class="auth-field">
+        <label class="auth-label" for="confirmPassword">
           <span>{{ t('auth.confirmPasswordLabel') }}</span>
-          <span class="cs-label-hint">{{ t('auth.confirmPasswordHint') }}</span>
+          <span class="auth-label-hint">{{ t('auth.confirmPasswordHint') }}</span>
         </label>
-        <div class="cs-input-wrap">
-          <i class="fas fa-lock cs-lead-icon"></i>
+        <div class="auth-input-wrap">
+          <i class="fas fa-lock auth-lead-icon"></i>
           <input
             :type="showConfirmPassword ? 'text' : 'password'"
             id="confirmPassword"
-            class="cs-input has-trailing"
+            class="auth-input has-trailing"
             v-model="confirmPassword"
             :disabled="isLoading"
             :placeholder="t('auth.confirmPasswordPlaceholder')"
@@ -269,7 +270,7 @@ const handleRegister = async () => {
           />
           <button
             type="button"
-            class="cs-input-trailing"
+            class="auth-input-trailing"
             :title="showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')"
             :aria-label="showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')"
             @click="showConfirmPassword = !showConfirmPassword"
@@ -277,24 +278,24 @@ const handleRegister = async () => {
             <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
           </button>
         </div>
-        <div v-if="passwordMismatch" class="cs-alert" style="margin: 10px 0 0">
+        <div v-if="passwordMismatch" class="auth-alert" style="margin: 10px 0 0">
           <i class="fas fa-exclamation-circle"></i>
           <span>{{ t('auth.passwordMismatch') }}</span>
         </div>
       </div>
 
-      <div v-if="errorMessage" class="cs-alert">
+      <div v-if="errorMessage" class="auth-alert">
         <i class="fas fa-exclamation-circle"></i>
         <span>{{ errorMessage }}</span>
       </div>
 
-      <button type="submit" :disabled="isLoading || passwordMismatch" class="cs-submit">
-        <span v-if="isLoading" class="cs-spinner"></span>
+      <button type="submit" :disabled="isLoading || passwordMismatch" class="auth-submit">
+        <span v-if="isLoading" class="auth-spinner"></span>
         <i v-else class="fas fa-user-plus"></i>
         {{ isLoading ? t('auth.registering') : t('auth.registerTitle') }}
       </button>
 
-      <p class="cs-form-note">
+      <p class="auth-form-note">
         <i class="fas fa-info-circle"></i>
         <!-- 第 26 批：《用户协议》《隐私政策》原来只是纯文本，现在可点开查看 -->
         {{ t('auth.agreePrefix') }}
@@ -303,17 +304,23 @@ const handleRegister = async () => {
         <RouterLink to="/privacy" target="_blank">{{ t('auth.privacy') }}</RouterLink>{{ t('auth.agreeSuffix') }}
       </p>
     </form>
-  </ConsoleAuthShell>
+
+    <!-- 第 116 批：「已有账号？立即登录」从顶栏挪到表单下方（手机上离拇指最近的位置） -->
+    <template #card-actions>
+      {{ t('auth.hasAccount') }}
+      <RouterLink to="/login" class="auth-inline-link">{{ t('auth.loginNow') }}</RouterLink>
+    </template>
+  </AuthShell>
 </template>
 
 <style scoped>
-.cs-form :deep(.cs-form-note i) {
+.auth-form :deep(.auth-form-note i) {
   margin-right: 6px;
   color: #b3c4cc;
 }
 
 /* 用户名实时校验反馈（第 35 批） */
-.cs-field-feedback {
+.auth-field-feedback {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -323,11 +330,11 @@ const handleRegister = async () => {
   color: var(--ink-500, #78897f);
 }
 
-.cs-field-feedback.is-ok {
+.auth-field-feedback.is-ok {
   color: var(--brand-700, #1f6343);
 }
 
-.cs-field-feedback.is-bad {
+.auth-field-feedback.is-bad {
   color: #cf4436;
 }
 </style>

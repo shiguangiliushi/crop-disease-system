@@ -8,7 +8,11 @@
  *   GET    /api/admin/users/           列表（search / role / status / page / page_size）
  *   GET    /api/admin/users/{id}/      单个用户详情
  *   DELETE /api/admin/users/{id}/      删除用户（第 95 批，软删除）
+ *   POST   /api/admin/users/{id}/reset-link/   签发一次性密码重置链接（第 120 批）
+ *   POST   /api/admin/users/{id}/role/         调整角色（第 127 批，仅超级管理员）
  *
+ * 第 124 批起，这里的权限口径不再是"is_staff"，而是后端 `capabilities.py` 里的
+ * `USER_ADMIN` 能力（全权管理员都有；信息编辑员 EDITOR 没有）。
  * 授予 / 取消专家不在本文件：那是专家咨询域的接口，统一走 @/api/consult.js
  * （`grantExpert` / `revokeExpert`），避免同一个后端接口有两处封装。
  */
@@ -61,4 +65,74 @@ export function bulkDeleteAdminUsers(ids) {
   return http
     .post('admin/users/bulk-delete/', { ids })
     .then((res) => res.data);
+}
+
+/**
+ * 给某个用户签发**一次性密码重置链接**（第 120 批）
+ *
+ * 为什么需要它：自助找回密码（`/api/password-reset/`）只在账号**绑了邮箱**时才发信，
+ * 没绑邮箱时后端按防枚举策略静默什么都不做（而页面照样显示"已发送"）——
+ * 管理端账号大多是超管开通的、常常没绑邮箱，于是"管理员忘了密码"无路可走。
+ *
+ * 这个接口生成一条 1 小时有效、只能用一次的链接，由管理员**线下**发给本人，
+ * 本人在 `/reset-password` 自己设新密码。接口**不返回明文密码**。
+ *
+ * 若该账号绑了邮箱，后端会顺手也发一封邮件（`mailed=true`）。
+ *
+ * 护栏（后端）：仅管理员；不能给权限不低于自己的账号签发（防提权）。
+ *
+ * @param {number|string} userId
+ * @returns {Promise<{status:string, username:string, url:string, expires_in_minutes:number,
+ *                    has_email:boolean, mailed:boolean, message:string}>}
+ */
+export function createAdminResetLink(userId) {
+  return http
+    .post(`admin/users/${userId}/reset-link/`)
+    .then((res) => res.data);
+}
+
+/**
+ * 调整某个用户的角色与**内容模块**（第 127/128 批）
+ *
+ * 后端护栏：只有**超级管理员**能调；只能在 `EDITOR`（信息编辑员）与 `USER`
+ * （普通用户）之间切换；不能改自己；不能动管理员账号（升管理员请走 Django admin）。
+ *
+ * 第 128 批起内容能力拆成四个模块，改成 EDITOR 时必须带 `modules`
+ * （至少一个），否则后端 400 —— 一个模块都没有的编辑员进后台什么也做不了。
+ *
+ * @param {number|string} userId
+ * @param {'EDITOR'|'USER'} role
+ * @param {string[]} [modules] 内容模块：review / news / pests / feedback
+ *        （改成 USER 时忽略，后端会顺手清空他的模块授权）
+ * @returns {Promise<{id:number, username:string, role:string, content_modules:string[],
+ *                    changed:boolean, detail:string}>}
+ */
+export function updateUserRole(userId, role, modules) {
+  const payload = { role };
+  if (Array.isArray(modules)) payload.modules = modules;
+  return http
+    .post(`admin/users/${userId}/role/`, payload)
+    .then((res) => res.data);
+}
+
+/**
+ * 开通一个信息编辑员账号（第 131 批）
+ *
+ * 在这之前"新建编辑员"只能去 Django admin 建号、再回用户管理勾模块，
+ * 而且新建的账号还得自己想办法设密码。这个接口一次做完：
+ *
+ *   1. 建号（角色直接是 EDITOR，模块写进 EditorModuleGrant）；
+ *   2. **不设密码** —— 后端用 `set_unusable_password()`，没有任何明文密码经手；
+ *   3. 返回一条**一次性设置密码链接**（1 小时有效、改密即失效），
+ *      超管线下发给本人，本人在 `/reset-password` 自己设密码。
+ *
+ * 护栏（与改角色同一套）：**只有超级管理员**；用户名符合规则且未被占用；
+ * 邮箱可选但填了要合法且未占用；至少给一个内容模块。
+ *
+ * @param {{username: string, email?: string, modules: string[]}} payload
+ * @returns {Promise<{status:string, user:object, url:string, expires_in_minutes:number,
+ *                    has_email:boolean, mailed:boolean, message:string}>}
+ */
+export function createEditorAccount(payload) {
+  return http.post('admin/users/create-editor/', payload).then((res) => res.data);
 }
