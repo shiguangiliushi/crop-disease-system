@@ -244,6 +244,23 @@
             {{ t('adminUsers.deleteAction') }}
           </el-button>
           <!--
+            第 137 批：停用 / 恢复账号（可逆，和"删除"不是一回事）
+            ----------------------------------------------------------------
+            在这之前页面有「已禁用」筛选和状态标签，却**没有入口能停用账号** ——
+            状态只能来自"用户自助注销"或"管理员删除"，而这两类都被默认列表排除，
+            于是那个筛选永远筛不出东西。这里补上按钮，并按行状态显示"停用/恢复"。
+          -->
+          <el-button
+            size="small"
+            :type="row.is_active ? 'warning' : 'success'"
+            link
+            :disabled="!canToggleStatus(row)"
+            :title="statusBlockedReason(row)"
+            @click="toggleStatus(row)"
+          >
+            {{ row.is_active ? t('adminUsers.statusDisableAction') : t('adminUsers.statusEnableAction') }}
+          </el-button>
+          <!--
             第 127 批：改角色（信息编辑员 ↔ 普通用户）。
             只在"当前登录者是超级管理员"且"这一行是普通账号"时出现 ——
             ADMIN 账号、staff/超管账号都不在这里改（后端也会拒，见 AdminUserRoleView）。
@@ -708,6 +725,7 @@ import { computed, ref, watch } from 'vue';import { ElMessage, ElMessageBox } fr
 import {
   bulkDeleteAdminUsers, createAdminResetLink, createEditorAccount, deleteAdminUser,
   fetchAdminUser, fetchAdminUsers, updateUserRole,
+  updateUserStatus,   // 第 137 批：停用 / 恢复账号
 } from '@/api/adminUser';
 import { grantExpert, revokeExpert } from '@/api/consult';
 import { formatApiError } from '@/api/http';
@@ -766,6 +784,60 @@ export default {
     };
 
     const canDelete = (row) => deleteBlockedReason(row) === '';
+
+    // -- 停用 / 恢复账号（第 137 批）----------------------------------------
+    /**
+     * 这一行能不能停用/恢复 —— 与后端 `_check_status_allowed` **同一套口径**，
+     * 而且是**删除护栏的真子集**（能删就一定能停用，不会出现"能删却不能停"的怪事）：
+     *   · 不能停用自己（一按就把自己锁在管理端外面）；
+     *   · 非超管不能停用权限不低于自己的账号。
+     * 已删除（is_deleted）与注销冷静期的账号本来就不在列表里，所以这里不用判断。
+     */
+    const statusBlockedReason = (row) => {
+      if (!row) return '';
+      if (row.id === currentUserId.value) return t('adminUsers.statusBlockedSelf');
+      if ((row.is_staff || row.is_superuser || row.role === 'ADMIN') && !currentIsSuperuser.value) {
+        return t('adminUsers.statusBlockedElevated');
+      }
+      return '';
+    };
+
+    const canToggleStatus = (row) => statusBlockedReason(row) === '';
+
+    /**
+     * 停用 / 恢复（带确认）
+     *
+     * 为什么停用要单独确认、而且措辞更重：它会让对方**立刻掉线**（后端顺手作废 token），
+     * 并且**恢复后对方需要重新登录** —— 这两点不说清楚，管理员会以为"跟没停一样"。
+     */
+    const toggleStatus = async (row) => {
+      const turningOff = row.is_active;
+      try {
+        await ElMessageBox.confirm(
+          t(turningOff ? 'adminUsers.statusDisableConfirm' : 'adminUsers.statusEnableConfirm',
+            { name: row.username }),
+          t(turningOff ? 'adminUsers.statusDisableAction' : 'adminUsers.statusEnableAction'),
+          {
+            type: turningOff ? 'warning' : 'info',
+            confirmButtonText: t(turningOff ? 'adminUsers.statusDisableAction' : 'adminUsers.statusEnableAction'),
+            cancelButtonText: t('common.cancel'),
+          },
+        );
+      } catch {
+        return;   // 用户点了取消
+      }
+      try {
+        const data = await updateUserStatus(row.id, !turningOff);
+        // 后端会说清"对方现在能不能登"，比前端自己拼一句话更准（幂等时也会返回 changed=false）
+        ElMessage.success(data?.message || t(turningOff
+          ? 'adminUsers.statusDisabledOk' : 'adminUsers.statusEnabledOk', { name: row.username }));
+        await reload();
+        if (detail.value?.id === row.id) detail.value = data?.user || detail.value;
+      } catch (error) {
+        ElMessage.error(formatApiError(
+          error, t(turningOff ? 'adminUsers.statusDisableFailed' : 'adminUsers.statusEnableFailed')));
+      }
+    };
 
     // -- 签发一次性密码重置链接（第 120 批）------------------------------
     // 场景：账号**没绑邮箱**时自助找回密码是静默失败的（后端按防枚举策略什么都不做，
@@ -1294,6 +1366,8 @@ export default {
       // 第 95 批：删除用户
       deleteVisible, deleting, deleteTarget, deleteConfirmText,
       canDelete, deleteBlockedReason, openDelete, confirmDelete,
+      // 第 137 批：停用 / 恢复账号（模板里的按钮与确认框要用到）
+      canToggleStatus, statusBlockedReason, toggleStatus,
       // 第 100 批：批量删除 + 后端排序
       userTableRef, selectedRows, onSelectionChange, isRowSelectable, clearSelection,
       bulkDeleteVisible, bulkDeleting, bulkDeleteConfirmText, bulkDeleteWord,

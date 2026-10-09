@@ -116,6 +116,29 @@ export function updateUserRole(userId, role, modules) {
 }
 
 /**
+ * 停用 / 恢复一个账号（第 137 批）
+ *
+ * 背景：用户管理页早就有「已禁用」筛选与状态标签，却**没有入口能停用账号** ——
+ * 状态只能来自"用户自助注销（冷静期）"或"管理员删除（软删除）"，而这两类都被默认列表
+ * 排除，于是那个筛选在控制台里永远筛不出东西；「重置密码」的拒绝语还写着
+ * "请先恢复账号再重置密码"，可界面上根本没有"恢复"入口。这个接口把链路补齐。
+ *
+ * 后端行为（护栏在服务端，前端只是"别让人白点一次"）：
+ *   · 停用：立刻作废对方的 token（他马上掉线且登不回来），**恢复后需要重新登录**；
+ *   · 恢复：密码全程没动过，所以不需要重置密码就能登回来；
+ *   · 不能停用自己；非超管不能停用权限不低于自己的账号（与删除同一套口径）。
+ *
+ * @param {number} userId
+ * @param {boolean} isActive  false = 停用，true = 恢复
+ * @returns {Promise<{status:string, changed:boolean, user:object, message:string}>}
+ */
+export function updateUserStatus(userId, isActive) {
+  return http
+    .post(`admin/users/${userId}/status/`, { is_active: isActive })
+    .then((res) => res.data);
+}
+
+/**
  * 开通一个信息编辑员账号（第 131 批）
  *
  * 在这之前"新建编辑员"只能去 Django admin 建号、再回用户管理勾模块，
