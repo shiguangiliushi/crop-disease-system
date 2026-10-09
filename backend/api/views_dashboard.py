@@ -30,6 +30,8 @@ from django.db.models import Count, Q
 from django.db.models.functions import TruncDay
 from django.utils import timezone
 from rest_framework import permissions
+# 第 124 批：能力判定统一收口（看板 = CONTENT 只读；样本统计 = BROADCAST）
+from .capabilities import CAP_BROADCAST, CAP_CONTENT, has_capability, is_full_admin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -42,13 +44,26 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-def _is_admin(user):
-    """与项目其它管理端一致的管理员判定（第 17 批统一口径）"""
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN')
-    )
+def _can_view_dashboard(user):
+    """
+    能否查看管理端数据看板（`CONTENT` 能力，**只读**）
+
+    第 124 批（产品决策 #1）：**信息编辑员可以看看板**（第 125 批起），
+    但看板里"能定位到具体用户"的两块（贡献榜 / 最近注册）只给全权管理员，
+    见 `AdminDashboardView.get` 里的 `include_user_detail`。
+    """
+    return has_capability(user, CAP_CONTENT)
+
+
+def _can_view_dataset_stats(user):
+    """
+    能否查看识别反馈的样本统计（`BROADCAST` 能力）
+
+    第 124 批口径：它属于"数据集/模型"这类系统级信息（不是内容、也不是账号），
+    与公告/预警同组，**信息编辑员不可**。当前前端没有页面在用它（纯接口），
+    若将来编辑员确实需要"哪类病害总被认错"来补词条，再单独放给 CONTENT。
+    """
+    return has_capability(user, CAP_BROADCAST)
 
 
 def _daily_counts(queryset, field, days, end_date):
@@ -93,7 +108,7 @@ class AdminFeedbackDatasetStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if not _is_admin(request.user):
+        if not _can_view_dataset_stats(request.user):
             return Response({'detail': '只有管理员可以查看样本统计'}, status=403)
 
         recognitions = Feedback.objects.filter(category='recognition')
@@ -158,7 +173,7 @@ class AdminDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if not _is_admin(request.user):
+        if not _can_view_dashboard(request.user):
             return Response({'detail': '只有管理员可以查看数据看板'}, status=403)
 
         try:
@@ -254,19 +269,31 @@ class AdminDashboardView(APIView):
         }
 
         # ---------- 贡献榜 / 最近注册 ----------
-        top_contributors = list(
-            users.annotate(
-                post_count=Count('forum_posts', distinct=True),
-                comment_count=Count('forum_comments', distinct=True),
-            )
-            .filter(Q(post_count__gt=0) | Q(comment_count__gt=0))
-            .order_by('-post_count', '-comment_count')[:5]
-            .values('username', 'post_count', 'comment_count')
-        )
+        #
+        # 第 124 批（产品决策 #1）：**数据看板对内容编辑开放，但"能定位到具体用户"的两块不给**
+        #   · top_contributors：用户名 + 发帖/评论数
+        #   · recent_users：id + 用户名 + 注册/登录时间 + 角色
+        # 只有全权管理员（is_staff / is_superuser / role=ADMIN）才拿到这两块；
+        # 内容编辑（EDITOR）拿到的是**聚合数字**（总量、趋势、分布），看不到人。
+        # 前端也据此隐藏这两个区块，但**边界在这里**（前端只是体验）。
+        include_user_detail = is_full_admin(request.user)
 
-        recent_users = list(
-            users.order_by('-date_joined')[:5].values('id', 'username', 'date_joined', 'last_login', 'role')
-        )
+        top_contributors = []
+        recent_users = []
+        if include_user_detail:
+            top_contributors = list(
+                users.annotate(
+                    post_count=Count('forum_posts', distinct=True),
+                    comment_count=Count('forum_comments', distinct=True),
+                )
+                .filter(Q(post_count__gt=0) | Q(comment_count__gt=0))
+                .order_by('-post_count', '-comment_count')[:5]
+                .values('username', 'post_count', 'comment_count')
+            )
+
+            recent_users = list(
+                users.order_by('-date_joined')[:5].values('id', 'username', 'date_joined', 'last_login', 'role')
+            )
 
         return Response({
             'generated_at': now,
@@ -281,4 +308,6 @@ class AdminDashboardView(APIView):
             'feedback_by_status': feedback_by_status,
             'top_contributors': top_contributors,
             'recent_users': recent_users,
+            # 明确告诉前端"这两块有没有数据"，省得前端自己猜（空数组 ≠ 没有用户）
+            'includes_user_detail': include_user_detail,
         })

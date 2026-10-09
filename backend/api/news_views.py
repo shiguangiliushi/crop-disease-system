@@ -11,6 +11,8 @@ import logging
 
 from .models import News
 from .serializers import NewsSerializer
+# 第 124 批：能力判定统一收口（新闻维护 = CONTENT，信息编辑员可）
+from .capabilities import MODULE_NEWS, has_content_module
 # 第 91 批：图片上传统一校验（大小上限 + 按文件头探测真实格式 + 随机文件名）
 from .image_validation import (
     ALLOWED_FORMATS,
@@ -50,24 +52,23 @@ class NewsViewSet(viewsets.ModelViewSet):
         return context
 
     @staticmethod
-    def _is_admin(user):
-        """管理员判定：is_staff / is_superuser / role=ADMIN（与前端 isAdmin 对齐）"""
-        return bool(
-            user
-            and user.is_authenticated
-            and (
-                user.is_staff
-                or user.is_superuser
-                or getattr(user, 'role', None) == 'ADMIN'
-            )
-        )
+    def _can_manage_news(user):
+        """
+        能否维护新闻（`CONTENT` 能力）
+
+        第 124 批：判定统一收口到 `capabilities.py`（本方法原来叫 `_is_admin`，
+        自己抄了一份 `is_staff or is_superuser or role=='ADMIN'`）。
+        语义不变；第 125 批起**信息编辑员（EDITOR）也能维护新闻** ——
+        新闻与病害百科同属内容生产。
+        """
+        return has_content_module(user, MODULE_NEWS)
 
     def get_permissions(self):
         """
         权限划分：
         - 列表 / 详情：任何人可读
-        - 新增：仅管理员
-        - 修改 / 删除：管理员或该新闻作者
+        - 新增：仅内容维护者
+        - 修改 / 删除：**内容维护者**或该新闻作者
         """
         # 只读动作对所有人开放（含旧版兼容接口 legacy_detail）
         if self.action in ['list', 'retrieve', 'recent', 'legacy_detail']:
@@ -77,7 +78,7 @@ class NewsViewSet(viewsets.ModelViewSet):
         if not user or not user.is_authenticated:
             return [permissions.IsAdminUser()]
 
-        if self._is_admin(user):
+        if self._can_manage_news(user):
             return [permissions.IsAuthenticated()]
 
         if self.action in ['update', 'partial_update', 'destroy']:
@@ -91,9 +92,9 @@ class NewsViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        管理员可看到全部新闻（含未发布 / 等待定时发布），其他人只能看到"已发布且到点"的。
+        内容维护者可看到全部新闻（含未发布 / 等待定时发布），其他人只能看到"已发布且到点"的。
 
-        管理员判定统一走 `_is_admin`，避免与 `get_permissions`、前端 `isAdmin`
+        判定统一走 `_can_manage_news`，避免与 `get_permissions`、前端能力口径
         出现"三处口径不一"（本项目历史上已因此踩过坑，见完善记录第 17 批）。
 
         第 38 批：新增**定时发布** —— `published_at` 为空或已到点才对外可见；
@@ -103,7 +104,7 @@ class NewsViewSet(viewsets.ModelViewSet):
         from django.utils import timezone
 
         queryset = News.objects.all().order_by('-created_at')
-        if self._is_admin(self.request.user):
+        if self._can_manage_news(self.request.user):
             return queryset
         return queryset.filter(is_published=True).filter(
             Q(published_at__isnull=True) | Q(published_at__lte=timezone.now())
@@ -236,8 +237,8 @@ class NewsViewSet(viewsets.ModelViewSet):
 
         # 原实现用的是 `request.user.is_staff`，与 get_queryset 的判定不一致
         # （role=ADMIN 但 is_staff=False 的账号会走到"非管理员"分支）。
-        # 这里统一到 _is_admin，且非管理员无论如何都只返回已发布。
-        if self._is_admin(request.user):
+        # 这里统一到 _can_manage_news，且非内容维护者无论如何都只返回已发布。
+        if self._can_manage_news(request.user):
             queryset = queryset.filter(is_published=is_published)
         else:
             queryset = queryset.filter(is_published=True)

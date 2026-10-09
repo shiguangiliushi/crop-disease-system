@@ -23,6 +23,8 @@ import logging
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import permissions
+# 第 124 批：统一的能力判定（本文件原来自己抄了一份管理员判定）
+from .capabilities import MODULE_PESTS, has_content_module
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -64,12 +66,13 @@ CATEGORY_MAP = {
 }
 
 
-def _is_admin(user):
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN')
-    )
+def _can_import_pests(user):
+    """
+    能否批量导入病害词条（`CONTENT` 能力）
+
+    第 124 批：判定统一收口到 `capabilities.py`（此前这里自己抄了一份管理员判定）。
+    """
+    return has_content_module(user, MODULE_PESTS)
 
 
 class PestImportTemplateView(APIView):
@@ -77,7 +80,7 @@ class PestImportTemplateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        if not _is_admin(request.user):
+        if not _can_import_pests(request.user):
             return Response({'detail': '只有管理员可以下载导入模板'}, status=403)
 
         content = build_workbook(
@@ -101,7 +104,7 @@ class PestImportView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        if not _is_admin(request.user):
+        if not _can_import_pests(request.user):
             return Response({'detail': '只有管理员可以批量导入病害'}, status=403)
 
         upload = request.FILES.get('file')

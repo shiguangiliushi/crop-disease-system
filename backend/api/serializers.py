@@ -27,6 +27,8 @@ from .models import (
     Feedback, News, SensitiveWord
 )  # 导入模型类
 from .models_forum import Post, Comment, Like, ForumBoard  # 导入论坛模型类
+# 第 124 批：对象级约束里的"管理员例外"统一用 is_full_admin()（不是能力判定）
+from .capabilities import is_full_admin
 # 第 106 批：密码策略唯一来源（注册 / 邮箱重置 / 修改密码三处共用）
 from .password_policy import MIN_LENGTH as PASSWORD_MIN_LENGTH, validate_password
 
@@ -231,6 +233,9 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     avatar = serializers.SerializerMethodField()
     role_display = serializers.CharField(source='get_role_display', read_only=True)
+    # 第 128 批：编辑员的**内容模块**（前端列表/弹窗要显示"编辑员（新闻管理、意见反馈）"）
+    content_modules = serializers.SerializerMethodField()
+    content_modules_display = serializers.SerializerMethodField()
     is_expert = serializers.SerializerMethodField()
     expert_title = serializers.SerializerMethodField()
     expert_specialties = serializers.SerializerMethodField()
@@ -245,6 +250,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name', 'avatar',
             'role', 'role_display', 'is_staff', 'is_superuser', 'is_active',
+            # 第 128 批：编辑员的内容模块（只在 role=EDITOR 时有值）
+            'content_modules', 'content_modules_display',
             'is_expert', 'expert_title', 'expert_specialties', 'expert_granted_at',
             'post_count', 'comment_count', 'detection_count', 'points',
             'date_joined', 'last_login',
@@ -258,6 +265,26 @@ class AdminUserSerializer(serializers.ModelSerializer):
     # -- 内部工具 ---------------------------------------------------------
     def get_avatar(self, obj):
         return _user_avatar_url(obj, self.context.get('request'))
+
+    # -- 第 128 批：编辑员的内容模块 ----------------------------------------
+    def get_content_modules(self, obj):
+        """
+        该账号实际拥有的内容模块（全权管理员 → 四个全给；编辑员 → 授权表里的）
+
+        只对 `role='EDITOR'` 与全权管理员有意义：普通用户返回空数组
+        （前端据此决定"改角色弹窗里勾哪些框"）。
+        """
+        from .capabilities import content_modules_of
+
+        if getattr(obj, 'role', None) == 'EDITOR' or is_full_admin(obj):
+            return content_modules_of(obj)
+        return []
+
+    def get_content_modules_display(self, obj):
+        """模块的中文名列表（列表里直接显示，省得前端再翻译一次）"""
+        from .capabilities import MODULE_LABELS
+
+        return [MODULE_LABELS[module] for module in self.get_content_modules(obj)]
 
     def _expert_profile(self, obj):
         """
@@ -915,12 +942,17 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
         # 第 91 批：纠错只能关联**自己**的识别记录。
         # 不校验的话，任何人传别人的 detection_id 就能把反馈挂到别人的识别结果上
         # （反馈是公开可查的，等于泄露"某人某时识别了什么"）。
+        #
+        # 第 124 批：管理员例外条件从 `is_staff` 改为 `is_full_admin()`
+        # —— 原来只认 is_staff，漏了 is_superuser 与 role=ADMIN。
+        # ⚠️ 这里**刻意不用能力判定**：它是对象级约束（防越权挂靠），不是"内容维护权限"。
+        # 换成 has_capability(CONTENT) 会让信息编辑员能把反馈挂到别人的识别记录上，
+        # 那是权限放大而不是收敛。
         detection = attrs.get('detection')
         request = self.context.get('request')
         if detection is not None and request is not None:
             user = getattr(request, 'user', None)
-            is_staff = bool(getattr(user, 'is_staff', False))
-            if detection.user_id != getattr(user, 'id', None) and not is_staff:
+            if detection.user_id != getattr(user, 'id', None) and not is_full_admin(user):
                 raise serializers.ValidationError(
                     {'detection_id': ['只能关联你自己的识别记录']}
                 )
@@ -1093,12 +1125,19 @@ class PostListSerializer(serializers.ModelSerializer):
         return obj.updated_at.strftime('%Y-%m-%d %H:%M') if obj.updated_at else ''
 
 class SensitiveWordSerializer(serializers.ModelSerializer):
-    """敏感词（第 38 批）"""
+    """
+    敏感词（第 38 批）
+
+    第 135 批：加 `word_en`（**英文对照，只用于显示**）。词条本身是被拦截的字面串，
+    中文词库在英文界面下就是一串中文，英文管理员看不出拦的是什么 —— 给它一句英文说法。
+    ⚠️ 匹配只看 `word`（见 api/sensitive.py），`word_en` 不参与拦截。
+    """
     category_display = serializers.CharField(source='get_category_display', read_only=True)
 
     class Meta:
         model = SensitiveWord
-        fields = ['id', 'word', 'category', 'category_display', 'is_active', 'note', 'created_at']
+        fields = ['id', 'word', 'word_en', 'category', 'category_display',
+                  'is_active', 'note', 'created_at']
         read_only_fields = ['created_at', 'category_display']
 
     def validate_word(self, value):
@@ -1106,3 +1145,6 @@ class SensitiveWordSerializer(serializers.ModelSerializer):
         if not word:
             raise serializers.ValidationError('敏感词不能为空')
         return word
+
+    def validate_word_en(self, value):
+        return (value or '').strip()

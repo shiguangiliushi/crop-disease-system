@@ -1,12 +1,24 @@
 from rest_framework import permissions  # 导入Django REST Framework权限类
 from .models_forum import ForumBoard, Post, Comment  # 导入论坛相关模型
+# 第 124 批：管理员口径统一收口到 capabilities.py（此前同一个判定被复制在约 30 处）
+# 第 128 批：内容能力再拆成四个模块 —— 这里守的是**病害百科**，因此问 `pests` 模块
+from .capabilities import MODULE_PESTS, has_content_module, is_full_admin
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):
     """
-    管理员可写、任何人可读
+    **病害百科**维护者（`pests` 内容模块）可写、任何人可读
+
     - 病害百科等公共资料：所有用户（含未登录）可查看
-    - 新增/修改/删除仅限管理员（is_staff / is_superuser / role=ADMIN）
+    - 新增/修改/删除仅限具备 `pests` 模块的账号
+      （全权管理员四个模块全有；信息编辑员要由超管单独勾选）
+
+    ⚠️ 第 124 批改动：这里原来写的是
+    `user.is_staff or user.is_superuser or role == 'ADMIN'` —— 与项目里的另外
+    两种写法（DRF 自带的 `IsAdminUser` 只认 is_staff、各模块自己抄一份的 `_is_admin`）
+    并不等价。现在统一调 `capabilities.py`，判定只有一处实现。
+    ⚠️ 第 128 批改动：从笼统的 `CONTENT` 收窄到 `pests` 模块 ——
+    勾了"新闻管理"的编辑员不该能改病害词条。
     """
 
     def has_permission(self, request, view):
@@ -14,15 +26,7 @@ class IsAdminOrReadOnly(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
 
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-
-        return bool(
-            user.is_staff or
-            user.is_superuser or
-            getattr(user, 'role', None) == 'ADMIN'
-        )
+        return has_content_module(getattr(request, 'user', None), MODULE_PESTS)
 
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
@@ -148,11 +152,13 @@ class CanDeletePost(permissions.BasePermission):
     """
     是否可以删除帖子
     只有作者或管理员可以删除帖子（版主通常不能删除帖子）
+
+    第 124 批：管理员条件从 `is_staff` 改为 `is_full_admin()`（is_staff / is_superuser /
+    role=ADMIN）—— 与项目其它处口径一致。**不给信息编辑员（EDITOR）**：
+    帖子删除不在编辑员的能力矩阵里（编辑员通过审核/驳回、软删评论做内容处置）。
     """
 
     def has_object_permission(self, request, view, obj):
         # 只有作者或管理员可以删除
         is_owner = obj.author == request.user  # 当前用户是否为帖子作者
-        is_admin = request.user.is_authenticated and request.user.is_staff  # 用户已认证且是管理员
-
-        return is_owner or is_admin  # 满足任一条件即可
+        return is_owner or is_full_admin(request.user)  # 满足任一条件即可

@@ -33,9 +33,11 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.authtoken.models import Token
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APITestCase  # APITestCase：第 125 批的能力矩阵
+from rest_framework import status  # 第 125 批：能力矩阵测试要断言具体状态码
 
 from .models import DetectionHistory, Feedback, News, PestInfo, PreventionMethod, SensitiveWord
+from .models import EditorModuleGrant  # 第 128 批：编辑员的模块授权（内容审核/新闻/百科/反馈）
 from .models_forum import Comment, Favorite, ForumBoard, Like, Post
 from .models_notify import Announcement, Notification  # 第 37 批：通知与公告
 from .models_social import Follow  # 第 40 批：关注关系
@@ -4637,6 +4639,95 @@ class SafeRotatingLogHandlerTests(TestCase):
 
         self.assertIn('BBB 轮转之后还能写', self.log_path.read_text(encoding='utf-8', errors='replace'))
 
+    def test_failed_rollover_enters_cooldown_instead_of_retrying_every_line(self):
+        """
+        **轮转注定失败时，不许每条日志都白等一次重试窗口**（第 118 批）。
+
+        真实现象（本次就是被它拖垮的）：
+          dev server 的 `logs/debug.log` 涨到 10MB 之后，父子两个 `runserver`
+          进程互相占着文件 → rename 永远失败 → 而文件仍然超过 `maxBytes`，
+          于是**下一条日志**又进 `doRollover()` 等满重试窗口（1 秒 × 21 次尝试）。
+          一个请求要打十来条日志 = 每个请求慢十来秒：`/api/health/` 实测 9~12 秒，
+          E2E 全线超时假红。
+
+        这里把重试窗口调成 0（让"一次失败"= 一次 rotate 调用），
+        冷却窗口调长（测试期间不会再尝试），然后写 50 条日志：
+        只允许**第一次**真正去抢文件，后面的都必须走冷却直接追加。
+        """
+        from logging.handlers import RotatingFileHandler
+
+        handler = self._handler()
+        handler.retry_seconds = 0        # 一次失败 = 一次 rotate 调用，便于计数
+        handler.cooldown_seconds = 60    # 冷却期覆盖整条用例
+        logger = self._logger('zz_rollover_cooldown')
+        logger.addHandler(handler)
+
+        attempts = []
+
+        def always_busy(source, dest):
+            attempts.append(1)
+            raise PermissionError(32, 'The process cannot access the file')
+
+        original_rotate = RotatingFileHandler.rotate
+        RotatingFileHandler.rotate = staticmethod(always_busy)
+        try:
+            for index in range(50):
+                logger.info('冷却测试 %s %s', index, 'z' * 50)
+        finally:
+            RotatingFileHandler.rotate = original_rotate
+            logger.removeHandler(handler)
+            handler.close()
+
+        self.assertEqual(
+            len(attempts), 1,
+            f'轮转失败后应当进入冷却、不再逐条重试，实际抢了 {len(attempts)} 次文件',
+        )
+        content = self.log_path.read_text(encoding='utf-8', errors='replace')
+        self.assertIn('冷却测试 0 ', content, '冷却期间第一条日志就丢了')
+        self.assertIn('冷却测试 49 ', content, '冷却期间后面的日志没有落盘')
+
+    def test_cooldown_expires_and_rollover_is_retried(self):
+        """
+        冷却不是"把轮转永久关掉"：窗口过去后要再试一次。
+
+        否则一旦某次失败，日志文件会无限增长（直到进程重启）——
+        "不丢日志"的代价不该是"永远不再轮转"。
+        """
+        import time
+        from logging.handlers import RotatingFileHandler
+
+        handler = self._handler()
+        handler.retry_seconds = 0
+        handler.cooldown_seconds = 0.05
+        logger = self._logger('zz_rollover_cooldown_expiry')
+        logger.addHandler(handler)
+
+        attempts = []
+
+        def always_busy(source, dest):
+            attempts.append(1)
+            raise PermissionError(32, 'busy')
+
+        original_rotate = RotatingFileHandler.rotate
+        RotatingFileHandler.rotate = staticmethod(always_busy)
+        try:
+            for index in range(50):
+                logger.info('冷却过期测试 %s %s', index, 'z' * 50)
+            first_round = len(attempts)
+            time.sleep(0.1)   # 等冷却窗口过去
+            for index in range(50):
+                logger.info('冷却过期测试二 %s %s', index, 'z' * 50)
+        finally:
+            RotatingFileHandler.rotate = original_rotate
+            logger.removeHandler(handler)
+            handler.close()
+
+        self.assertGreaterEqual(first_round, 1, '第一次就该尝试轮转')
+        self.assertGreater(
+            len(attempts), first_round,
+            '冷却窗口过去后应当重新尝试轮转，否则日志文件会无限增长',
+        )
+
     def test_settings_uses_safe_handler_for_both_files(self):
         """
         配置必须真的用上这个处理器 —— 否则上面那些测试全绿也没意义。
@@ -5725,6 +5816,139 @@ class AccountDeletionTests(TestCase):
         )
         audit_ids = [row['id'] for row in audited.data['results']]
         self.assertIn(self.other.id, audit_ids, '?include_deleted=true 应能审计到')
+
+
+# ============================================================================
+# 第 120 批：管理员签发「一次性密码重置链接」
+# ============================================================================
+class AdminResetLinkTests(TestCase):
+    """
+    为什么有这组测试
+    ---------------------------------------------------------------------------
+    自助找回密码只在**账号绑了邮箱**时才真的发信；没绑邮箱时后端按防枚举策略
+    静默什么都不做，页面却显示"已发送"。管理端账号大多没绑邮箱 ——
+    于是"管理员忘了密码"这条路是断的，而且断得没有声音。
+
+    第 120 批补上 `/api/admin/users/{id}/reset-link/`：管理员签发一次性链接、
+    线下发给本人、本人在 /reset-password 自己设新密码。
+
+    这里盯四件事：
+      1. **真的能用**：拿签发的链接能走完 `password-reset/confirm/` 并登进去；
+      2. **没绑邮箱也能用**（这正是要解决的场景）；
+      3. **提权护栏**：staff 管理员不能给超管/其它管理员签发（否则等于顶号）；
+      4. **一次性**：改过密码之后，旧链接必须失效。
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.plain = User.objects.create_user(
+            username='zz_reset_plain', password='old-pw-123', email='',
+        )
+        self.staff = User.objects.create_user(
+            username='zz_reset_staff', password='pw12345678', is_staff=True,
+        )
+        self.superuser = User.objects.create_superuser(
+            username='zz_reset_super', password='pw12345678', email='super@example.invalid',
+        )
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+        self.client_staff = APIClient()
+        self.client_staff.force_authenticate(user=self.staff)
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+
+    def _uid_token(self, url):
+        match = re.search(r'uid=([^&\s]+)&token=([^\s]+)', url)
+        self.assertIsNotNone(match, f'链接里没有 uid/token：{url}')
+        return match.group(1), match.group(2)
+
+    def test_superuser_can_sign_link_and_it_actually_works(self):
+        """端到端：签发 → 打开链接设新密码 → 用新密码登录"""
+        response = self.client_super.post(f'/api/admin/users/{self.plain.id}/reset-link/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['username'], self.plain.username)
+        self.assertIn('/reset-password?uid=', response.data['url'])
+        self.assertEqual(response.data['expires_in_minutes'], 60)
+
+        uid, token = self._uid_token(response.data['url'])
+        confirm = APIClient().post(
+            '/api/password-reset/confirm/',
+            {'uid': uid, 'token': token, 'new_password': 'brand-new-pw-9'},
+            format='json',
+        )
+        self.assertEqual(confirm.status_code, 200, confirm.data)
+
+        login = APIClient().post(
+            '/api/login/', {'username': self.plain.username, 'password': 'brand-new-pw-9'},
+            format='json',
+        )
+        self.assertEqual(login.status_code, 200, '用新密码应当能登录')
+
+    def test_link_works_for_account_without_email(self):
+        """**核心场景**：账号没绑邮箱 —— 自助找回是静默失败的，这里必须照样能重置"""
+        self.assertEqual(self.plain.email, '')
+        response = self.client_super.post(f'/api/admin/users/{self.plain.id}/reset-link/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['has_email'])
+        self.assertFalse(response.data['mailed'], '没邮箱当然发不出邮件')
+        self.assertIn('uid=', response.data['url'])
+
+    def test_plain_user_cannot_sign_link(self):
+        response = self.client_plain.post(f'/api/admin/users/{self.plain.id}/reset-link/')
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_anonymous_cannot_sign_link(self):
+        response = APIClient().post(f'/api/admin/users/{self.plain.id}/reset-link/')
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_staff_admin_cannot_sign_link_for_elevated_account(self):
+        """
+        提权护栏：只有 staff 的管理员**不能**给超管/其它管理员签发重置链接。
+        否则"给谁重置密码"就等于"谁能接管谁"，一个普通管理员可以直接顶掉超管。
+        """
+        for target in (self.superuser, self.staff):
+            with self.subTest(target=target.username):
+                response = self.client_staff.post(f'/api/admin/users/{target.id}/reset-link/')
+                # 自己给自己是允许的（本来就登着），所以只断言"别人的高权限账号"被拒
+                if target.id == self.staff.id:
+                    self.assertEqual(response.status_code, 200)
+                else:
+                    self.assertEqual(response.status_code, 403, response.data)
+                    self.assertIn('权限不低于', response.data['detail'])
+
+    def test_superuser_may_sign_link_for_another_admin(self):
+        response = self.client_super.post(f'/api/admin/users/{self.staff.id}/reset-link/')
+        self.assertEqual(response.status_code, 200, response.data)
+
+    def test_inactive_account_cannot_get_link(self):
+        self.plain.is_active = False
+        self.plain.save(update_fields=['is_active'])
+        response = self.client_super.post(f'/api/admin/users/{self.plain.id}/reset-link/')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('停用', response.data['detail'])
+
+    def test_link_is_one_time(self):
+        """改过密码之后旧链接必须失效（default_token_generator 与密码哈希绑定）"""
+        response = self.client_super.post(f'/api/admin/users/{self.plain.id}/reset-link/')
+        uid, token = self._uid_token(response.data['url'])
+
+        first = APIClient().post(
+            '/api/password-reset/confirm/',
+            {'uid': uid, 'token': token, 'new_password': 'first-new-pw-9'},
+            format='json',
+        )
+        self.assertEqual(first.status_code, 200, first.data)
+
+        replay = APIClient().post(
+            '/api/password-reset/confirm/',
+            {'uid': uid, 'token': token, 'new_password': 'second-new-pw-9'},
+            format='json',
+        )
+        self.assertNotEqual(replay.status_code, 200, '同一条链接不该能用第二次')
+
+    def test_unknown_user_returns_404(self):
+        response = self.client_super.post('/api/admin/users/999999/reset-link/')
+        self.assertEqual(response.status_code, 404)
 
 
 # ============================================================================
@@ -7847,3 +8071,1020 @@ class DirectMessagePreviewTests(TestCase):
         response = self.client.get('/api/messages/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['results'][0]['last_message'], '{这不是合法 JSON')
+
+
+# ============================================================================
+# 第 125 批：角色 × 端点 的能力矩阵
+# ============================================================================
+# 为什么要有这一组
+# ----------------------------------------------------------------------------
+# 在它之前，"谁是管理员"被复制在约 30 处、三种写法并不等价（DRF 的 IsAdminUser
+# 只认 is_staff、IsAdminOrReadOnly 认三样、各模块自己抄的 _is_admin 又各写一遍）。
+# 第 124 批把这些判定收口到 `api/capabilities.py`，第 125 批让
+# `role='EDITOR'`（信息编辑员）真正拿到 CONTENT 能力。
+#
+# 收口带来的**新风险**是"某个接口忘了改"——比如它还在用 DRF 的 IsAdminUser，
+# 或者某人顺手把 USER_ADMIN 的接口写成了 CONTENT。这种错误不会自己暴露：
+# 只有真的用 EDITOR 账号去撞才会发现。
+#
+# 所以这里把**产品口径**（见 docs/内容编辑角色方案.md）逐条断言成测试：
+#   · EDITOR 能做的（CONTENT）：必须 2xx
+#   · EDITOR 不能做的（USER_ADMIN / BROADCAST / 全权管理员专属）：必须 403
+#   · 全权管理员（is_staff / role=ADMIN）在**所有**这些端点上都必须能过
+# 以后谁再新增一个管理端接口，照着这张表补一行即可。
+# ============================================================================
+class CapabilityMatrixTests(APITestCase):
+    """role × 端点 的能力矩阵（第 125 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+
+        # 三类账号：全权管理员 / 信息编辑员 / 普通用户
+        self.admin = User.objects.create_user(
+            username='zz_cap_admin', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_cap_editor', password='pw12345678', role='EDITOR',
+        )
+        # 第 128 批：编辑员现在还要**按模块授权**。这一组测试验的是"编辑员这个角色
+        # 能做哪些内容工作、不能碰哪些账号/发声接口"，所以给他**四个模块全勾**；
+        # "只勾一块时互不干扰"由 ContentModuleScopeTests 单独盯。
+        EditorModuleGrant.objects.bulk_create([
+            EditorModuleGrant(user=self.editor, module=module, granted_by=self.admin)
+            for module in ('review', 'news', 'pests', 'feedback')
+        ])
+        self.plain = User.objects.create_user(
+            username='zz_cap_plain', password='pw12345678', role='USER',
+        )
+
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+        # 造一点被操作的数据
+        self.pest = PestInfo.objects.create(
+            name='zz能力矩阵病', crop_type='玉米', english_identifier='zz_cap_pest',
+            symptoms='用于权限矩阵测试',
+        )
+        self.news = News.objects.create(title='zz能力矩阵新闻', content='<p>x</p>', author=self.admin)
+        self.board = ForumBoard.objects.create(name='zz能力矩阵版块', description='x')
+        self.post = Post.objects.create(
+            title='zz能力矩阵帖子', content='x', author=self.plain, board=self.board,
+            status='pending',
+        )
+        self.comment = Comment.objects.create(post=self.post, author=self.plain, content='x')
+        # 别人的反馈：EDITOR 能看能回，但**不能删**
+        self.other_feedback = Feedback.objects.create(
+            user=self.plain, category='suggestion', suggestion='zz能力矩阵反馈',
+        )
+
+    # ---------- 工具 ----------
+    def _expect(self, client, method, url, expected, body=None, note=''):
+        """发一个请求并断言状态码（把"期望"写在调用处，失败信息带说明）"""
+        send = getattr(client, method)
+        kwargs = {'format': 'json'}
+        if body is not None:
+            kwargs['data'] = body
+        response = send(url, **kwargs)
+        self.assertEqual(
+            response.status_code, expected,
+            f'{note}｜{method.upper()} {url} 期望 {expected}，实际 {response.status_code}'
+            f'｜{getattr(response, "data", "")}',
+        )
+        return response
+
+    # ---------- ① CONTENT：信息编辑员必须能做 ----------
+    def test_editor_can_manage_content(self):
+        """EDITOR 的内容生产权限：百科 / 新闻 / 审核 / 反馈回复 / 日历 / 看板"""
+
+        # 病害百科：新增 + 修改 + 删除
+        created = self._expect(
+            self.client_editor, 'post', '/api/pests/',
+            status.HTTP_201_CREATED,
+            {'name': 'zz能力矩阵新增', 'crop_type': '玉米',
+             'english_identifier': 'zz_cap_new', 'symptoms': 'x',
+             'prevention_methods': []},
+            note='百科新增（CONTENT）',
+        )
+        new_id = created.data['id']
+        self._expect(self.client_editor, 'patch', f'/api/pests/{new_id}/',
+                     status.HTTP_200_OK, {'symptoms': '改过'}, note='百科修改（CONTENT）')
+        self._expect(self.client_editor, 'delete', f'/api/pests/{new_id}/',
+                     status.HTTP_204_NO_CONTENT, note='百科删除（CONTENT）')
+
+        # 新闻：新增 + 修改 + 删除
+        news = self._expect(
+            self.client_editor, 'post', '/api/news/',
+            status.HTTP_201_CREATED,
+            {'title': 'zz能力矩阵编辑员建的新闻', 'content': '<p>x</p>', 'category': 'notice'},
+            note='新闻新增（CONTENT）',
+        )
+        self._expect(self.client_editor, 'patch', f"/api/news/{news.data['id']}/",
+                     status.HTTP_200_OK, {'source': '本站'}, note='新闻修改（CONTENT）')
+
+        # 内容审核：通过 / 驳回 / 批量
+        self._expect(self.client_editor, 'post', f'/api/forums/posts/{self.post.id}/approve/',
+                     status.HTTP_200_OK, note='帖子审核通过（CONTENT）')
+        self._expect(self.client_editor, 'post', f'/api/forums/posts/{self.post.id}/reject/',
+                     status.HTTP_200_OK, {'reason': '不合适'}, note='帖子审核驳回（CONTENT）')
+        self._expect(self.client_editor, 'post', '/api/forums/posts/bulk-review/',
+                     status.HTTP_200_OK, {'ids': [self.post.id], 'action': 'approve'},
+                     note='批量审核（CONTENT）')
+
+        # 评论软删除（内容处置；硬删除见下面的"全权管理员专属"）
+        # 该 action 返回 204（无正文），不是 200
+        self._expect(self.client_editor, 'post',
+                     f'/api/forums/posts/{self.post.id}/comments/{self.comment.id}/delete/',
+                     status.HTTP_204_NO_CONTENT, note='评论软删除（CONTENT）')
+
+        # 意见反馈：能看到**别人**的反馈 + 能回复
+        listed = self._expect(self.client_editor, 'get', '/api/feedback/',
+                              status.HTTP_200_OK, note='反馈列表（CONTENT）')
+        seen_ids = {row['id'] for row in listed.data['results']} if isinstance(
+            listed.data, dict) and 'results' in listed.data else {r['id'] for r in listed.data}
+        self.assertIn(
+            self.other_feedback.id, seen_ids,
+            '信息编辑员应当能看到其他用户提交的反馈（否则没法回复）',
+        )
+        self._expect(self.client_editor, 'post', f'/api/feedback/{self.other_feedback.id}/reply/',
+                     status.HTTP_200_OK, {'status': 'resolved', 'admin_reply': '已处理'},
+                     note='反馈回复（CONTENT）')
+
+        # 种植日历：新增任务（CalendarTask 已在文件头导入）
+        self._expect(self.client_editor, 'post', '/api/calendar/tasks/',
+                     status.HTTP_201_CREATED,
+                     {'crop_type': '玉米', 'month': 5, 'title': 'zz能力矩阵农事',
+                      'task_type': 'sowing', 'detail': 'x'},
+                     note='日历任务新增（CONTENT）')
+        self.assertTrue(CalendarTask.objects.filter(title='zz能力矩阵农事').exists())
+
+        # 数据看板：能看（只读），但**拿不到用户明细**
+        dash = self._expect(self.client_editor, 'get', '/api/admin/dashboard/',
+                            status.HTTP_200_OK, note='数据看板（CONTENT 只读）')
+        self.assertIn('totals', dash.data, '看板至少要给聚合数字')
+        self.assertEqual(
+            dash.data.get('top_contributors'), [],
+            '信息编辑员不该看到"贡献榜"（含用户名）',
+        )
+        self.assertEqual(
+            dash.data.get('recent_users'), [],
+            '信息编辑员不该看到"最近注册"（含用户名/登录时间）',
+        )
+        self.assertFalse(dash.data.get('includes_user_detail'))
+
+        # 看板对全权管理员仍然给出用户明细
+        admin_dash = self._expect(self.client_admin, 'get', '/api/admin/dashboard/',
+                                  status.HTTP_200_OK, note='数据看板（管理员）')
+        self.assertTrue(admin_dash.data.get('includes_user_detail'))
+
+    # ---------- ② USER_ADMIN：信息编辑员必须被拒 ----------
+    def test_editor_cannot_touch_user_admin(self):
+        """EDITOR 不得进入用户与他人数据的接口（全部 403）"""
+        cases = [
+            ('get', '/api/users/', None, '全站用户列表'),
+            ('get', '/api/admin/users/', None, '用户管理列表'),
+            ('get', f'/api/admin/users/{self.plain.id}/', None, '用户详情'),
+            ('post', f'/api/admin/users/{self.plain.id}/reset-link/', {}, '签发密码重置链接'),
+            ('delete', f'/api/admin/users/{self.plain.id}/', None, '软删除用户'),
+            ('post', f'/api/consult/experts/{self.plain.id}/', {'title': 'x'}, '授予专家'),
+            ('delete', f'/api/consult/experts/{self.plain.id}/', None, '取消专家'),
+        ]
+        for method, url, body, note in cases:
+            self._expect(self.client_editor, method, url, status.HTTP_403_FORBIDDEN,
+                         body=body, note=f'{note}（USER_ADMIN）')
+
+        # 反向确认：这几道门不是"把所有人都挡住"——全权管理员必须照常可用。
+        # （只挑语义确定的读接口断言 200；写接口各自的业务护栏不在这里重复测。）
+        for url in ['/api/users/', '/api/admin/users/', f'/api/admin/users/{self.plain.id}/']:
+            self._expect(self.client_admin, 'get', url, status.HTTP_200_OK,
+                         note='全权管理员读用户数据')
+
+    def test_editor_sees_only_own_detection_records(self):
+        """识别记录：EDITOR 拿不到"全部用户"视图（范围而不是 403）"""
+        from .models import DetectionHistory
+        DetectionHistory.objects.create(
+            user=self.plain, detection_result='玉米大斑病', confidence=0.9,
+        )
+        DetectionHistory.objects.create(
+            user=self.editor, detection_result='自己的记录', confidence=0.8,
+        )
+
+        response = self._expect(
+            self.client_editor, 'get', '/api/detection-history/?all_users=true',
+            status.HTTP_200_OK, note='识别记录列表',
+        )
+        # ⚠️ 这个接口的列表结构是 `{'status':.., 'data': {'items': [...]}}`
+        # （第 22 批把识别记录管理并进来时定的形状），不是 DRF 默认的 `results`。
+        # 三种形状都兼容一下，免得形状再变时测试以"str 没有 .get()"这种费解的方式失败。
+        payload = response.data
+        rows = payload.get('data', {}).get('items') or payload.get('results') or payload
+        users = {row['user']['id'] for row in rows if isinstance(row, dict) and row.get('user')}
+        self.assertEqual(
+            users, {self.editor.id},
+            '信息编辑员带 all_users=true 也只能看到自己的识别记录',
+        )
+
+    # ---------- ③ BROADCAST：信息编辑员必须被拒 ----------
+    def test_editor_cannot_broadcast(self):
+        """EDITOR 不得对全体用户发声 / 动系统开关（全部 403）"""
+        cases = [
+            ('post', '/api/announcements/',
+             {'title': 'zz能力矩阵公告', 'content': 'x'}, '发布系统公告'),
+            ('post', '/api/alerts/notify/', {}, '推送预警'),
+            ('get', '/api/sensitive-words/', None, '敏感词列表（连读都不给）'),
+            ('post', '/api/sensitive-words/', {'word': 'zz测试词'}, '新增敏感词'),
+            ('post', '/api/forums/boards/', {'name': 'zz能力矩阵新板块'}, '新建论坛版块'),
+            ('get', '/api/admin/dataset-stats/', None, '样本统计'),
+        ]
+        for method, url, body, note in cases:
+            self._expect(self.client_editor, method, url, status.HTTP_403_FORBIDDEN,
+                         body=body, note=f'{note}（BROADCAST）')
+
+    # ---------- ④ 全权管理员专属：连 CONTENT 都不给 ----------
+    def test_editor_cannot_do_irreversible_deletes(self):
+        """不可逆动作只给全权管理员：删别人的反馈 / 硬删评论"""
+        from .models_forum import Comment as ForumComment
+        self._expect(
+            self.client_editor, 'delete', f'/api/feedback/{self.other_feedback.id}/',
+            status.HTTP_403_FORBIDDEN, note='删别人的反馈（全权管理员专属）',
+        )
+        # 自己的反馈仍然可以撤回（这条是"普通用户的权利"，不能被上面的收紧误伤）
+        mine = Feedback.objects.create(
+            user=self.editor, category='suggestion', suggestion='我自己的反馈',
+        )
+        self._expect(self.client_editor, 'delete', f'/api/feedback/{mine.id}/',
+                     status.HTTP_204_NO_CONTENT, note='撤回自己的反馈')
+
+        hard = ForumComment.objects.create(post=self.post, author=self.plain, content='待硬删')
+        self._expect(
+            self.client_editor, 'delete',
+            f'/api/forums/posts/{self.post.id}/comments/{hard.id}/',
+            status.HTTP_403_FORBIDDEN, note='硬删评论（全权管理员专属）',
+        )
+        # 管理员可以（验证护栏不是把所有人一起挡住）
+        self._expect(
+            self.client_admin, 'delete',
+            f'/api/forums/posts/{self.post.id}/comments/{hard.id}/',
+            status.HTTP_204_NO_CONTENT, note='硬删评论（管理员）',
+        )
+
+    # ---------- ⑤ 普通用户：三项能力全无 ----------
+    def test_plain_user_gets_nothing(self):
+        """普通用户在管理端接口上一律 401/403（防止收口时把门开太大）"""
+        for method, url, body in [
+            ('get', '/api/admin/users/', None),
+            ('post', '/api/pests/', {'name': 'x', 'crop_type': '玉米',
+                                     'english_identifier': 'zz_plain_x', 'prevention_methods': []}),
+            ('post', '/api/announcements/', {'title': 'x', 'content': 'y'}),
+            ('get', '/api/admin/dashboard/', None),
+        ]:
+            send = getattr(self.client_plain, method)
+            response = send(url, data=body, format='json') if body is not None else send(url)
+            self.assertIn(
+                response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+                f'普通用户不该能访问 {method.upper()} {url}（实际 {response.status_code}）',
+            )
+
+    # ---------- ⑥ 能力清单本身 ----------
+    def test_capabilities_are_reported_in_login_and_check_auth(self):
+        """能力清单随登录 / check-auth 下发（前端据此显示菜单）"""
+        from .capabilities import ALL_CAPABILITIES
+
+        check = self._expect(self.client_editor, 'get', '/api/check-auth/',
+                             status.HTTP_200_OK, note='check-auth')
+        self.assertEqual(check.data['data']['capabilities'], ['CONTENT'])
+
+        check_admin = self._expect(self.client_admin, 'get', '/api/check-auth/',
+                                   status.HTTP_200_OK, note='check-auth（管理员）')
+        self.assertEqual(check_admin.data['data']['capabilities'], list(ALL_CAPABILITIES))
+
+        login = self.client.post(
+            '/api/login/',
+            {'username': 'zz_cap_editor', 'password': 'pw12345678'},
+            format='json',
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK, login.data)
+        self.assertEqual(login.data['data']['user']['capabilities'], ['CONTENT'])
+
+        check_plain = self._expect(self.client_plain, 'get', '/api/check-auth/',
+                                   status.HTTP_200_OK, note='check-auth（普通用户）')
+        self.assertEqual(check_plain.data['data']['capabilities'], [])
+
+
+# ============================================================================
+# 第 127 批：管理后台改角色（四条护栏）
+# ============================================================================
+# 背景：第 95 批**刻意**不在后台提供"改角色"（属于提权操作，请走 Django admin）。
+# 第 125 批引入信息编辑员之后，"把某个同事设成编辑员"成了日常操作，
+# 每次都去 Django admin 不现实 —— 于是开了一个**窄口子**，这里逐条锁死这个口子：
+#   1. 只有超级管理员能改（有 USER_ADMIN 能力的 staff 也不行）；
+#   2. 只能在 EDITOR ↔ USER 之间调，ADMIN 既不能是目标也不能是结果；
+#   3. 不能改自己；
+#   4. 不能动 staff / 超管账号。
+# 另外：变更要写日志、给对方发通知（"重新登录后生效"）。
+# ============================================================================
+class AdminUserRoleTests(APITestCase):
+    """改角色接口的护栏（第 127 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_role_super', password='pw12345678', email='', role='ADMIN',
+        )
+        # 有 USER_ADMIN 能力但不是超管：**不能**改角色（护栏 1）
+        self.staff = User.objects.create_user(
+            username='zz_role_staff', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.plain = User.objects.create_user(
+            username='zz_role_plain', password='pw12345678', role='USER',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_role_editor', password='pw12345678', role='EDITOR',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_staff = APIClient()
+        self.client_staff.force_authenticate(user=self.staff)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+
+    def _url(self, user):
+        return f'/api/admin/users/{user.id}/role/'
+
+    def _post(self, client, user, role, modules=None):
+        """
+        发一次改角色请求
+
+        第 128 批：改成 EDITOR 时必须带 `modules`（至少要给一个模块），
+        这里默认给「新闻管理」，让只关心角色护栏的测试保持简短。
+        """
+        payload = {'role': role}
+        if role == 'EDITOR' and modules is None:
+            payload['modules'] = ['news']
+        elif modules is not None:
+            payload['modules'] = modules
+        return client.post(self._url(user), payload, format='json')
+
+    # ---------- 正向 ----------
+    def test_superuser_can_promote_and_demote(self):
+        """超管可以把普通用户设成编辑员，也可以改回来"""
+        response = self._post(self.client_super, self.plain, 'EDITOR')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, 'EDITOR')
+
+        response = self._post(self.client_super, self.plain, 'USER')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, 'USER')
+
+    def test_role_change_notifies_the_user(self):
+        """改完角色要通知本人（能力随登录下发，必须重新登录才生效）"""
+        response = self._post(self.client_super, self.plain, 'EDITOR')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            Notification.objects.filter(recipient=self.plain).exists(),
+            '改角色后应当给对方一条站内通知',
+        )
+
+    def test_same_role_is_idempotent(self):
+        """设成同一个角色：成功但不改库（也就不该产生通知）"""
+        before = Notification.objects.count()
+        response = self._post(self.client_super, self.plain, 'USER')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data.get('changed'))
+        self.assertEqual(Notification.objects.count(), before)
+
+    def test_editor_capability_actually_follows_the_role(self):
+        """改角色之后能力真的变了（这是这一批的**目的**，不是副作用）"""
+        from .capabilities import (
+            has_capability, has_content_module, CAP_CONTENT, CAP_USER_ADMIN,
+        )
+
+        self.assertFalse(has_capability(self.plain, CAP_CONTENT))
+        self._post(self.client_super, self.plain, 'EDITOR', modules=['news', 'pests'])
+        self.plain.refresh_from_db()
+        self.assertTrue(has_capability(self.plain, CAP_CONTENT), '编辑员应当拿到 CONTENT')
+        self.assertFalse(has_capability(self.plain, CAP_USER_ADMIN), '编辑员不该拿到 USER_ADMIN')
+        # 第 128 批：拿到 CONTENT 不等于"四块全能干"，只等于被勾的那两块
+        self.assertTrue(has_content_module(self.plain, 'news'))
+        self.assertTrue(has_content_module(self.plain, 'pests'))
+        self.assertFalse(has_content_module(self.plain, 'review'), '没勾的模块不能有')
+
+    # ---------- 护栏 1：只有超管 ----------
+    def test_staff_admin_cannot_change_roles(self):
+        """有 USER_ADMIN 能力的 staff 管理员也不行 —— 否则他能造出编辑员"""
+        response = self._post(self.client_staff, self.plain, 'EDITOR')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, 'USER')
+
+    def test_editor_cannot_change_roles(self):
+        """编辑员当然也不能（他没有 USER_ADMIN，会先被权限类拦住）"""
+        response = self._post(self.client_editor, self.plain, 'EDITOR')
+        self.assertIn(response.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_401_UNAUTHORIZED))
+
+    # ---------- 护栏 2：只能在 EDITOR ↔ USER 之间调 ----------
+    def test_cannot_promote_to_admin(self):
+        """不能把人升成系统管理员（只能走 Django admin）"""
+        response = self._post(self.client_super, self.plain, 'ADMIN')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, 'USER')
+
+    def test_cannot_touch_admin_accounts(self):
+        """不能改管理员账号的角色（即使操作者是超管）"""
+        response = self._post(self.client_super, self.staff, 'USER')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.role, 'ADMIN')
+
+    def test_unknown_role_is_rejected(self):
+        """乱传角色：400（不是 500，也不能悄悄改成别的）"""
+        response = self._post(self.client_super, self.plain, 'ROOT')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ---------- 护栏 3：不能改自己 ----------
+    def test_cannot_change_own_role(self):
+        """超管不能把自己降级 —— 否则可能把系统锁死（没人能再改回来）"""
+        response = self._post(self.client_super, self.superuser, 'USER')
+        # 自己那句护栏先命中（400）；即使绕过它，还有"不能动管理员账号"（403）。
+        # 这里要求两者至少命中一条，且库里必须不变。
+        self.assertIn(response.status_code,
+                      (status.HTTP_400_BAD_REQUEST, status.HTTP_403_FORBIDDEN))
+        self.superuser.refresh_from_db()
+        self.assertEqual(self.superuser.role, 'ADMIN')
+        self.assertTrue(self.superuser.is_superuser, '超管身份也不能被顺手改掉')
+
+    def test_role_change_is_logged(self):
+        """变更要留痕（谁把谁从什么改成什么 + 模块清单）—— 这是本接口的"操作日志" """
+        with self.assertLogs('api.views_user', level='INFO') as captured:
+            self._post(self.client_super, self.plain, 'EDITOR', modules=['news', 'feedback'])
+        joined = '\n'.join(captured.output)
+        # 第 128 批：日志里同时要有角色与模块（否则"为什么他有新闻权限"查不出来）
+        self.assertIn('角色', joined)
+        self.assertIn('模块', joined)
+        self.assertIn('news', joined)
+        self.assertIn(self.plain.username, joined)
+
+
+# ============================================================================
+# 第 128 批：内容模块互不干扰（内容审核 / 新闻管理 / 病害百科 / 意见反馈）
+# ============================================================================
+# 第 125 批给编辑员的是一个笼统的 CONTENT："拿到它就能改四块内容"。
+# 第 128 批拆成四个模块，按人授权（`EditorModuleGrant`）。这组测试盯的是
+# **拆分真的生效了** —— 尤其是"只勾了 A 模块的人碰不到 B 模块"，
+# 因为这类错误单看代码很难发现（权限类名字都差不多）。
+# ============================================================================
+class ContentModuleScopeTests(APITestCase):
+    """模块 × 端点：只勾一个模块的编辑员只能干那一块"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_mod_super', password='pw12345678', email='', role='ADMIN',
+        )
+        # 四个"只勾一块"的编辑员
+        self.only_news = User.objects.create_user(
+            username='zz_mod_news', password='pw12345678', role='EDITOR',
+        )
+        self.only_pests = User.objects.create_user(
+            username='zz_mod_pests', password='pw12345678', role='EDITOR',
+        )
+        self.only_review = User.objects.create_user(
+            username='zz_mod_review', password='pw12345678', role='EDITOR',
+        )
+        self.only_feedback = User.objects.create_user(
+            username='zz_mod_feedback', password='pw12345678', role='EDITOR',
+        )
+        for user, module in (
+            (self.only_news, 'news'), (self.only_pests, 'pests'),
+            (self.only_review, 'review'), (self.only_feedback, 'feedback'),
+        ):
+            EditorModuleGrant.objects.create(user=user, module=module, granted_by=self.superuser)
+
+        self.clients = {
+            'news': self._client(self.only_news),
+            'pests': self._client(self.only_pests),
+            'review': self._client(self.only_review),
+            'feedback': self._client(self.only_feedback),
+        }
+
+        # 数据
+        self.pest = PestInfo.objects.create(
+            name='zz模块病', crop_type='玉米', english_identifier='zz_mod_pest', symptoms='x',
+        )
+        self.board = ForumBoard.objects.create(name='zz模块版块', description='x')
+        self.post = Post.objects.create(
+            title='zz模块帖子', content='x', author=self.superuser, board=self.board,
+            status='pending',
+        )
+        self.comment = Comment.objects.create(post=self.post, author=self.superuser, content='x')
+        self.feedback = Feedback.objects.create(
+            user=self.superuser, category='suggestion', suggestion='zz模块反馈',
+        )
+
+    @staticmethod
+    def _client(user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def _expect(self, module, method, url, expected, body=None, note=''):
+        client = self.clients[module]
+        send = getattr(client, method)
+        response = send(url, data=body, format='json') if body is not None else send(url)
+        self.assertEqual(
+            response.status_code, expected,
+            f'{note}｜只勾 {module} 的编辑员 {method.upper()} {url} 期望 {expected}，'
+            f'实际 {response.status_code}｜{getattr(response, "data", "")}',
+        )
+        return response
+
+    # ---------- 各模块：自己那块能做 ----------
+    def test_each_module_can_do_its_own_job(self):
+        """每个"只勾一块"的编辑员，在自己那一块必须能做（否则等于没授权）"""
+        # 新闻管理
+        news = self._expect('news', 'post', '/api/news/', status.HTTP_201_CREATED,
+                            {'title': 'zz模块新闻', 'content': '<p>x</p>', 'category': 'notice'},
+                            note='新闻新增')
+        self._expect('news', 'patch', f"/api/news/{news.data['id']}/", status.HTTP_200_OK,
+                     {'source': '本站'}, note='新闻修改')
+
+        # 病害百科
+        pest = self._expect('pests', 'post', '/api/pests/', status.HTTP_201_CREATED,
+                            {'name': 'zz模块新增', 'crop_type': '玉米',
+                             'english_identifier': 'zz_mod_new', 'symptoms': 'x',
+                             'prevention_methods': []},
+                            note='百科新增')
+        self._expect('pests', 'delete', f"/api/pests/{pest.data['id']}/",
+                     status.HTTP_204_NO_CONTENT, note='百科删除')
+
+        # 内容审核
+        self._expect('review', 'post', f'/api/forums/posts/{self.post.id}/approve/',
+                     status.HTTP_200_OK, note='帖子审核通过')
+        self._expect('review', 'post',
+                     f'/api/forums/posts/{self.post.id}/comments/{self.comment.id}/delete/',
+                     status.HTTP_204_NO_CONTENT, note='评论软删除')
+
+        # 意见反馈
+        listed = self._expect('feedback', 'get', '/api/feedback/', status.HTTP_200_OK,
+                              note='反馈列表')
+        rows = listed.data.get('results', listed.data) if isinstance(listed.data, dict) else listed.data
+        self.assertTrue(any(row.get('id') == self.feedback.id for row in rows),
+                        '反馈编辑员要能看到别人提交的反馈')
+        self._expect('feedback', 'post', f'/api/feedback/{self.feedback.id}/reply/',
+                     status.HTTP_200_OK, {'status': 'resolved', 'admin_reply': '已处理'},
+                     note='反馈回复')
+
+    # ---------- 互不干扰：越界一律 403 ----------
+    def test_modules_do_not_leak_into_each_other(self):
+        """只勾新闻的人，碰不到百科/审核/反馈（反之亦然）—— 这就是"互不干扰" """
+        # 新闻编辑员越界
+        self._expect('news', 'post', '/api/pests/', status.HTTP_403_FORBIDDEN,
+                     {'name': 'x', 'crop_type': '玉米', 'english_identifier': 'zz_leak',
+                      'prevention_methods': []}, note='新闻编辑碰百科')
+        self._expect('news', 'post', f'/api/forums/posts/{self.post.id}/approve/',
+                     status.HTTP_403_FORBIDDEN, note='新闻编辑碰审核')
+        self._expect('news', 'get', '/api/feedback/', status.HTTP_200_OK, note='反馈列表（降级为只看自己）')
+
+        # 百科编辑员越界
+        self._expect('pests', 'post', '/api/news/', status.HTTP_403_FORBIDDEN,
+                     {'title': 'x', 'content': 'y'}, note='百科编辑碰新闻')
+        self._expect('pests', 'post', f'/api/forums/posts/{self.post.id}/reject/',
+                     status.HTTP_403_FORBIDDEN, {'reason': 'x'}, note='百科编辑碰审核')
+
+        # 审核编辑员越界
+        self._expect('review', 'post', '/api/news/', status.HTTP_403_FORBIDDEN,
+                     {'title': 'x', 'content': 'y'}, note='审核编辑碰新闻')
+        self._expect('review', 'post', '/api/pests/', status.HTTP_403_FORBIDDEN,
+                     {'name': 'x', 'crop_type': '玉米', 'english_identifier': 'zz_leak2',
+                      'prevention_methods': []}, note='审核编辑碰百科')
+
+        # 反馈编辑员越界
+        self._expect('feedback', 'post', '/api/news/', status.HTTP_403_FORBIDDEN,
+                     {'title': 'x', 'content': 'y'}, note='反馈编辑碰新闻')
+        self._expect('feedback', 'post', '/api/pests/', status.HTTP_403_FORBIDDEN,
+                     {'name': 'x', 'crop_type': '玉米', 'english_identifier': 'zz_leak3',
+                      'prevention_methods': []}, note='反馈编辑碰百科')
+
+    def test_feedback_module_only_sees_others_when_granted(self):
+        """没有 feedback 模块的人：反馈列表退回"只看自己"（不是 403，是范围收窄）"""
+        response = self._expect('news', 'get', '/api/feedback/', status.HTTP_200_OK)
+        rows = response.data.get('results', response.data) if isinstance(response.data, dict) else response.data
+        self.assertEqual(rows, [], '没有 feedback 模块时不该看到别人的反馈')
+
+    # ---------- 农事任务归「病害百科」----------
+    def test_calendar_tasks_follow_pests_module(self):
+        """农事任务与病害百科同属"给农户看的农业资料"，因此跟 pests 模块走"""
+        self._expect('pests', 'post', '/api/calendar/tasks/', status.HTTP_201_CREATED,
+                     {'crop_type': '玉米', 'month': 6, 'title': 'zz模块农事',
+                      'task_type': 'sowing', 'detail': 'x'}, note='百科编辑建农事任务')
+        self._expect('news', 'post', '/api/calendar/tasks/', status.HTTP_403_FORBIDDEN,
+                     {'crop_type': '玉米', 'month': 6, 'title': 'zz模块农事2',
+                      'task_type': 'sowing', 'detail': 'x'}, note='新闻编辑建农事任务')
+
+    # ---------- 看板：任何编辑员都能看（只读聚合）----------
+    def test_any_module_sees_dashboard_without_user_detail(self):
+        for module in self.clients:
+            response = self._expect(module, 'get', '/api/admin/dashboard/',
+                                    status.HTTP_200_OK, note=f'{module} 编辑员看板')
+            self.assertIn('totals', response.data)
+            self.assertEqual(response.data.get('top_contributors'), [])
+            self.assertFalse(response.data.get('includes_user_detail'))
+
+    # ---------- 能力清单：CONTENT 只表示"至少有一个模块" ----------
+    def test_capabilities_payload_lists_modules(self):
+        check = self._expect('news', 'get', '/api/check-auth/', status.HTTP_200_OK)
+        self.assertEqual(check.data['data']['capabilities'], ['CONTENT'])
+        self.assertEqual(check.data['data']['content_modules'], ['news'])
+
+        admin = self._client(self.superuser).get('/api/check-auth/')
+        self.assertEqual(admin.data['data']['content_modules'],
+                         ['review', 'news', 'pests', 'feedback'])
+        self.assertEqual(admin.data['data']['capabilities'], ['CONTENT', 'USER_ADMIN', 'BROADCAST'])
+
+    # ---------- 全权管理员不受模块表影响 ----------
+    def test_full_admin_has_all_modules_without_grants(self):
+        """管理员不需要（也不该）依赖授权表 —— 表里没他的记录，四个模块照样全有"""
+        self.assertEqual(EditorModuleGrant.objects.filter(user=self.superuser).count(), 0)
+        client = self._client(self.superuser)
+        self.assertEqual(client.post('/api/pests/', {
+            'name': 'zz管理员新增', 'crop_type': '玉米',
+            'english_identifier': 'zz_admin_new', 'prevention_methods': [],
+        }, format='json').status_code, status.HTTP_201_CREATED)
+        self.assertEqual(client.post('/api/news/', {
+            'title': 'zz管理员新闻', 'content': '<p>x</p>',
+        }, format='json').status_code, status.HTTP_201_CREATED)
+
+
+class RoleModuleAssignmentTests(APITestCase):
+    """改角色时一并设置模块（第 128 批扩展）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_rm_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.plain = User.objects.create_user(
+            username='zz_rm_plain', password='pw12345678', role='USER',
+        )
+        self.staff = User.objects.create_user(
+            username='zz_rm_staff', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_staff = APIClient()
+        self.client_staff.force_authenticate(user=self.staff)
+
+    def _post(self, payload, user=None):
+        target = user or self.plain
+        return self.client_super.post(
+            f'/api/admin/users/{target.id}/role/', payload, format='json',
+        )
+
+    def test_promote_with_modules(self):
+        """超管可以一次把角色与模块都设好"""
+        response = self._post({'role': 'EDITOR', 'modules': ['news', 'feedback']})
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['content_modules'], ['news', 'feedback'])
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, 'EDITOR')
+
+        from .capabilities import has_content_module
+        self.assertTrue(has_content_module(self.plain, 'news'))
+        self.assertTrue(has_content_module(self.plain, 'feedback'))
+        self.assertFalse(has_content_module(self.plain, 'pests'))
+
+    def test_modules_can_be_changed_later(self):
+        """先勾两块，后来只留一块：被去掉的那块要真的没了（delete 而不是留着）"""
+        self._post({'role': 'EDITOR', 'modules': ['news', 'pests']})
+        response = self._post({'role': 'EDITOR', 'modules': ['pests']})
+        self.assertEqual(response.data['content_modules'], ['pests'])
+        from .capabilities import has_content_module
+        self.assertFalse(has_content_module(self.plain, 'news'), '去掉的模块必须立刻失效')
+        self.assertEqual(
+            EditorModuleGrant.objects.filter(user=self.plain).count(), 1,
+            '不该留下"影子授权"',
+        )
+
+    def test_editor_without_modules_is_rejected(self):
+        """一个模块都不勾：400（否则他进后台什么也做不了，八成是点漏了）"""
+        response = self._post({'role': 'EDITOR', 'modules': []})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, 'USER')
+
+    def test_unknown_module_is_rejected(self):
+        response = self._post({'role': 'EDITOR', 'modules': ['news', 'root']})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+
+    def test_missing_modules_keeps_existing_grants(self):
+        """不传 modules：保留他已有的授权（只想改角色时不该顺手清空模块）"""
+        self._post({'role': 'EDITOR', 'modules': ['news']})
+        response = self._post({'role': 'EDITOR'})   # 不带 modules
+        self.assertEqual(response.data['content_modules'], ['news'])
+
+    def test_demote_to_user_clears_modules(self):
+        """降级成普通用户：模块授权一并清掉（不留"影子权限"）"""
+        self._post({'role': 'EDITOR', 'modules': ['news', 'pests']})
+        response = self._post({'role': 'USER'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['content_modules'], [])
+        self.assertEqual(EditorModuleGrant.objects.filter(user=self.plain).count(), 0)
+
+    def test_staff_admin_still_cannot_assign_modules(self):
+        """护栏 1 不变：有 USER_ADMIN 能力的 staff 管理员照样不能给自己人开模块"""
+        response = self.client_staff.post(
+            f'/api/admin/users/{self.plain.id}/role/',
+            {'role': 'EDITOR', 'modules': ['news']}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(EditorModuleGrant.objects.filter(user=self.plain).count(), 0)
+
+
+# ============================================================================
+# 第 131 批：在后台开通编辑员账号
+# ============================================================================
+# 在这之前，"新建一个编辑员"必须去 Django admin 建号、再回用户管理勾模块；
+# 而新建出来的账号还得自己想办法设密码。这一组测试盯四件事：
+#   1. 真的能用：开通 → 拿一次性链接走 /password-reset/confirm/ 设密码 → 能登录；
+#   2. **接口全程不经手明文密码**（账号建出来时 set_unusable_password）；
+#   3. 护栏：仅超管、用户名/邮箱校验、至少一个模块；
+#   4. 模块授权真的生效（只有被勾的模块能干活）。
+# ============================================================================
+class AdminUserCreateEditorTests(APITestCase):
+    """开通编辑员账号（第 131 批）"""
+
+    URL = '/api/admin/users/create-editor/'
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_ce_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.staff = User.objects.create_user(
+            username='zz_ce_staff', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.plain = User.objects.create_user(
+            username='zz_ce_plain', password='pw12345678', role='USER',
+            email='taken@example.invalid',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_staff = APIClient()
+        self.client_staff.force_authenticate(user=self.staff)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    def _create(self, client=None, **payload):
+        body = {'username': 'zz_new_editor', 'modules': ['news']}
+        body.update(payload)
+        return (client or self.client_super).post(self.URL, body, format='json')
+
+    # ---------- 正向 ----------
+    def test_superuser_can_create_editor_with_modules(self):
+        response = self._create(email='editor@example.invalid', modules=['news', 'feedback'])
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+
+        User = get_user_model()
+        user = User.objects.get(username='zz_new_editor')
+        self.assertEqual(user.role, 'EDITOR')
+        self.assertFalse(user.is_staff)
+        self.assertTrue(user.is_active)
+
+        from .capabilities import has_content_module
+        self.assertTrue(has_content_module(user, 'news'))
+        self.assertTrue(has_content_module(user, 'feedback'))
+        self.assertFalse(has_content_module(user, 'pests'), '没勾的模块不能有')
+
+        self.assertEqual(response.data['user']['content_modules'], ['news', 'feedback'])
+        self.assertTrue(response.data['has_email'])
+        self.assertIn('reset-password', response.data['url'])
+
+    def test_created_account_has_no_usable_password(self):
+        """接口全程不经手明文密码：建出来的账号根本没有可用密码"""
+        self._create()
+        User = get_user_model()
+        user = User.objects.get(username='zz_new_editor')
+        self.assertFalse(user.has_usable_password(), '不该有任何明文密码生效')
+        # 密码字段必须是"不可用密码"的标记（以 ! 开头），不是空串
+        self.assertTrue(user.password.startswith('!'), f'密码字段是 {user.password!r}')
+
+    def test_one_time_link_actually_works(self):
+        """端到端：开通 → 用返回的链接设新密码 → 能用新密码登录"""
+        response = self._create()
+        url = response.data['url']
+        match = re.search(r'uid=([^&\s]+)&token=([^\s]+)', url)
+        self.assertIsNotNone(match, f'链接里没有 uid/token：{url}')
+        uid, token = match.groups()
+
+        confirm = self.client.post('/api/password-reset/confirm/', {
+            'uid': uid, 'token': token, 'new_password': 'BrandNew!2026',
+        }, format='json')
+        self.assertEqual(confirm.status_code, status.HTTP_200_OK, confirm.data)
+
+        login = APIClient().post('/api/login/', {
+            'username': 'zz_new_editor', 'password': 'BrandNew!2026',
+        }, format='json')
+        self.assertEqual(login.status_code, status.HTTP_200_OK, login.data)
+        self.assertEqual(login.data['data']['user']['role'], 'EDITOR')
+        self.assertEqual(login.data['data']['user']['content_modules'], ['news'])
+
+    def test_link_is_single_use(self):
+        """一次性：改过密码之后同一条链接失效（与自助找回同一套 token 机制）"""
+        response = self._create()
+        uid, token = re.search(r'uid=([^&\s]+)&token=([^\s]+)', response.data['url']).groups()
+        first = self.client.post('/api/password-reset/confirm/', {
+            'uid': uid, 'token': token, 'new_password': 'BrandNew!2026',
+        }, format='json')
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        second = self.client.post('/api/password-reset/confirm/', {
+            'uid': uid, 'token': token, 'new_password': 'Another!2026',
+        }, format='json')
+        self.assertNotEqual(second.status_code, status.HTTP_200_OK, '同一条链接不该能用第二次')
+
+    def test_created_editor_can_do_only_its_module(self):
+        """开通出来的编辑员：被勾的模块能干，别的模块 403（与改角色那条链路一致）"""
+        self._create(username='zz_new_editor2', modules=['pests'])
+        User = get_user_model()
+        user = User.objects.get(username='zz_new_editor2')
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        created = client.post('/api/pests/', {
+            'name': 'zz开通测试病', 'crop_type': '玉米',
+            'english_identifier': 'zz_ce_pest', 'prevention_methods': [],
+        }, format='json')
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+
+        news = client.post('/api/news/', {'title': 'zz开通测试新闻', 'content': '<p>x</p>'},
+                           format='json')
+        self.assertEqual(news.status_code, status.HTTP_403_FORBIDDEN, news.data)
+
+    # ---------- 护栏 ----------
+    def test_only_superuser_can_create_editor(self):
+        """staff 管理员（有 USER_ADMIN 能力）也不行 —— 造编辑员是提权操作"""
+        response = self._create(client=self.client_staff, username='zz_ce_by_staff')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.assertFalse(get_user_model().objects.filter(username='zz_ce_by_staff').exists())
+
+    def test_plain_user_cannot_create_editor(self):
+        response = self._create(client=self.client_plain, username='zz_ce_by_plain')
+        self.assertIn(response.status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_username_rules_enforced(self):
+        """用户名：格式与占用都要挡（复用注册那套校验，避免两处规则不一致）"""
+        for bad, note in (('', '空'), ('ab', '太短'), ('1abc', '数字开头'),
+                          ('a' * 21, '太长'), ('bad name', '有空格')):
+            response = self._create(username=bad)
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST,
+                             f'{note}的用户名应当被拒：{response.data}')
+        # 占用（大小写不敏感）
+        response = self._create(username='zz_ce_plain'.upper())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+
+    def test_email_must_be_unique_when_given(self):
+        response = self._create(username='zz_ce_email', email='taken@example.invalid')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        # 不填邮箱是可以的（编辑员常常没有邮箱）
+        ok = self._create(username='zz_ce_noemail')
+        self.assertEqual(ok.status_code, status.HTTP_201_CREATED, ok.data)
+        self.assertFalse(ok.data['has_email'])
+        self.assertFalse(ok.data['mailed'])
+
+    def test_modules_validated(self):
+        """模块：必须至少一个、且只能是那四个"""
+        empty = self._create(username='zz_ce_nomod', modules=[])
+        self.assertEqual(empty.status_code, status.HTTP_400_BAD_REQUEST, empty.data)
+        self.assertFalse(get_user_model().objects.filter(username='zz_ce_nomod').exists(),
+                         '校验失败不该留下半个账号')
+
+        unknown = self._create(username='zz_ce_badmod', modules=['news', 'root'])
+        self.assertEqual(unknown.status_code, status.HTTP_400_BAD_REQUEST, unknown.data)
+
+        not_list = self._create(username='zz_ce_strmod', modules='news')
+        self.assertEqual(not_list.status_code, status.HTTP_400_BAD_REQUEST, not_list.data)
+
+    def test_change_is_logged(self):
+        with self.assertLogs('api.views_user', level='INFO') as captured:
+            self._create(username='zz_ce_logged', modules=['review'])
+        joined = '\n'.join(captured.output)
+        self.assertIn('开通了编辑员账号', joined)
+        self.assertIn('zz_ce_logged', joined)
+        self.assertIn('内容审核', joined)
+
+
+# ============================================================================
+# 第 135 批：敏感词的英文对照（word_en）
+# ============================================================================
+# 用户反馈"敏感词库切英文没完全翻译"：词条是**被拦截的字面串**，中文词库在英文
+# 界面下就是一串中文，英文管理员看不出每条拦的是什么。于是给每条加一个**只用于显示**
+# 的英文说法（word_en）。
+#
+# 这组测试盯三件事：
+#   1. 接口能读能写 word_en；
+#   2. **它不参与拦截** —— 这条最容易被人"顺手改成也匹配"：word_en 是**描述**
+#      （例如 加微信 → "moving users to WeChat"），拿去匹配英文正文毫无意义；
+#      想拦英文垃圾词应当新增一条英文词条。
+#   3. 第 52 批种下的 13 条默认词库都补上了英文对照（迁移里做的）。
+# ============================================================================
+class SensitiveWordGlossTests(APITestCase):
+    """敏感词英文对照（第 135 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_gloss_admin', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin)
+        SensitiveWord.objects.all().delete()
+        self.word = SensitiveWord.objects.create(
+            word='代开发票', category='ad', word_en='fake invoices',
+        )
+
+    def test_api_exposes_word_en(self):
+        response = self.client_admin.get('/api/sensitive-words/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = next(item for item in response.data if item['word'] == '代开发票')
+        self.assertEqual(row['word_en'], 'fake invoices')
+
+    def test_can_create_with_word_en(self):
+        response = self.client_admin.post('/api/sensitive-words/', {
+            'word': 'zz测试词', 'category': 'other', 'word_en': 'e2e term',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        created = SensitiveWord.objects.get(word='zz测试词')
+        self.assertEqual(created.word_en, 'e2e term')
+        # 空白会被 strip（前端可能传空格）
+        response2 = self.client_admin.post('/api/sensitive-words/', {
+            'word': 'zz测试词2', 'category': 'other', 'word_en': '   ',
+        }, format='json')
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(SensitiveWord.objects.get(word='zz测试词2').word_en, '')
+
+    def test_word_en_is_not_matched(self):
+        """
+        英文对照**只用于显示**，不参与拦截
+
+        ⚠️ 这条是刻意的：word_en 是"这条中文词是什么意思"的**描述**
+        （例：加微信 → "moving users to WeChat"），拿去匹配英文正文没有意义；
+        想拦英文垃圾词，应当**新增一条英文词条**（那样 `word` 就是英文，照常拦）。
+
+        下面两句：第一句含 word_en 的原文 → 不该被拦；
+        第二句含真正的词条（在 word 里）→ 必须被拦。
+        """
+        from rest_framework import serializers
+
+        from .sensitive import check_text, find_sensitive_words
+
+        # 1) 正文里出现 word_en 的内容：不拦
+        self.assertEqual(
+            find_sensitive_words('This post mentions fake invoices and nothing else.'),
+            [],
+            'word_en 是显示用的描述，不该参与匹配',
+        )
+
+        # 2) 出现词条本身：必须拦
+        with self.assertRaises(serializers.ValidationError) as ctx:
+            check_text('加我微信聊：代开发票', field_label='正文')
+        self.assertIn('代开发票', str(ctx.exception))
+
+    def test_english_word_entry_still_blocks(self):
+        """想拦英文垃圾词：把英文作为 `word` 新增一条 —— 照常生效"""
+        from rest_framework import serializers
+
+        from .sensitive import check_text
+
+        SensitiveWord.objects.create(word='casino', category='other', word_en='')
+        with self.assertRaises(serializers.ValidationError):
+            check_text('Join our casino now', field_label='正文')
+
+
+class SeededSensitiveWordGlossTests(TestCase):
+    """
+    第 52 批种下的默认词库都带英文对照（由第 135 批的迁移补上）
+
+    ⚠️ 这个测试类**不清空词表** —— 测试库跑过全部迁移，所以那 13 条种子就在表里；
+    清空它们的是上面那个类（它只测接口行为）。
+    """
+
+    def test_seeded_words_have_gloss(self):
+        seeded = ['代开发票', '办证', '刷单', '兼职刷单', '加微信', '加QQ',
+                  '贷款秒批', '高额返利', '博彩', '赌场', '色情', '枪支', '毒品']
+        missing = [
+            word for word in seeded
+            if not SensitiveWord.objects.filter(word=word).exclude(word_en='').exists()
+        ]
+        self.assertEqual(missing, [], f'这些默认敏感词还缺英文对照：{missing}')

@@ -59,6 +59,12 @@ UserListView = import_view('api.views_user', 'UserListView')
 # 第 76 批：管理端用户管理（用户管理页此前完全缺失）
 AdminUserListView = import_view('api.views_user', 'AdminUserListView')
 AdminUserDetailView = import_view('api.views_user', 'AdminUserDetailView')
+# 第 120 批：管理员给用户签发一次性密码重置链接
+AdminUserResetLinkView = import_view('api.views_user', 'AdminUserResetLinkView')
+# 第 127 批：调整角色（仅超级管理员，且只能在 信息编辑员 ↔ 普通用户 之间调）
+AdminUserRoleView = import_view('api.views_user', 'AdminUserRoleView')
+# 第 131 批：开通编辑员账号（仅超管；无可用密码 + 一次性设置密码链接）
+AdminUserCreateEditorView = import_view('api.views_user', 'AdminUserCreateEditorView')
 UserCommentsView = import_view('api.views_user', 'UserCommentsView')  # 第 25 批：用户的评论列表
 # 第 23 批：用户资料完善（真实头像 + 修改密码）
 UserAvatarView = import_view('api.views_user', 'UserAvatarView')
@@ -318,6 +324,17 @@ api_urlpatterns = [
     # 虽然 "bulk-delete" 不是 int、匹配不上那条规则，但顺序一致更不容易出错。
     # 处理函数在 AdminUserListView.post 里按路径分流（见那里的说明）。
     path('admin/users/bulk-delete/', AdminUserListView.as_view(), name='admin-user-bulk-delete'),
+    # 第 131 批：开通编辑员账号（仅超管；账号无可用密码，返回一次性设置密码链接）。
+    # ⚠️ 必须放在 `<int:user_id>/` 之前 —— 虽然 "create-editor" 不是 int、匹配不上，
+    #    但顺序一致更不容易出错（同 bulk-delete 的约定）。
+    path('admin/users/create-editor/', AdminUserCreateEditorView.as_view(),
+         name='admin-user-create-editor'),
+    # 第 120 批：给某个用户签发一次性密码重置链接（管理员）。
+    # 解决"账号没绑邮箱 → 自助找回密码静默失败 → 管理员忘了密码无路可走"。
+    path('admin/users/<int:user_id>/reset-link/', AdminUserResetLinkView.as_view(),
+         name='admin-user-reset-link'),
+    # 第 127 批：调整角色（仅超级管理员，且只能在 信息编辑员 ↔ 普通用户 之间调）
+    path('admin/users/<int:user_id>/role/', AdminUserRoleView.as_view(), name='admin-user-role'),
     path('admin/users/<int:user_id>/', AdminUserDetailView.as_view(), name='admin-user-detail'),
 
     # 举报（第 41 批）

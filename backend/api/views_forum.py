@@ -50,6 +50,12 @@ from .permissions import (  # 导入自定义权限类
     IsOwnerOrReadOnly, IsModeratorOrReadOnly, IsPostOwnerOrModerator,
     IsCommentOwnerOrPostOwner, IsBoardModerator, CanEditPost, CanDeletePost
 )
+# 第 124 批：能力判定统一收口；第 128 批：内容再分模块
+# （版块管理 = BROADCAST；审核/评论处置/置顶加精 = review 模块）
+from .capabilities import (
+    IsBroadcastManager, CAP_BROADCAST, MODULE_REVIEW,
+    has_capability, has_content_module, is_full_admin,
+)
 
 from .models_forum import ForumBoard, Post, Comment, Like, Favorite  # 导入论坛模型
 from .serializers_forum import (  # 导入论坛序列化器
@@ -66,17 +72,20 @@ logger = logging.getLogger(__name__)  # 日志记录器（配置见 settings.LOG
 
 
 def is_moderator(user):
-    """版主判定：管理员 / role=ADMIN / Moderators 组成员
+    """版主判定：**内容维护者**（CONTENT 能力）或 Moderators 组成员
 
     第 24 批统一：`PostViewSet.perform_create` 原来只认 `is_staff` 与 Moderators 组，
     漏了 `role=ADMIN`（与项目其它处的口径不一致）；置顶/加精的权限判定也复用它。
+
+    第 124/128 批：管理员那部分改为 `has_content_module(user, 'review')`（判定统一收口到
+    `capabilities.py`）。语义不变（今天具备 CONTENT 的正是 is_staff / is_superuser /
+    role=ADMIN），**第 125 批起信息编辑员（EDITOR）也能审核帖子、置顶加精** ——
+    这些正是内容审核工作。Moderators 组那条路径保持原样。
     """
     if not user or not user.is_authenticated:
         return False
     return bool(
-        user.is_staff
-        or user.is_superuser
-        or getattr(user, 'role', None) == 'ADMIN'
+        has_content_module(user, MODULE_REVIEW)
         or user.groups.filter(name='Moderators').exists()
     )
 
@@ -96,10 +105,16 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
         # 基础查询
         queryset = ForumBoard.objects.all()  # 获取所有版块
 
-        # 非管理员只能查看启用的版块
-        if not (self.request.user.is_authenticated and
-                (self.request.user.is_staff or
-                 self.request.user.groups.filter(name='Moderators').exists())):  # 检查用户权限
+        # 版块维护者（BROADCAST 能力）与版主能看到停用的版块；其余人只看启用的。
+        # 第 124 批：管理员那部分改为 has_capability(CAP_BROADCAST)，判定统一收口；
+        # 语义与原来的 is_staff / Moderators 组一致（信息编辑员**不可**管理版块）。
+        user = self.request.user
+        can_see_inactive = bool(
+            user.is_authenticated
+            and (has_capability(user, CAP_BROADCAST)
+                 or user.groups.filter(name='Moderators').exists())
+        )
+        if not can_see_inactive:
             queryset = queryset.filter(is_active=True)  # 只筛选启用的版块
 
         # 按排序字段排序
@@ -109,11 +124,14 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
         # ⚠️ 这个白名单必须覆盖**所有**写操作的自定义 action。
         # 原先漏了 update_order，导致任何登录用户（哪怕 role=USER）都能批量改版块排序
         # （实测：普通用户 POST /forums/boards/update_order/ 返回 200 并真的改了顺序）。
+        #
+        # 第 124 批：`IsAdminUser`（只认 is_staff）换成 `IsBroadcastManager`（BROADCAST 能力）
+        # —— 与用户管理、公告同一口径，且不会把"role=ADMIN 但 is_staff=False"漏掉。
         if self.action in [
             'create', 'update', 'partial_update', 'destroy',
             'set_status', 'update_order',
         ]:  # 检查操作类型
-            self.permission_classes = [permissions.IsAdminUser | IsModeratorOrReadOnly]  # 设置特定权限
+            self.permission_classes = [IsBroadcastManager | IsModeratorOrReadOnly]  # 设置特定权限
         return super().get_permissions()  # 返回父类权限
 
     def perform_create(self, serializer):  # 定义创建操作
@@ -1129,10 +1147,12 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         """软删除评论"""
         comment = self.get_object()
         
-        # 检查用户是否有权限删除评论
-        if not (request.user == comment.author or 
-                request.user.is_staff or 
-                request.user.groups.filter(name='Moderators').exists()):
+        # 检查用户是否有权限删除评论（本人 / 内容维护者 / 版主）
+        # 第 124/128 批：`request.user.is_staff` 改为 review 模块判定
+        # —— 内容审核属于内容事务，第 125 批起信息编辑员也能删违规评论。
+        if not (request.user == comment.author
+                or has_content_module(request.user, MODULE_REVIEW)
+                or request.user.groups.filter(name='Moderators').exists()):
             return Response(
                 {'detail': '您没有权限删除此评论'}, 
                 status=status.HTTP_403_FORBIDDEN
@@ -1155,9 +1175,13 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         return Response(status=status.HTTP_204_NO_CONTENT)
         
     def perform_destroy(self, instance):
-        """硬删除评论（仅限管理员）"""
-        if not (self.request.user.is_staff or 
-                self.request.user.groups.filter(name='Moderators').exists()):
+        """硬删除评论（**不可逆**：仅全权管理员 / 版主）"""
+        # 第 124/128 批：这里刻意**不用** review 模块 ——
+        # 内容编辑（EDITOR）做审核用上面的软删除（内容置为 [已删除]，可追溯），
+        # 而"从库里真的删掉"属于不可逆动作，与"删除意见反馈"同类，只给全权管理员。
+        # （口径：不可逆动作 = is_full_admin()，见 capabilities.py 的说明。）
+        if not (is_full_admin(self.request.user)
+                or self.request.user.groups.filter(name='Moderators').exists()):
             raise PermissionDenied('只有管理员可以硬删除评论')
             
         # 软/硬删除都只需处理评论本身；原代码在此维护不存在的 parent.reply_count

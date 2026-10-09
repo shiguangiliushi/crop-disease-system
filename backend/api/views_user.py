@@ -31,6 +31,13 @@ from django.contrib.auth import logout  # 第 95 批：注销账号时清掉当�
 from django.db.models import Count  # 导入Django的计数聚合函数
 import logging  # 导入日志模块
 
+# 第 124 批：能力口径统一（用户管理 = USER_ADMIN；提权护栏 = is_full_admin）
+# 第 128 批：内容模块授权（改角色时同时勾选"内容审核/新闻管理/病害百科/意见反馈"）
+from .capabilities import (
+    CAP_USER_ADMIN, CONTENT_MODULES, MODULE_LABELS,
+    IsUserAdmin, content_modules_of, has_capability, is_full_admin,
+)
+
 from .serializers import (
     UserProfileSerializer,
     UserPublicProfileSerializer,
@@ -41,6 +48,7 @@ from .serializers import (
 )  # 导入自定义序列化器
 from .serializers_forum import UserCommentSerializer  # 第 25 批：用户评论列表（带"发在哪里"的上下文）
 from .models_forum import Post, Comment, Like  # 导入论坛相关模型
+from .models import EditorModuleGrant  # 第 128 批：编辑员的模块授权（改角色时一起写）
 from rest_framework import filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.generics import ListAPIView
@@ -58,6 +66,44 @@ from .password_policy import MIN_LENGTH as PASSWORD_MIN_LENGTH, validate_passwor
 logger = logging.getLogger(__name__)  # 获取日志记录器
 
 User = get_user_model()  # 获取用户模型
+
+
+# ============================================================================
+# 找回密码：链接与邮件（第 35 批，第 120 批抽出成模块级函数）
+# ----------------------------------------------------------------------------
+# 为什么抽出来：原来这套只在 `PasswordResetRequestView._send_reset_mail` 里，
+# 第 120 批的「管理员生成一次性重置链接」要用**完全一样**的签发方式
+# （uid + default_token_generator），抄一份必然有一天两边不一致
+# （一边改了有效期、另一边没改，就会出现"邮件链接能用、管理员给的链接不能用"）。
+# ============================================================================
+def build_password_reset_url(user):
+    """生成一次性重置链接：{FRONTEND_BASE_URL}/reset-password?uid=..&token=.."""
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    base = getattr(settings, 'FRONTEND_BASE_URL', 'http://127.0.0.1:5173').rstrip('/')
+    return f'{base}/reset-password?uid={uid}&token={token}'
+
+
+def send_password_reset_mail(user):
+    """
+    给用户的注册邮箱发重置邮件。返回 True/False（发不出去只记日志，不抛异常 ——
+    调用方是匿名接口，500 等于告诉攻击者"这个账号存在"）。
+    """
+    reset_url = build_password_reset_url(user)
+    subject = '【作物病害识别系统】重置你的登录密码'
+    body = (
+        f'你好 {user.username}：\n\n'
+        f'我们收到了重置该账号密码的请求。请在 1 小时内打开下面的链接设置新密码：\n\n'
+        f'{reset_url}\n\n'
+        f'如果这不是你本人的操作，忽略本邮件即可，你的密码不会被修改。\n'
+    )
+    try:
+        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=False)
+        logger.info('已发送密码重置邮件: user_id=%s', user.id)
+        return True
+    except Exception:
+        logger.exception('发送密码重置邮件失败: user_id=%s', user.id)
+        return False
 
 
 # ============================================================================
@@ -132,6 +178,11 @@ class PasswordResetRequestView(APIView):
     · 命中账号时给注册邮箱发一封带重置链接的邮件（开发环境用控制台后端，
       邮件正文会直接打印在后端终端里）；
     · 邮件里的链接形如 {FRONTEND_BASE_URL}/reset-password?uid=xx&token=yy（1 小时内有效）。
+
+    ⚠️ 第 120 批：**"没绑邮箱"的账号在这里是静默失败的** ——
+       后端什么都不做，但对外话术完全一致（这是防枚举的代价，见 `post`）。
+       管理端账号大多是超管开通的、常常没绑邮箱，于是"管理员忘了密码"这条路是断的。
+       现在由 `AdminUserResetLinkView` 补上一条**在系统内**能走通的路。
     """
     permission_classes = [permissions.AllowAny]
     throttle_classes = [ScopedRateThrottle]
@@ -151,32 +202,11 @@ class PasswordResetRequestView(APIView):
 
         # 只有"账号存在 + 已绑定邮箱 + 未禁用"才真的发信，但对外话术完全一致
         if user is not None and user.email and user.is_active:
-            self._send_reset_mail(user, request)
+            send_password_reset_mail(user)
         else:
             logger.info('找回密码请求未命中可发信账号: %s', account)
 
         return Response({'status': 'success', 'message': self.GENERIC_MESSAGE})
-
-    def _send_reset_mail(self, user, request):
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
-        base = getattr(settings, 'FRONTEND_BASE_URL', 'http://127.0.0.1:5173').rstrip('/')
-        reset_url = f'{base}/reset-password?uid={uid}&token={token}'
-
-        subject = '【作物病害识别系统】重置你的登录密码'
-        body = (
-            f'你好 {user.username}：\n\n'
-            f'我们收到了重置该账号密码的请求。请在 1 小时内打开下面的链接设置新密码：\n\n'
-            f'{reset_url}\n\n'
-            f'如果这不是你本人的操作，忽略本邮件即可，你的密码不会被修改。\n'
-        )
-
-        try:
-            send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=False)
-            logger.info('已发送密码重置邮件: user_id=%s', user.id)
-        except Exception:
-            # 邮件发不出去不能 500（否则等于告诉攻击者"这个账号存在"），只记日志
-            logger.exception('发送密码重置邮件失败: user_id=%s', user.id)
 
 
 class PasswordResetConfirmView(APIView):
@@ -246,14 +276,18 @@ class UserProfileView(APIView):  # 定义用户资料视图类
 
     @staticmethod
     def _is_self_or_admin(request, target):
+        """
+        本人、或具备 `USER_ADMIN` 能力的账号
+
+        第 124 批：这里管的是"能不能看/改**别人的**资料（含邮箱、最后登录时间）"，
+        与用户管理同一口径 = `USER_ADMIN`（**信息编辑员不可**）。
+        """
         user = getattr(request, 'user', None)
         if not user or not user.is_authenticated:
             return False
         return bool(
             user.id == target.id or
-            user.is_staff or
-            user.is_superuser or
-            getattr(user, 'role', None) == 'ADMIN'
+            has_capability(user, CAP_USER_ADMIN)
         )
 
     def get(self, request, user_id):  # 定义GET请求处理方法
@@ -643,7 +677,7 @@ class UserListView(ListAPIView):
     - 仅管理员可访问
     - 支持按用户名搜索
     """
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsUserAdmin]  # 第 124 批：USER_ADMIN 能力（原为 DRF IsAdminUser，只认 is_staff）
     serializer_class = UserProfileSerializer
     filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ['username', 'email']
@@ -790,7 +824,7 @@ class AdminUserListView(ListAPIView):
       · status ∈ active | disabled | expert | staff
     """
 
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsUserAdmin]  # 第 124 批：USER_ADMIN 能力（原为 DRF IsAdminUser，只认 is_staff）
     serializer_class = AdminUserSerializer
     filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ['username', 'email', 'first_name', 'last_name']
@@ -904,7 +938,7 @@ class AdminUserDetailView(APIView):
       4. **需要显式确认**（`confirm` = 对方用户名）：避免点错行。
     """
 
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsUserAdmin]  # 第 124 批：USER_ADMIN 能力（原为 DRF IsAdminUser，只认 is_staff）
 
     def get(self, request, user_id):
         user = get_object_or_404(_admin_user_queryset(), pk=user_id)
@@ -942,13 +976,395 @@ class AdminUserDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-def _is_elevated_user(user):
-    """是否属于"高权限"（管理员 / 超级管理员 / role=ADMIN）"""
-    return bool(
-        user.is_superuser
-        or user.is_staff
-        or getattr(user, 'role', None) == 'ADMIN'
+# ---------------------------------------------------------------------------
+# 改角色（第 127 批）
+# ---------------------------------------------------------------------------
+#: 可以在管理后台里互相切换的角色（**不含 ADMIN**）
+#: 升成 ADMIN 仍然只能走 Django admin（那里有操作日志）—— 见 views_user.py 顶部的说明：
+#: "改角色：ADMIN/EDITOR 直接决定后台权限，属于提权操作"。
+ASSIGNABLE_ROLES = ('EDITOR', 'USER')
+
+#: 角色 → 中文名（错误提示与日志用；前端有自己的 i18n 文案）
+ROLE_LABELS = {'ADMIN': '系统管理员', 'EDITOR': '信息编辑员', 'USER': '普通用户'}
+
+
+def _normalize_modules(raw):
+    """
+    把前端传来的模块数组整理成合法列表
+
+    返回 `(modules, error)`：`error` 非空表示有非法值（`modules` 此时无意义）。
+    单独抽出来是因为"改角色"与"开通编辑员"两个接口要用**同一套校验** ——
+    抄两份必然有一天两边不一致（第 120 批把"拼链接/发邮件"抽出来也是这个理由）。
+    """
+    if not isinstance(raw, (list, tuple)):
+        return None, 'modules 必须是数组'
+    seen = []
+    for item in raw:
+        module = str(item).strip().lower()
+        if module not in CONTENT_MODULES:
+            return None, f'未知模块：{item}（可选：{" / ".join(CONTENT_MODULES)}）'
+        if module not in seen:
+            seen.append(module)
+    # 固定顺序（前端展示与日志都好读）
+    return [m for m in CONTENT_MODULES if m in seen], None
+
+
+def _grant_modules(target, modules, actor):
+    """
+    把 target 的模块授权设为 `modules`（增删都做，不留"影子授权"）
+
+    为什么用 bulk_create + exclude().delete() 而不是逐条 get_or_create：
+    一次请求最多四条记录，批量写更省事，而且"先删多余、再补缺失"的顺序
+    保证结果**恰好等于** `modules`。
+    """
+    EditorModuleGrant.objects.filter(user=target).exclude(module__in=modules).delete()
+    existing = set(
+        EditorModuleGrant.objects.filter(user=target).values_list('module', flat=True)
     )
+    EditorModuleGrant.objects.bulk_create([
+        EditorModuleGrant(user=target, module=module, granted_by=actor)
+        for module in modules if module not in existing
+    ])
+
+
+class AdminUserCreateEditorView(APIView):
+    """
+    开通一个**信息编辑员**账号（第 131 批）：
+    `POST /api/admin/users/create-editor/`
+        body: `{"username": "farm_editor", "email": "a@b.com", "modules": ["news"]}`
+
+    解决什么：第 127/128 批能在后台"把某个已有账号改成编辑员"，但**新建账号**
+    仍然只能去 Django admin —— 于是"想让同事来维护新闻"要跨两个界面，
+    而且新建出来的账号还得自己想办法设密码。
+
+    这里一次做完三件事：
+      1. 建账号，角色直接是 EDITOR，模块按勾选写入 `EditorModuleGrant`；
+      2. **不设密码**：用 `set_unusable_password()` —— 没有任何明文密码经手
+         （与第 120 批"管理员看不到对方新密码"是同一条原则）；
+      3. 返回一条**一次性设置密码链接**（1 小时有效、改密即失效），
+         超管线下发给本人，本人在 `/reset-password` 自己设密码。
+         账号若填了邮箱，也顺手发一封（`mailed` 如实返回发没发出去）。
+
+    护栏（与改角色同一套，因为"造一个编辑员"与"把别人变成编辑员"是同一类提权）：
+      · **只有超级管理员**；
+      · 用户名必须符合规则且**未被占用**（大小写不敏感）；
+      · 至少给一个内容模块（没有模块的编辑员进后台什么也做不了）；
+      · 邮箱可选，但填了就要合法且未被占用（唯一性在两处校验，避免"注册时说能用、
+        开通时冲突"这类不一致）。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        actor = request.user
+        if not actor.is_superuser:
+            return Response(
+                {'detail': '只有超级管理员可以开通编辑员账号'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        username = (request.data.get('username') or '').strip()
+        email = (request.data.get('email') or '').strip()
+
+        # 用户名：复用注册那套规则（服务端才是权威校验）
+        ok, message = validate_username_format(username)
+        if not ok:
+            return Response({'username': [message]}, status=status.HTTP_400_BAD_REQUEST)
+
+        if email and User.objects.filter(email__iexact=email).exists():
+            return Response({'email': ['该邮箱已被其他账号使用']},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        modules, error = _normalize_modules(request.data.get('modules'))
+        if error:
+            return Response({'modules': [error]}, status=status.HTTP_400_BAD_REQUEST)
+        if not modules:
+            return Response(
+                {'modules': ['至少要给编辑员一个模块（否则他进后台什么也做不了）']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User(username=username, email=email, role='EDITOR')
+        user.set_unusable_password()   # 关键：没有任何明文密码经过接口
+        try:
+            user.save()
+        except IntegrityError:
+            # 并发下的兜底（上面查过一次，但两个请求同时提交仍可能撞唯一约束）
+            return Response({'username': ['该用户名已被占用']},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        _grant_modules(user, modules, actor)
+
+        reset_url = build_password_reset_url(user)
+        mailed = bool(email) and send_password_reset_mail(user)
+
+        logger.info(
+            '超级管理员 %s 开通了编辑员账号 %s(%s)：模块=%s，邮箱=%s',
+            actor.username, user.username, user.id,
+            '、'.join(MODULE_LABELS.get(m, m) for m in modules),
+            email or '无',
+        )
+
+        return Response({
+            'status': 'success',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'content_modules': modules,
+            },
+            'url': reset_url,
+            'expires_in_minutes': 60,
+            'has_email': bool(email),
+            'mailed': mailed,
+            'message': '账号已开通，请把设置密码链接发给本人（1 小时内有效、只能用一次）',
+        }, status=status.HTTP_201_CREATED)
+
+
+class AdminUserRoleView(APIView):
+    """
+    调整某个用户的角色与内容模块：
+    `POST /api/admin/users/<user_id>/role/`
+        body: `{"role": "EDITOR", "modules": ["news", "feedback"]}`
+
+    第 127 批（产品决策 #4）引入"改角色"；**第 128 批**把内容能力拆成四个模块，
+    于是这里同时承担"给编辑员勾选模块"：
+
+        · `role='EDITOR'` + `modules=[...]` → 该账号只在这几个模块里有权限；
+        · `role='USER'` → 顺手清掉他的模块授权（降级要干净，否则下次升回来
+          "凭记忆恢复"容易多给或少给）。
+
+    以前后台**故意不提供**改角色（第 95 批："改角色属于提权操作，请走 Django admin"）。
+    引入编辑员之后这成了日常操作，于是按下面四条护栏在系统内开一个**窄口子**：
+
+      1. **只有超级管理员**能改（`is_superuser`）—— 不是"有 USER_ADMIN 能力就行"：
+         否则一个 staff 管理员就能造出编辑员，而编辑员能改全站内容；
+      2. **只能改 EDITOR ↔ USER**：`ADMIN` 既不能作为目标、也不能作为结果
+         （想把谁升成管理员，请走 Django admin）；
+      3. **不能改自己**：避免"把自己降成 USER 之后再没人能改回来"这类锁死；
+      4. 目标必须是**普通账号**（不能动 `is_staff` / `is_superuser` 的人）。
+
+    每次变更都写一条 info 日志（谁、把谁、从什么改成什么 + 模块清单）——
+    这是本接口的"操作日志"。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        actor = request.user
+        target = get_object_or_404(_admin_user_queryset(), pk=user_id)
+
+        # 护栏 1：只有超级管理员
+        if not actor.is_superuser:
+            return Response(
+                {'detail': '只有超级管理员可以调整角色'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        new_role = (request.data.get('role') or '').strip().upper()
+        if new_role not in ASSIGNABLE_ROLES:
+            return Response(
+                {'role': [f'只能改成：{" / ".join(ROLE_LABELS[r] for r in ASSIGNABLE_ROLES)}'
+                          f'（升为管理员请走 Django admin）']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 模块清单（第 128 批）：只有编辑员需要；给普通用户传了也忽略（降级要干净）
+        raw_modules = request.data.get('modules')
+        modules = []
+        if new_role == 'EDITOR':
+            if raw_modules is None:
+                # 没传 modules：保留他**已有**的授权（改角色不该顺手清空模块）
+                modules = content_modules_of(target)
+            else:
+                # 与"开通编辑员"共用同一套模块校验（见 _normalize_modules 的说明）
+                modules, error = _normalize_modules(raw_modules)
+                if error:
+                    return Response({'modules': [error]},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+            if not modules:
+                # 一个模块都不勾的编辑员进不了后台（侧栏空），几乎肯定是点漏了
+                return Response(
+                    {'modules': ['至少要给编辑员一个模块（否则他进后台什么也做不了）']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # 护栏 3：不能改自己
+        if target.id == actor.id:
+            return Response(
+                {'detail': '不能修改自己的角色'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 护栏 4 + 2：目标本身不能是高权限账号；ADMIN 也不能被改
+        if _is_elevated_user(target) or target.role == 'ADMIN':
+            return Response(
+                {'detail': f'{ROLE_LABELS["ADMIN"]}账号的角色不能在这里调整（请走 Django admin）'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if target.role not in ASSIGNABLE_ROLES:
+            return Response(
+                {'detail': '该账号的角色不在可调整范围内'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_role = target.role
+        old_modules = content_modules_of(target)
+        role_changed = old_role != new_role
+        modules_changed = new_role == 'EDITOR' and sorted(modules) != sorted(old_modules)
+
+        if not role_changed and not modules_changed:
+            # 幂等：什么都没变就直接回当前状态（不写日志，免得日志里全是重复项）
+            return Response({
+                'id': target.id, 'role': target.role,
+                'content_modules': old_modules, 'changed': False,
+            })
+
+        if role_changed:
+            target.role = new_role
+            target.save(update_fields=['role'])
+
+        # 模块授权：编辑员按勾选写表；降级成普通用户则清空（不留"影子权限"）
+        if new_role == 'EDITOR':
+            _grant_modules(target, modules, actor)
+        else:
+            EditorModuleGrant.objects.filter(user=target).delete()
+
+        logger.info(
+            '超级管理员 %s 调整了用户 %s(%s)：角色 %s → %s；模块 %s → %s',
+            actor.username, target.username, target.id,
+            ROLE_LABELS.get(old_role, old_role), ROLE_LABELS.get(new_role, new_role),
+            old_modules or '无', content_modules_of(target) or '无',
+        )
+
+        # 改了角色/模块之后，对方**当前浏览器里的能力清单还是旧的**（能力随登录响应下发，
+        # 存在本地存储里）。这里给一条站内通知，提醒他重新登录才会生效 ——
+        # 试图热更新别人的会话是做不到的（那是另一个浏览器）。
+        try:
+            from .views_notify import notify
+            if new_role == 'EDITOR':
+                module_text = '、'.join(MODULE_LABELS[m] for m in content_modules_of(target))
+                message = f'你现在是「信息编辑员」，可以管理：{module_text}。重新登录后生效。'
+                message_en = (f'You are now an editor for: {", ".join(content_modules_of(target))}. '
+                              f'Sign in again to apply.')
+            else:
+                message = '你的账号已改回普通用户。重新登录后生效。'
+                message_en = 'Your account is a regular user again. Sign in again to apply.'
+            notify(
+                target, type='system',
+                title='你的账号权限已更新',
+                title_en='Your permissions have been updated',
+                message=message, message_en=message_en,
+            )
+        except Exception:  # noqa: BLE001 —— 通知失败不该让改角色失败
+            logger.exception('角色变更通知发送失败 user=%s', target.id)
+
+        return Response({
+            'id': target.id,
+            'username': target.username,
+            'role': target.role,
+            'content_modules': content_modules_of(target),
+            'changed': True,
+            'detail': '权限已更新，对方重新登录后生效',
+        })
+
+
+def _is_elevated_user(user):
+    """
+    是否属于"高权限"（管理员 / 超级管理员 / role=ADMIN）
+
+    第 124 批：改为复用 `capabilities.is_full_admin()` —— 它是**提权护栏**用的判定
+    （例如"只有超级管理员能给管理员账号签发重置链接"），语义是"这个人本身权限就很高"，
+    因此必须用"全权管理员"而不是能力。
+
+    ⚠️ 注意：信息编辑员（EDITOR）**不算**高权限 —— 否则一个编辑员就能去改
+    另一个编辑员的密码，而这条护栏的本意是"别让低权限的人动高权限账号"。
+    """
+    return is_full_admin(user)
+
+
+class AdminUserResetLinkView(APIView):
+    """
+    给某个用户生成**一次性密码重置链接**（第 120 批）
+
+        POST /api/admin/users/{user_id}/reset-link/   —— 仅管理员
+
+    ---------------------------------------------------------------------------
+    为什么需要它（这是本批要解决的真正问题）
+    ---------------------------------------------------------------------------
+    自助找回密码（`/api/password-reset/`）只在"账号**绑了邮箱**"时才真的发信；
+    没绑邮箱时后端按防枚举策略**静默什么都不做**，而页面照样显示"重置邮件已发送"。
+    管理端账号大多是超管在后台开通的、常常没绑邮箱 —— 于是"管理员忘了密码"
+    这条路是断的，而且断得**没有声音**。
+
+    这里给一条**在系统内**就能走通的路：管理员生成一条一次性链接，通过
+    微信/电话等线下渠道发给本人；本人在 `/reset-password` 自己设新密码
+    （复用第 35 批就有的 `PasswordResetConfirmView`，不新建确认流程）。
+
+    安全性（每条都对应一种滥用方式）：
+      · 仅管理员（`IsAdminUser`）；
+      · 链接复用 Django `default_token_generator`：**1 小时有效、改过密码即失效**、
+        与用户当前的密码哈希绑定（换密码后旧链接自动作废）；
+      · 接口**不返回也不能设置明文密码** —— 管理员全程看不到对方的密码，
+        这与"直接设一个临时密码"有本质区别（后者等于把口令告诉了别人）；
+      · **不能给权限不低于自己的人签发**（护栏与删除一致，见 `_check_reset_allowed`）：
+        否则一个只有 staff 的管理员就能生成超管的重置链接、把超管顶掉 ——
+        这是提权，不是"找回密码"；
+      · 已停用/已注销的账号不签发（先恢复账号再说）。
+    """
+
+    permission_classes = [IsUserAdmin]  # 第 124 批：USER_ADMIN 能力（原为 DRF IsAdminUser，只认 is_staff）
+
+    def post(self, request, user_id):
+        target = get_object_or_404(User, pk=user_id)
+        actor = request.user
+
+        blocked = _check_reset_allowed(actor, target)
+        if blocked:
+            code = (status.HTTP_403_FORBIDDEN if '权限不低于' in blocked
+                    else status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': blocked}, status=code)
+
+        url = build_password_reset_url(target)
+
+        # 顺手给绑了邮箱的账号也发一封（能发就发；发不出去不影响返回的链接）
+        mailed = bool(target.email) and send_password_reset_mail(target)
+
+        logger.info(
+            '管理员 %s 为用户 %s 生成了密码重置链接（mailed=%s）',
+            actor.username, target.id, mailed,
+        )
+        return Response({
+            'status': 'success',
+            'username': target.username,
+            'url': url,
+            'expires_in_minutes': 60,
+            'has_email': bool(target.email),
+            'mailed': mailed,
+            'message': '链接 1 小时内有效，且只能用一次（对方设置新密码后即失效）。',
+        })
+
+
+def _check_reset_allowed(actor, target):
+    """
+    签发密码重置链接的护栏（第 120 批）
+
+    返回空串表示允许，否则返回拒绝原因。
+
+    ⚠️ 为什么必须有"权限不低于自己"这条：重置链接等于**账号控制权**。
+       没有这条护栏的话，一个只有 `is_staff` 的管理员可以给超级管理员生成链接、
+       打开链接把超管密码改掉 —— 这就是一条从"普通管理员"到"超级管理员"的提权路径。
+       删除用户的护栏（`_check_delete_allowed`）早就有这一条，两边口径保持一致。
+    """
+    if target.id == actor.id:
+        return ''   # 自己的账号：随便（本来就登着）
+    if not target.is_active:
+        return '该账号已停用或已注销，请先恢复账号再重置密码'
+    if _is_elevated_user(target) and not actor.is_superuser:
+        return '不能为权限不低于你的账号签发重置链接（只有超级管理员可以）'
+    return ''
 
 
 def _check_delete_allowed(actor, target):

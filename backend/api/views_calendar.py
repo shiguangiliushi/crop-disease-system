@@ -14,6 +14,8 @@ import logging
 
 from django.db.models import Count, Q
 from rest_framework import permissions, status
+# 第 124 批：统一的能力判定（本文件原来自己抄了一份管理员判定）
+from .capabilities import MODULE_PESTS, has_content_module
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -48,12 +50,14 @@ def _source_key(source):
     return SOURCE_KEYS.get(source, 'custom')
 
 
-def _is_admin(user):
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN')
-    )
+def _can_manage_calendar(user):
+    """
+    能否维护农事任务（`CONTENT` 能力：内容生产）
+
+    第 124 批：判定统一收口到 `capabilities.py`（此前这里自己抄了一份管理员判定）。
+    任务内容是给农户看的种植建议，属于内容维护 —— 第 125 批起信息编辑员（EDITOR）也能改。
+    """
+    return has_content_module(user, MODULE_PESTS)
 
 
 def _serialize_task(task):
@@ -246,7 +250,7 @@ class CalendarTaskListView(APIView):
         })
 
     def post(self, request):
-        if not _is_admin(request.user):
+        if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
 
         data = request.data
@@ -290,7 +294,7 @@ class CalendarTaskDetailView(APIView):
         return CalendarTask.objects.filter(pk=pk).first()
 
     def patch(self, request, pk):
-        if not _is_admin(request.user):
+        if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
         task = self._get(pk)
         if not task:
@@ -320,7 +324,7 @@ class CalendarTaskDetailView(APIView):
         return Response(_serialize_task(task))
 
     def delete(self, request, pk):
-        if not _is_admin(request.user):
+        if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
         task = self._get(pk)
         if not task:

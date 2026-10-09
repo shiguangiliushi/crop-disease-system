@@ -20,6 +20,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import permissions, viewsets
+# 第 124 批：能力判定统一收口（公告 = BROADCAST，信息编辑员不可）
+from .capabilities import CAP_BROADCAST, IsBroadcastManager, has_capability
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -107,22 +109,26 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     """
     系统公告
 
-    · 读取：所有人（只返回生效中的公告；管理员可带 `?all=1` 看全部含过期/停用）
-    · 写入：仅管理员
+    · 读取：所有人（只返回生效中的公告；有 BROADCAST 能力的账号可带 `?all=1` 看全部含过期/停用）
+    · 写入：仅具备 BROADCAST 能力的账号
+
+    第 124 批：判定统一收口到 `capabilities.py`（这里原来用 DRF 自带的 `IsAdminUser`，
+    它**只认 is_staff** —— 于是 `role=ADMIN` 但 `is_staff=False` 的账号在列表里
+    是"管理员"、却发不了公告）。**信息编辑员（EDITOR）不可**：公告是对全体发声。
     """
     serializer_class = AnnouncementSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_permissions(self):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            return [permissions.IsAdminUser()]
+            return [IsBroadcastManager()]
         return [permissions.AllowAny()]
 
     def get_queryset(self):
         queryset = Announcement.objects.select_related('created_by')
         user = self.request.user
         want_all = (self.request.query_params.get('all') or '').strip().lower() in ('1', 'true', 'yes')
-        if want_all and user.is_authenticated and (user.is_staff or user.is_superuser):
+        if want_all and has_capability(user, CAP_BROADCAST):
             return queryset
         return queryset.filter(is_active=True).filter(VISIBLE_ANNOUNCEMENT_Q)
 

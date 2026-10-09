@@ -5,6 +5,8 @@ from django.db.models import Q
 import logging
 
 from .models import DetectionHistory
+# 第 124 批：能力判定统一收口（"看别人的识别记录" = USER_ADMIN）
+from .capabilities import CAP_USER_ADMIN, has_capability
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,11 @@ class DetectionPestTypesView(APIView):
             queryset = DetectionHistory.objects.all()
             
             # 应用权限过滤
-            if not (request.user.is_staff or request.user.is_superuser):
+            #
+            # 第 124 批：这里管的是"能不能统计**别人的**识别记录"，
+            # 因此跟识别记录列表同一口径 = `USER_ADMIN` 能力（**信息编辑员不可**）。
+            # 原写法是 `is_staff or is_superuser`（漏了 role=ADMIN），已随口径统一修掉。
+            if not has_capability(request.user, CAP_USER_ADMIN):
                 queryset = queryset.filter(user=request.user)
             
             # 应用搜索条件

@@ -16,6 +16,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions
+# 第 124 批：统一的能力判定（本文件原来自己抄了一份管理员判定）
+from .capabilities import CAP_BROADCAST, has_capability
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -39,12 +41,15 @@ SOURCE_NOTE_EN = ('Alerts are derived from diagnosis records on this site '
                   'no external weather data is used.')
 
 
-def _is_admin(user):
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN')
-    )
+def _can_push_alerts(user):
+    """
+    能否推送预警（`BROADCAST` 能力：对全体用户发声）
+
+    第 124 批：判定统一收口到 `capabilities.py`（此前这里自己抄了一份
+    `is_staff or is_superuser or role=='ADMIN'`）。**信息编辑员（EDITOR）不可** ——
+    预警是对全体发声，误发的代价远大于改错一条词条。
+    """
+    return has_capability(user, CAP_BROADCAST)
 
 
 class AlertListView(APIView):
@@ -94,7 +99,7 @@ class AlertNotifyView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        if not _is_admin(request.user):
+        if not _can_push_alerts(request.user):
             return Response({'detail': '只有管理员可以推送预警'}, status=403)
 
         alerts = compute_alerts(user=None)

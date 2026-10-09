@@ -21,7 +21,8 @@
 兜住并打到 stderr），表现成"明明该有的记录却没了" + 一屏报错。
 
 **做法**：轮转时**重试**；实在轮不动就退化成"继续追加原文件"，
-**绝不因为轮转失败而丢日志**。
+**绝不因为轮转失败而丢日志**；并且失败后**进入冷却窗口**，
+避免"注定失败"的环境下每条日志都白等一次重试窗口（第 118 批补，见 `shouldRollover`）。
 
 为什么不用 `concurrent-log-handler` 这个现成包：它确实能解决，
 但为这一个功能引入第三方依赖（以及它的供应链风险）不划算 ——
@@ -41,6 +42,12 @@ from logging.handlers import RotatingFileHandler
 DEFAULT_RETRY_SECONDS = 1.0
 RETRY_INTERVAL = 0.05
 
+#: 轮转失败后的**冷却窗口**（秒，第 118 批）。
+#: 为什么必须有它：见 `doRollover` 末尾的说明 —— 没有冷却时，
+#: "轮转注定失败"的环境下**每条日志**都要等满重试窗口，把整个服务拖垮。
+#: 同样是类属性，测试可注入。
+DEFAULT_COOLDOWN_SECONDS = 30.0
+
 
 class SafeRotatingFileHandler(RotatingFileHandler):
     """
@@ -50,13 +57,40 @@ class SafeRotatingFileHandler(RotatingFileHandler):
       · 优先正常轮转（与父类完全一致）；
       · 抢不到文件（`PermissionError` / `OSError`）时**重试**约 1 秒 ——
         多数情况下别的进程几十毫秒内就写完了；
-      · 最终还是失败就**放弃这次轮转、继续往原文件追加**。
+      · 最终还是失败就**放弃这次轮转、继续往原文件追加**，
+        并**进入冷却窗口**（`cooldown_seconds`，默认 30 秒）：
+        冷却期内不再尝试轮转，日志照常追加（见 `shouldRollover`）。
         单文件会短暂超过 `maxBytes`，但那远好过丢日志 ——
         排查问题时"少了一条日志"比"文件大了 2MB"严重得多。
     """
 
     #: 重试窗口（秒）。测试里会调成 0，见模块顶部说明。
     retry_seconds = DEFAULT_RETRY_SECONDS
+    #: 轮转失败后的冷却窗口（秒）。测试里会调小。
+    cooldown_seconds = DEFAULT_COOLDOWN_SECONDS
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: 冷却截止时间戳（0 = 未冷却）
+        self._rollover_blocked_until = 0.0
+
+    def shouldRollover(self, record):  # noqa: D102  （父类方法，说明见类 docstring）
+        """
+        冷却期内**直接回答"不用轮转"**。
+
+        ⚠️ 第 118 批补这一步的原因（真实现象）：
+          轮转失败后文件仍然超过 `maxBytes`，于是**下一条日志**又会走到
+          `doRollover()` 里等满重试窗口 —— 只要环境里"文件一直被别的进程占着"
+          （本项目 dev server 就是：`runserver` 的父进程与自动重载子进程同时打开
+          `logs/debug.log`，rename 永远失败），代价就从"偶发 1 秒"变成
+          **每条日志 1 秒**。实测：`debug.log` 涨到 10.2MB 之后，
+          一个请求要打十来条日志 → `/api/health/` 从几十毫秒变成 **9~12 秒**，
+          E2E 全线假红（用例超时时浏览器还掐掉在途请求，日志里留下 Broken pipe）。
+          把"尝试轮转"限制成"每冷却窗口最多一次"，日志一条不丢，服务恢复速度正常。
+        """
+        if time.time() < self._rollover_blocked_until:
+            return False
+        return super().shouldRollover(record)
 
     def doRollover(self):  # noqa: D102  （父类方法，说明见类 docstring）
         deadline = time.time() + self.retry_seconds
@@ -65,17 +99,22 @@ class SafeRotatingFileHandler(RotatingFileHandler):
             attempt += 1
             try:
                 super().doRollover()
+                # 轮转成功 → 解除冷却
+                self._rollover_blocked_until = 0.0
                 if attempt > 1:
                     # 重试成功也留痕：频繁重试说明有并发写入，值得知道
                     self._note(f'日志轮转在第 {attempt} 次尝试后成功')
                 return
             except (PermissionError, OSError) as exc:
                 if time.time() >= deadline:
-                    # 放弃轮转：把流重新指向原文件，保证后续日志继续落盘
+                    # 放弃轮转：把流重新指向原文件，保证后续日志继续落盘，
+                    # 并在接下来的 cooldown_seconds 内不再尝试（见 shouldRollover）
                     self._reopen()
+                    self._rollover_blocked_until = time.time() + self.cooldown_seconds
                     self._note(
                         f'日志轮转失败（{attempt} 次尝试，最后一次：{exc}）—— '
-                        '本次跳过轮转，继续写入原文件以免丢日志'
+                        f'本次跳过轮转并冷却 {self.cooldown_seconds:g} 秒，'
+                        '期间继续写入原文件以免丢日志'
                     )
                     return
                 time.sleep(RETRY_INTERVAL)

@@ -16,8 +16,11 @@ import logging
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
+from django.db.models import Q  # 第 124 批：举报通知收件人按完整管理员口径筛
 from django.utils import timezone
 from rest_framework import permissions, status
+# 第 124 批：口径统一收口（举报处理未列入 EDITOR 矩阵 → 仍用"全权管理员"）
+from .capabilities import is_full_admin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -28,12 +31,20 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-def _is_admin(user):
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN')
-    )
+def _can_handle_reports(user):
+    """
+    能否查看/处理举报（**全权管理员**）
+
+    第 124 批定稿：举报处理**没有**列入"信息编辑员（EDITOR）"的能力矩阵
+    （矩阵里的"内容审核"指的是帖子/评论审核）。而举报回包里带 `reporter.username`、
+    `handler_name`、`target_user_id` —— 能直接定位到人，属于"他人数据"；
+    `hide_content=true` 还会下架内容。
+
+    因此遵循本批原则「**未列入矩阵的动作一律维持全权管理员**」：用 `is_full_admin()`
+    （EDITOR 不可）。若将来要让编辑员处理举报，把它换成
+    `has_capability(user, CAP_CONTENT)` 即可，但要同时确认上面那些字段是否该给编辑员看。
+    """
+    return is_full_admin(user)
 
 
 def _serialize(report, request=None):
@@ -72,7 +83,7 @@ class ReportViewSet(APIView):
     def get(self, request):
         queryset = Report.objects.select_related('reporter', 'handler', 'post', 'comment', 'target_user')
 
-        if _is_admin(request.user):
+        if _can_handle_reports(request.user):
             status_param = (request.query_params.get('status') or '').strip()
             if status_param in {choice[0] for choice in Report.STATUS_CHOICES}:
                 queryset = queryset.filter(status=status_param)
@@ -93,7 +104,7 @@ class ReportViewSet(APIView):
         start = (page - 1) * page_size
         rows = queryset[start:start + page_size]
 
-        pending = queryset.filter(status='pending').count() if _is_admin(request.user) else 0
+        pending = queryset.filter(status='pending').count() if _can_handle_reports(request.user) else 0
         return Response({
             'count': total,
             'pending': pending,
@@ -169,7 +180,7 @@ class ReportViewSet(APIView):
     def _notify_admins(self, report):
         try:
             from .views_notify import notify
-            for admin in User.objects.filter(is_staff=True, is_active=True):
+            for admin in User.objects.filter(is_active=True).filter(Q(is_staff=True) | Q(is_superuser=True) | Q(role='ADMIN')):
                 notify(
                     admin,
                     type='system',
@@ -193,7 +204,7 @@ class ReportHandleView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        if not _is_admin(request.user):
+        if not _can_handle_reports(request.user):
             return Response({'detail': '只有管理员可以处理举报'}, status=status.HTTP_403_FORBIDDEN)
 
         report = Report.objects.filter(pk=pk).select_related('reporter', 'post', 'comment').first()

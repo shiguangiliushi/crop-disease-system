@@ -105,6 +105,12 @@ from .models import (
 )
 from .pagination import CustomPagination
 from .permissions import IsAdminOrReadOnly
+# 第 124 批：能力口径统一收口（本站原来同一个判定抄了 16 处）
+from .capabilities import (
+    CAP_USER_ADMIN, IsFeedbackEditor, MODULE_FEEDBACK, capabilities_of, content_modules_of,
+    has_content_module,
+    has_capability, is_full_admin,
+)
 from .image_validation import ImageValidationError, validate_image_upload  # 第 91 批：图片上传校验
 from .services_content_i18n import pest_en_maps  # 第 77 批：聚合接口的中英对照
 from . import serializers
@@ -202,12 +208,14 @@ class StatisticsView(APIView):
             # 原来这里的判定是 `is_staff or is_superuser`（漏了 role=ADMIN），
             # 且**完全忽略 all_users 参数** —— 结果是管理员无论看哪个页面拿到的都是
             # 全部用户的统计，跟列表范围对不上（"列表只有我的、图表是所有人"）。
-            is_admin_user = bool(
-                user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN'
-            )
+            #
+            # 第 124 批：改用 `USER_ADMIN` 能力（"能不能看**别人**的数据"），
+            # 并且与下面 `feedback_stats` 的第二处判定**必须是同一个口径** ——
+            # 否则会出现"识别统计是全站、反馈统计只有我"的错位。
+            can_see_all_users = has_capability(user, CAP_USER_ADMIN)
             all_users = request.query_params.get('all_users') == 'true'
 
-            if is_admin_user and all_users:
+            if can_see_all_users and all_users:
                 # 管理员查看所有用户数据
                 user_filter = {}
                 user_count = CustomUser.objects.count()
@@ -341,8 +349,7 @@ class StatisticsView(APIView):
 
             # 5. 反馈统计（数据来自独立的 Feedback 模型，is_correct=True 记为正向反馈）
             feedback_queryset = Feedback.objects.all()
-            if not (request.user.is_staff or request.user.is_superuser or
-                    getattr(request.user, 'role', None) == 'ADMIN'):
+            if not can_see_all_users:
                 feedback_queryset = feedback_queryset.filter(user=request.user)
 
             feedback_total = feedback_queryset.count()
@@ -389,7 +396,7 @@ class StatisticsView(APIView):
                 'detections_this_month': detections_this_month,
                 'today_detections': today_detections,
                 'total_users': user_count,
-                'is_admin': user.is_staff or user.is_superuser
+                'is_admin': can_see_all_users
             }
 
             # 记录详细的调试信息
@@ -434,6 +441,11 @@ class CheckAuthView(APIView):
                 'role': getattr(user, 'role', 'USER'),
                 # 第 23 批：与登录响应保持一致，带上头像地址
                 'avatar': serializers._user_avatar_url(user, request),
+                # 第 124 批：能力清单（前端据此显示后台菜单与按钮；
+                # 真正的边界始终在后端 —— 前端只负责"别把做不到的东西画出来"）
+                'capabilities': capabilities_of(user),
+                # 第 128 批：内容模块清单（内容侧**按模块**显示：勾了新闻才给新闻管理）
+                'content_modules': content_modules_of(user),
             }
         })
 
@@ -694,6 +706,13 @@ class LoginView(APIView):
                         # 而后端其实是允许的）。
                         # role 本身不是敏感信息（/api/users/{id}/ 与 check-auth 都已公开返回）。
                         'role': getattr(user, 'role', 'USER'),
+                        # 第 124 批：能力清单（键名与 /api/check-auth/ 一致）。
+                        # 前端 `stores/auth.js` 用它决定"能不能进管理后台、菜单显示哪几项"，
+                        # 而不是自己拿 is_staff/role 推 —— 口径只有后端一份（capabilities.py）。
+                        'capabilities': capabilities_of(user),
+                        # 第 128 批：内容模块（"内容审核/新闻管理/病害百科/意见反馈"里
+                        # 这个人被授权了哪几块）
+                        'content_modules': content_modules_of(user),
                     },
                     'token': token.key
                 }
@@ -1121,7 +1140,8 @@ class FeedbackView(viewsets.ModelViewSet):
         queryset = Feedback.objects.select_related('user')
 
         # 普通用户只能看到自己的反馈
-        if not (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN'):
+        # 第 128 批：反馈列表按 feedback 模块收口（勾了新闻的人不该看到全部反馈）
+        if not has_content_module(user, MODULE_FEEDBACK):
             queryset = queryset.filter(user=user)
 
         # 支持按"识别是否正确"筛选（识别结果反馈用）
@@ -1164,16 +1184,43 @@ class FeedbackView(viewsets.ModelViewSet):
         """
         设置权限：
         - 普通用户：查看（仅自己的）/ 创建 / 撤回（删除）自己的
-        - 管理员：全部操作
+        - 内容维护者（CONTENT）：查看全部 / 回复 / 批量流转
+        - 删除**别人的**反馈：仅全权管理员（见下面的 destroy 守卫）
 
         说明：删除不再强制管理员 —— `get_queryset` 对普通用户只返回自己的记录，
         所以 `destroy` 别人 id 时自然 404，允许用户"撤回"自己的反馈是安全的。
+
+        ⚠️ 第 124 批补充（产品决策 #3）：**信息编辑员（EDITOR）可以看、可以回复，
+        但不能删除别人的反馈** —— 这是一条**新增**的护栏，因为在此之前
+        "能不能删别人的反馈"完全由 `get_queryset` 的范围决定：
+        管理员能看到全部反馈，于是顺带就能删任何人的。第 125 批 EDITOR 一旦拿到
+        "看全部反馈"，就会连"删任何人的反馈"一起拿到，所以必须在 destroy 上显式收紧。
         """
         if self.action in ['list', 'retrieve', 'create', 'destroy']:
             permission_classes = [permissions.IsAuthenticated]
         else:
-            permission_classes = [permissions.IsAdminUser]
+            permission_classes = [IsFeedbackEditor]  # 第 128 批：feedback 模块（原为笼统的 CONTENT）
         return [permission() for permission in permission_classes]
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        删除反馈
+
+        · 自己的反馈：随时可撤回（任何人）
+        · **别人的**反馈：只有全权管理员（`is_full_admin`）可以删
+
+        为什么单独写一个 destroy：见 `get_permissions` 的说明 —— 原来的约束全靠
+        queryset 范围，对"能看到全部反馈的人"等于没有约束。这里把两种情形分开判断，
+        让"撤回自己的"和"删别人的"即使都能走到同一个对象，也有不同门槛。
+        """
+        instance = self.get_object()
+        if instance.user_id != request.user.id and not is_full_admin(request.user):
+            return Response(
+                {'detail': '只有管理员可以删除其他用户的反馈'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def perform_create(self, serializer):
         # 第 38 批：反馈内容也过一遍敏感词（含"识别纠错"里带过来的文本）
@@ -1199,7 +1246,7 @@ class FeedbackView(viewsets.ModelViewSet):
         serializer.save(user=self.request.user, **extra)
 
     @action(detail=False, methods=['post'], url_path='bulk-status',
-            permission_classes=[permissions.IsAdminUser])
+            permission_classes=[IsFeedbackEditor])
     def bulk_status(self, request):
         """
         批量流转处理状态（第 100 批，仅管理员）
@@ -1288,7 +1335,7 @@ class FeedbackView(viewsets.ModelViewSet):
             'results': results,
         })
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    @action(detail=True, methods=['post'], permission_classes=[IsFeedbackEditor])
     def reply(self, request, pk=None):
         """
         管理员回复 / 流转处理状态（第 27 批新增）
@@ -1418,7 +1465,7 @@ class DetectionHistoryDetailView(RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff or user.is_superuser:
+        if has_capability(user, CAP_USER_ADMIN):
             return DetectionHistory.objects.all()
         return DetectionHistory.objects.filter(user=user)
 
@@ -1453,7 +1500,7 @@ class DetectionReportView(APIView):
             font_name = register_fonts()
 
             # 检查权限并获取检测记录
-            if request.user.is_staff or request.user.is_superuser:
+            if has_capability(request.user, CAP_USER_ADMIN):
                 detection = DetectionHistory.objects.get(pk=pk)
             else:
                 detection = DetectionHistory.objects.get(pk=pk, user=request.user)
@@ -1817,9 +1864,7 @@ class DetectionHistoryView(APIView):
         date_str = (self.request.query_params.get('date') or '').strip()
         all_users = self.request.query_params.get('all_users') == 'true'
 
-        is_admin_user = bool(
-            user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN'
-        )
+        is_admin_user = has_capability(user, CAP_USER_ADMIN)
 
         # 用户权限过滤：普通用户只能看到自己的记录
         if not (is_admin_user and all_users):
@@ -2115,7 +2160,7 @@ class DetectionHistoryView(APIView):
 
             try:
                 # 获取要下载的记录
-                if request.user.is_staff or request.user.is_superuser:
+                if has_capability(request.user, CAP_USER_ADMIN):
                     detection = DetectionHistory.objects.get(id=history_id)
                 else:
                     detection = DetectionHistory.objects.get(id=history_id, user=request.user)
@@ -2445,7 +2490,7 @@ class DetectionHistoryView(APIView):
 
             try:
                 # 获取要删除的记录
-                if request.user.is_staff or request.user.is_superuser:
+                if has_capability(request.user, CAP_USER_ADMIN):
                     history = DetectionHistory.objects.get(id=history_id)
                 else:
                     history = DetectionHistory.objects.get(id=history_id, user=request.user)
@@ -2542,9 +2587,7 @@ class DetectionHistoryClearView(APIView):
 
     def delete(self, request, *args, **kwargs):
         user = request.user
-        is_admin_user = bool(
-            user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN'
-        )
+        is_admin_user = has_capability(user, CAP_USER_ADMIN)
         all_users = request.query_params.get('all_users') == 'true'
 
         queryset = DetectionHistory.objects.all()

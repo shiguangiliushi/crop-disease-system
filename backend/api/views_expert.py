@@ -18,6 +18,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import permissions, status
+# 第 124 批：统一的能力/全权管理员判定（本文件原来自己抄了一份管理员判定）
+from .capabilities import CAP_USER_ADMIN, has_capability, is_full_admin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -29,12 +31,14 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-def _is_admin(user):
-    return bool(
-        user
-        and user.is_authenticated
-        and (user.is_staff or user.is_superuser or getattr(user, 'role', None) == 'ADMIN')
-    )
+def _can_admin_users(user):
+    """
+    能否授予 / 取消专家身份（`USER_ADMIN` 能力：账号与身份管理）
+
+    第 124 批：判定统一收口到 `capabilities.py`。**信息编辑员（EDITOR）不可** ——
+    专家身份是"谁能代表平台答疑"的授权，与内容维护不是一回事。
+    """
+    return has_capability(user, CAP_USER_ADMIN)
 
 
 def is_expert(user):
@@ -46,10 +50,14 @@ def is_expert(user):
     `force_authenticate` 复用的对象、或长生命周期进程里复用的对象）在**取消专家身份后**
     仍会读到旧的 `is_active=True`，导致"已撤销还能作答"。
     一次 count 查询换来权限判断永远以数据库为准，值得。
+
+    ⚠️ 第 124 批说明：这里的"管理员默认也算专家"用的是 `is_full_admin()`
+    （不是能力判定）—— 它表达的是**身份**（谁能答疑），不是"内容维护权限"。
+    因此信息编辑员（EDITOR）**不会**因此获得答疑身份，要保持原有行为。
     """
     if not user or not user.is_authenticated:
         return False
-    if _is_admin(user):
+    if is_full_admin(user):
         return True
     return ExpertProfile.objects.filter(user=user, is_active=True).exists()
 
@@ -66,7 +74,8 @@ def _crop_en_map():
 
 def _user_brief(user):
     profile = getattr(user, 'expert_profile', None)
-    is_admin = _is_admin(user)
+    # 回包字段（不是权限判定）：管理员兜底成"专家"身份用于展示，语义同 is_expert()
+    is_admin = is_full_admin(user)
     return {
         'id': user.id,
         'username': user.username,
@@ -241,7 +250,7 @@ class QuestionDetailView(APIView):
         question = ConsultQuestion.objects.filter(pk=pk).first()
         if not question:
             return Response({'detail': '问题不存在'}, status=status.HTTP_404_NOT_FOUND)
-        if not (request.user.id == question.asker_id or _is_admin(request.user)):
+        if not (request.user.id == question.asker_id or is_full_admin(request.user)):
             return Response({'detail': '只有提问者本人或管理员可以关闭问题'},
                             status=status.HTTP_403_FORBIDDEN)
 
@@ -277,7 +286,7 @@ class AnswerCreateView(APIView):
         answer = ConsultAnswer.objects.create(
             question=question, author=request.user, content=content,
             author_title=(profile.title if profile and profile.is_active
-                          else ('管理员' if _is_admin(request.user) else '')),
+                          else ('管理员' if is_full_admin(request.user) else '')),
         )
         question.refresh_answer_stats()
 
@@ -366,7 +375,7 @@ class ExpertListView(APIView):
         return Response({'count': len(data), 'results': data})
 
     def post(self, request, user_id):
-        if not _is_admin(request.user):
+        if not _can_admin_users(request.user):
             return Response({'detail': '只有管理员可以授予专家身份'}, status=status.HTTP_403_FORBIDDEN)
         user = User.objects.filter(pk=user_id).first()
         if not user:
@@ -396,7 +405,7 @@ class ExpertListView(APIView):
         return Response({'detail': '已授予专家身份', 'user': _user_brief(user)}, status=status.HTTP_200_OK)
 
     def delete(self, request, user_id):
-        if not _is_admin(request.user):
+        if not _can_admin_users(request.user):
             return Response({'detail': '只有管理员可以取消专家身份'}, status=status.HTTP_403_FORBIDDEN)
         profile = ExpertProfile.objects.filter(user_id=user_id).first()
         if not profile:

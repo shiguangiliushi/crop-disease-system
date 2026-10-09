@@ -322,6 +322,58 @@ class CustomUser(AbstractUser):  # 定义自定义用户模型，继承自Abstra
         verbose_name_plural = verbose_name  # 复数名称
 
 
+class EditorModuleGrant(models.Model):
+    """
+    信息编辑员（role=EDITOR）的**模块授权**（第 128 批）
+    ============================================================================
+    背景：第 125 批给 `role='EDITOR'` 接上了一个笼统的 `CONTENT` 能力 ——
+    拿到它就能维护病害百科、新闻、内容审核、意见反馈**全部四块**。
+    用户要求"分成内容审核 / 新闻管理 / 病害百科 / 意见反馈，功能互不干扰"，
+    于是把"内容"这一个能力拆成四个**模块**，按人授权：
+
+        · 只勾「新闻管理」的编辑员，进后台只看到新闻管理；
+        · 他去打开病害百科维护会被告知没有该模块权限（后端 403，不是靠前端藏菜单）。
+
+    为什么用**独立模型**而不是 CustomUser 上的一个 JSON/逗号串字段：
+      1. 可以直接查"谁是新闻编辑" —— 待审通知、公告这类"该通知谁"的逻辑要用
+         （`is_staff=True` 那种粗筛法会把不该收到的人也算进去）；
+      2. `unique_together` 保证同一人同一模块不会重复授权；
+      3. Django admin 里能直接看/改（运维排障时不用猜字段格式）。
+    代价是多一次 JOIN —— 但这一层只在"每个请求判定一次权限"时用，可以忽略
+    （`has_content_module()` 会带上 select_related / 一次 values_list 查询）。
+
+    ⚠️ 这张表只对 `role='EDITOR'` 有意义：全权管理员（is_staff / is_superuser /
+    role=ADMIN）四个模块**全都有**，不查这张表；普通用户查了也不会通过。
+    """
+
+    MODULE_CHOICES = (
+        ('review', '内容审核'),      # 帖子审核 / 评论处置 / 置顶加精
+        ('news', '新闻管理'),        # 行业动态的增删改与上下架
+        ('pests', '病害百科'),       # 病害词条 + 批量导入 + 农事任务
+        ('feedback', '意见反馈'),    # 反馈查看与回复
+    )
+
+    user = models.ForeignKey(
+        CustomUser, on_delete=models.CASCADE, related_name='editor_modules',
+        verbose_name='编辑员',
+    )
+    module = models.CharField('模块', max_length=20, choices=MODULE_CHOICES)
+    granted_by = models.ForeignKey(
+        CustomUser, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='granted_editor_modules', verbose_name='授权人',
+    )
+    created_at = models.DateTimeField('授权时间', auto_now_add=True)
+
+    class Meta:
+        verbose_name = '编辑员模块授权'
+        verbose_name_plural = verbose_name
+        unique_together = ('user', 'module')
+        ordering = ('user_id', 'module')
+
+    def __str__(self):
+        return f'{self.user_id}:{self.module}'
+
+
 class SensitiveWord(models.Model):
     """
     敏感词（第 38 批）
@@ -338,6 +390,12 @@ class SensitiveWord(models.Model):
     )
 
     word = models.CharField('敏感词', max_length=50, unique=True)
+    #: 英文对照（第 135 批）。**只用于显示**，不参与匹配：
+    #: 词条本身是"被拦截的字面串"，中文词库在英文界面下就是一串中文，
+    #: 英文管理员看不出拦的是什么 —— 所以给每条一个英文说法。
+    #: ⚠️ 想拦英文垃圾词请**新增一条词条**（word 填英文），不要把英文写进这里：
+    #: 匹配只看 `word`（见 api/sensitive.py），写这里不会生效，反而会让人以为拦住了。
+    word_en = models.CharField('英文对照', max_length=80, blank=True, default='')
     category = models.CharField('分类', max_length=20, choices=CATEGORY_CHOICES, default='other')
     is_active = models.BooleanField('启用', default=True)
     note = models.CharField('备注', max_length=200, blank=True, default='')
