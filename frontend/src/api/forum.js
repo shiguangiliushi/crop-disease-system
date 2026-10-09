@@ -22,6 +22,35 @@ const API_CONFIG = {
 /**
  * 版块相关API
  */
+/**
+ * 停用 / 启用一个版块（第 140 批，管理端「版块管理」页用）
+ *
+ * 接口早就有（`boards/<id>/set_status/`），但控制台一直没有入口 ——
+ * 本批补页面时把它接上（第 138 批接口可达性审计里"界面没调用"的两条之一）。
+ *
+ * ⚠️ 停用会直接影响农户端论坛：`BoardViewSet.get_queryset` 对普通用户只返回
+ * 启用的版块，所以停用后农户端**看不到**该版块，而版块管理者仍看得到（才能再开回来）。
+ *
+ * @param {number} boardId
+ * @param {boolean} isActive
+ */
+export function setForumBoardStatus(boardId, isActive) {
+  return http.post(`/forums/boards/${boardId}/set_status/`, { is_active: isActive })
+    .then((res) => res.data);
+}
+
+/**
+ * 批量更新版块排序（第 140 批）
+ *
+ * 接口要的是**完整的一份顺序**：`{orders: [{id, order}, ...]}` ——
+ * 所以界面上移/下移后重新编号整份列表再一次提交。
+ *
+ * @param {{id:number, order:number}[]} orders
+ */
+export function updateForumBoardOrder(orders) {
+  return http.post('/forums/boards/update_order/', { orders }).then((res) => res.data);
+}
+
 // 获取所有版块列表
 /**
  * 获取所有版块列表

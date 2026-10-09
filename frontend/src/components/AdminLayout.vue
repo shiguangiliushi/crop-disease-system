@@ -55,6 +55,10 @@ const navItems = [
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_PESTS },
   { to: '/admin/feedback', icon: 'fas fa-comment-dots', labelKey: 'manage.feedback',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_FEEDBACK },
+  // 第 140 批：版块管理 —— BROADCAST（"对全体发声与系统开关"：公告/预警/敏感词/版块）。
+  // 信息编辑员只有内容能力，看不到这一项（后端接口也会 403）。
+  { to: '/admin/boards', icon: 'fas fa-table-columns', labelKey: 'manage.boards',
+    capability: authStore.CAP_BROADCAST },
 ];
 
 /**

@@ -454,6 +454,25 @@ const router = createRouter({
       }
     },
     {
+      // 第 140 批：管理端「版块管理」
+      // 补的是一个空档：后端 `boards/<id>/set_status/`（启停）与 `boards/update_order/`
+      // （排序）接口早就有，但控制台没有任何入口 —— 版块启停与排序只能进 Django admin。
+      path: '/admin/boards',
+      name: 'admin-boards',
+      component: () => import('@/views/AdminBoardsView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        // 第 140 批：BROADCAST —— 版块与公告/预警/敏感词同属"对全体发声与系统开关"，
+        // 信息编辑员（只有内容能力）进不来，后端接口也是 403。
+        capability: 'BROADCAST',
+        adminArea: true,   // 第 117 批：管理后台外壳
+        title: '版块管理',
+        breadcrumb: ['管理', '版块管理']
+      }
+    },
+
+    {
       // 第 27 批：管理端「意见反馈管理」（管理板块此前没有任何反馈入口）
       path: '/admin/feedback',
       name: 'admin-feedback',
