@@ -1118,6 +1118,39 @@ class PreventionDataView(APIView):
             )
 
 
+def _parse_bulk_ids(request):
+    """
+    解析批量操作里的 `ids`（第 138 批抽出：批量改状态与批量删除**共用**）
+
+    为什么要抽出来：两个批量动作必然长得像，而"批量接口各自写一套更松的校验"
+    正是漏洞的常见形态（单条校验很全、批量图快自己写一套）。共用一个函数就不会有两套。
+
+    返回 `(ids, error_response)`：成功时 error_response 为 None；失败时 ids 为 None。
+
+    校验（三条都必要）：
+      · 必须是数组 —— 否则 `for value in raw_ids` 会把字符串逐字符拆开；
+      · 逐项转 int、丢掉转不了的（前端传 "3" / 3 都收，传 "abc" 直接忽略）；
+      · 去重 + 上限 200 —— 上限是为了让"一次误点全选几千条"变成一次 400 而不是一次长事务。
+    """
+    raw_ids = request.data.get('ids') or []
+    if not isinstance(raw_ids, (list, tuple)):
+        return None, Response({'ids': ['ids 必须是数组']}, status=status.HTTP_400_BAD_REQUEST)
+    ids = []
+    for value in raw_ids:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    seen = set()
+    ids = [i for i in ids if not (i in seen or seen.add(i))]
+    if not ids:
+        return None, Response({'ids': ['没有选中任何反馈']}, status=status.HTTP_400_BAD_REQUEST)
+    if len(ids) > 200:
+        return None, Response({'ids': ['一次最多处理 200 条']},
+                              status=status.HTTP_400_BAD_REQUEST)
+    return ids, None
+
+
 class FeedbackView(viewsets.ModelViewSet):
     """
     用户反馈API视图（第 26 批扩展为通用「意见反馈」）
@@ -1280,21 +1313,9 @@ class FeedbackView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        raw_ids = request.data.get('ids') or []
-        if not isinstance(raw_ids, (list, tuple)):
-            return Response({'ids': ['ids 必须是数组']}, status=status.HTTP_400_BAD_REQUEST)
-        ids = []
-        for value in raw_ids:
-            try:
-                ids.append(int(value))
-            except (TypeError, ValueError):
-                continue
-        seen = set()
-        ids = [i for i in ids if not (i in seen or seen.add(i))]
-        if not ids:
-            return Response({'ids': ['没有选中任何反馈']}, status=status.HTTP_400_BAD_REQUEST)
-        if len(ids) > 200:
-            return Response({'ids': ['一次最多处理 200 条']}, status=status.HTTP_400_BAD_REQUEST)
+        ids, error = _parse_bulk_ids(request)
+        if error:
+            return error
 
         # 只能操作**自己有权看到**的反馈：管理员的 queryset 是全量，但复用 get_queryset
         # 更安全 —— 万一将来权限口径改了，这里自动跟着变。
@@ -1329,6 +1350,67 @@ class FeedbackView(viewsets.ModelViewSet):
                     status_value, request.user.id, ok_count, len(ids))
         return Response({
             'status': status_value,
+            'requested': len(ids),
+            'succeeded': ok_count,
+            'failed': len(ids) - ok_count,
+            'results': results,
+        })
+
+    @action(detail=False, methods=['post'], url_path='bulk-delete',
+            permission_classes=[IsFeedbackEditor])
+    def bulk_delete(self, request):
+        """
+        批量删除反馈（第 138 批）
+
+            POST /api/feedback/bulk-delete/   {"ids": [1, 2, 3]}
+
+        为什么需要：单条删除每条都要点一次确认框，"这一批都是同一类垃圾反馈"时
+        逐条删很折磨。前端列表页加了多选后，这是它的后端。
+
+        权限（**比批量改状态更严**，和单条 destroy 的口径对齐后再收紧一档）：
+          · 单条 destroy：自己的随时删、**别人的**仅全权管理员（第 124/126 批的护栏）；
+          · 批量 destroy：**只给全权管理员** ——
+            理由：批量是不可逆的破坏性操作，"能看全部反馈"（CONTENT 能力）不等于
+            "可以一次抹掉一批"。而且列表页里编辑员看到的本就是全部反馈，
+            开放给他等于把"删别人的反馈"这条守卫从后门绕过去。
+
+        与批量改状态一致的三处：逐条处理不整体失败（响应里给每条的成败）、
+        只能操作自己 queryset 里能看到的记录、一次最多 200 条（`_parse_bulk_ids` 共用）。
+        """
+        if not is_full_admin(request.user):
+            return Response(
+                {'detail': '只有管理员可以批量删除反馈'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        ids, error = _parse_bulk_ids(request)
+        if error:
+            return error
+
+        # 复用 get_queryset：将来若权限口径再收紧（例如编辑员只看某几类），这里自动跟着变
+        feedbacks = {f.id: f for f in self.get_queryset().filter(id__in=ids)}
+
+        results = []
+        ok_count = 0
+        for feedback_id in ids:
+            feedback = feedbacks.get(feedback_id)
+            if feedback is None:
+                results.append({'id': feedback_id, 'ok': False, 'detail': '反馈不存在'})
+                continue
+            # 顺带清掉反馈图：否则 media/feedback_images 会留下孤儿文件
+            image_name = feedback.image.name if feedback.image else ''
+            feedback.delete()
+            if image_name:
+                try:
+                    from django.core.files.storage import default_storage
+                    default_storage.delete(image_name)
+                except Exception as exc:  # noqa: BLE001 —— 文件删不掉不该让接口失败
+                    logger.warning('批量删除反馈时清理图片失败: %s', exc)
+            ok_count += 1
+            results.append({'id': feedback_id, 'ok': True, 'detail': 'deleted'})
+
+        logger.info('批量删除反馈 by=%s 成功=%s/%s', request.user.id, ok_count, len(ids))
+        return Response({
             'requested': len(ids),
             'succeeded': ok_count,
             'failed': len(ids) - ok_count,

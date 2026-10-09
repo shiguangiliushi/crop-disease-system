@@ -65,4 +65,51 @@ export async function replyFeedback(id, payload = {}) {
   return response.data;
 }
 
-export default { submitFeedback, fetchMyFeedback, deleteFeedback, replyFeedback };
+/**
+ * 批量流转处理状态（第 138 批接上前端）
+ *
+ * 这个接口**第 100 批就在后端写好了**（状态白名单、"标记已处理必须给回复"、
+ * 逐条成败、上限 200 条都齐），但前端一直没调用 —— 等于一个死接口。
+ * 列表页加上多选后，它才真正被用起来。
+ *
+ * 服务端规则（前端只是别让人白点一次）：
+ *   · 只接受 pending / processing / resolved；
+ *   · 传 `status: 'resolved'` 时**必须**带 admin_reply，否则 400；
+ *   · 逐条处理不整体失败，返回里给每条的成败。
+ *
+ * @param {number[]} ids
+ * @param {'pending'|'processing'|'resolved'} status
+ * @param {string} [adminReply] 统一写进去的回复内容
+ * @returns {Promise<{requested:number, succeeded:number, failed:number,
+ *                    results:{id:number, ok:boolean, detail:string}[]}>}
+ */
+export async function bulkUpdateFeedbackStatus(ids, status, adminReply = '') {
+  const payload = { ids, status };
+  if (adminReply) payload.admin_reply = adminReply;
+  const response = await http.post('/feedback/bulk-status/', payload);
+  return response.data;
+}
+
+/**
+ * 批量删除反馈（第 138 批）
+ *
+ * **仅全权管理员**：批量删除不可逆，而列表页里内容编辑员看到的本来就是全部反馈 ——
+ * 开放给他等于把"不能删别人的反馈"这条守卫从后门绕过去。后端同样是 403。
+ *
+ * @param {number[]} ids
+ * @returns {Promise<{requested:number, succeeded:number, failed:number,
+ *                    results:{id:number, ok:boolean, detail:string}[]}>}
+ */
+export async function bulkDeleteFeedback(ids) {
+  const response = await http.post('/feedback/bulk-delete/', { ids });
+  return response.data;
+}
+
+export default {
+  submitFeedback,
+  fetchMyFeedback,
+  deleteFeedback,
+  replyFeedback,
+  bulkUpdateFeedbackStatus,
+  bulkDeleteFeedback,
+};

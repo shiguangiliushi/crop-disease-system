@@ -9283,3 +9283,182 @@ class AdminUserStatusTests(APITestCase):
         self.assertIn('停用', joined)
         self.assertIn('zz_st_target', joined)
         self.assertIn('作废', joined)
+
+
+# ============================================================================
+# 第 138 批：反馈的批量改状态 / 批量删除
+# ============================================================================
+# 背景：`POST /api/feedback/bulk-status/` 第 100 批就写好了（规则齐全），但**前端从未调用** ——
+# 列表页连多选都没有，等于一个死接口。这一批把它接上，并补一个对称的批量删除。
+#
+# 这组测试盯三件事：
+#   1. 批量改状态真的生效，且沿用单条 reply 的三条规则（状态白名单、
+#      标记已处理必须给回复、首次处理才记 handled_at）；
+#   2. 批量删除**只给全权管理员**（内容编辑员即便"能看全部反馈"也不能批量删，
+#      这是不可逆操作 —— 与单条 destroy 的护栏对齐后再收紧一档）；
+#   3. 两条接口共用同一套 ids 校验（数组、逐项转 int、去重、上限 200）。
+# ============================================================================
+class FeedbackBulkActionTests(APITestCase):
+    """批量改状态 / 批量删除（第 138 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_fb_super', password='pw12345678', email='', role='ADMIN',
+        )
+        # 只有 feedback 模块的编辑员
+        self.editor = User.objects.create_user(
+            username='zz_fb_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='feedback',
+                                        granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_fb_author', password='pw12345678', role='USER',
+        )
+        self.other = User.objects.create_user(
+            username='zz_fb_other', password='pw12345678', role='USER',
+        )
+
+        self.mine = [Feedback.objects.create(user=self.author, suggestion=f'我的反馈{i}')
+                     for i in range(3)]
+        self.theirs = [Feedback.objects.create(user=self.other, suggestion=f'别人的反馈{i}')
+                       for i in range(2)]
+
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+
+    # ---------- 批量改状态 ----------
+    def test_bulk_status_flow(self):
+        ids = [f.id for f in self.theirs]
+        response = self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': ids, 'status': 'processing',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['succeeded'], 2)
+        self.assertEqual(response.data['failed'], 0)
+        for feedback in self.theirs:
+            feedback.refresh_from_db()
+            self.assertEqual(feedback.status, 'processing')
+            self.assertIsNone(feedback.handled_at, '非"已处理"不该有处理时间')
+
+    def test_bulk_resolved_requires_reply(self):
+        """与单条 reply 同一条规则：标记「已处理」必须有回复内容"""
+        ids = [f.id for f in self.theirs]
+        blocked = self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': ids, 'status': 'resolved',
+        }, format='json')
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST, blocked.data)
+        for feedback in self.theirs:
+            feedback.refresh_from_db()
+            self.assertEqual(feedback.status, 'pending', '被拒时不能改状态')
+
+        ok = self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': ids, 'status': 'resolved', 'admin_reply': '已核实并修复',
+        }, format='json')
+        self.assertEqual(ok.status_code, status.HTTP_200_OK, ok.data)
+        for feedback in self.theirs:
+            feedback.refresh_from_db()
+            self.assertEqual(feedback.status, 'resolved')
+            self.assertEqual(feedback.admin_reply, '已核实并修复')
+            self.assertIsNotNone(feedback.handled_at)
+
+    def test_bulk_status_keeps_first_handled_at(self):
+        """重复标记已处理不刷新首次处理时间（与单条 reply 一致）"""
+        feedback = self.theirs[0]
+        self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': [feedback.id], 'status': 'resolved', 'admin_reply': '第一次',
+        }, format='json')
+        feedback.refresh_from_db()
+        first_time = feedback.handled_at
+        self.assertIsNotNone(first_time)
+
+        self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': [feedback.id], 'status': 'resolved', 'admin_reply': '第二次',
+        }, format='json')
+        feedback.refresh_from_db()
+        self.assertEqual(feedback.handled_at, first_time)
+        self.assertEqual(feedback.admin_reply, '第二次')
+
+    def test_bulk_status_rejects_bad_input(self):
+        for payload, note in (
+            ({'ids': [self.theirs[0].id], 'status': 'done'}, '非法状态'),
+            ({'ids': [], 'status': 'processing'}, '空 ids'),
+            ({'ids': 'abc', 'status': 'processing'}, 'ids 不是数组'),
+            ({'ids': list(range(1, 202)), 'status': 'processing'}, '超过 200 条'),
+        ):
+            response = self.client_editor.post('/api/feedback/bulk-status/', payload,
+                                               format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST,
+                             f'{note} 应当被拒：{response.data}')
+
+    def test_bulk_status_reports_missing_rows(self):
+        """逐条处理不整体失败：不存在的 id 在 results 里如实报错"""
+        response = self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': [self.theirs[0].id, 999999], 'status': 'processing',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['succeeded'], 1)
+        self.assertEqual(response.data['failed'], 1)
+
+    def test_plain_user_cannot_bulk_status(self):
+        """普通用户没有 feedback 模块 → 批量接口 403（他只能看自己的）"""
+        client = APIClient()
+        client.force_authenticate(user=self.author)
+        response = client.post('/api/feedback/bulk-status/', {
+            'ids': [f.id for f in self.mine], 'status': 'resolved', 'admin_reply': 'x',
+        }, format='json')
+        self.assertIn(response.status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    # ---------- 批量删除 ----------
+    def test_bulk_delete_requires_full_admin(self):
+        """
+        **内容编辑员不能批量删**（即便他有 feedback 模块、能看全部反馈）
+
+        这是本批刻意收紧的一档：批量删除不可逆，而列表页里编辑员看到的就是全部反馈 ——
+        开放给他等于把"不能删别人的反馈"这条守卫从后门绕过去。
+        """
+        response = self.client_editor.post('/api/feedback/bulk-delete/', {
+            'ids': [f.id for f in self.theirs],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.assertEqual(Feedback.objects.filter(id__in=[f.id for f in self.theirs]).count(), 2)
+
+    def test_superuser_bulk_delete(self):
+        ids = [f.id for f in self.theirs]
+        response = self.client_super.post('/api/feedback/bulk-delete/', {'ids': ids},
+                                          format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['succeeded'], 2)
+        self.assertEqual(Feedback.objects.filter(id__in=ids).count(), 0)
+
+    def test_bulk_delete_reports_missing_rows(self):
+        response = self.client_super.post('/api/feedback/bulk-delete/', {
+            'ids': [self.theirs[0].id, 999999],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['succeeded'], 1)
+        self.assertEqual(response.data['failed'], 1)
+        self.assertFalse(Feedback.objects.filter(id=self.theirs[0].id).exists())
+        self.assertTrue(Feedback.objects.filter(id=self.theirs[1].id).exists())
+
+    def test_bulk_delete_rejects_bad_input(self):
+        for payload, note in (
+            ({'ids': []}, '空 ids'),
+            ({'ids': 'abc'}, 'ids 不是数组'),
+            ({'ids': list(range(1, 202))}, '超过 200 条'),
+        ):
+            response = self.client_super.post('/api/feedback/bulk-delete/', payload,
+                                              format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, note)
+
+    def test_bulk_delete_is_logged(self):
+        with self.assertLogs('api.views', level='INFO') as captured:
+            self.client_super.post('/api/feedback/bulk-delete/',
+                                   {'ids': [self.theirs[0].id]}, format='json')
+        self.assertIn('批量删除反馈', '\n'.join(captured.output))

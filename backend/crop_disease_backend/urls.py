@@ -170,6 +170,10 @@ api_urlpatterns = [
     #    `@action` 不会自动生成路由 —— 必须在这里手写一条，否则 404。
     path('feedback/bulk-status/', FeedbackView.as_view({'post': 'bulk_status'}),
          name='feedback-bulk-status'),
+    # 第 138 批：批量删除（**仅全权管理员** —— 不可逆操作，不给内容编辑员）。
+    # 同 bulk-status：FeedbackView 是显式 as_view 映射，`@action` 不会自动生成路由。
+    path('feedback/bulk-delete/', FeedbackView.as_view({'post': 'bulk_delete'}),
+         name='feedback-bulk-delete'),
     path('feedback/<int:pk>/', FeedbackView.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}), name='feedback-detail'),
     # 第 27 批：管理端回复 / 流转处理状态。
     # ⚠️ FeedbackView 是用 as_view({...}) **显式映射**注册的（不是 router.register），

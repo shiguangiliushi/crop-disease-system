@@ -95,6 +95,51 @@
       </div>
     </div>
 
+    <!--
+      第 138 批：批量操作条
+      ------------------------------------------------------------------
+      在此之前列表页**没有任何多选** —— 10 条同类反馈要改状态就得点 10 轮弹窗。
+      更别扭的是后端 `POST /api/feedback/bulk-status/` 第 100 批就写好了（规则齐全），
+      却因为前端没接而成为死接口。这条工具栏就是它的入口。
+      只有全权管理员才看得到「批量删除」（不可逆；编辑员即便能看全部反馈也不给）。
+    -->
+    <div v-if="selectable" class="bulk-bar">
+      <el-checkbox
+        :model-value="allPageSelected"
+        :indeterminate="somePageSelected"
+        @change="toggleSelectAllPage"
+      >
+        {{ t('feedbackAdmin.selectAllPage') }}
+      </el-checkbox>
+      <span v-if="selectedIds.length" class="bulk-count">
+        {{ t('feedbackAdmin.selectedCount', { count: selectedIds.length }) }}
+      </span>
+      <div class="bulk-actions">
+        <el-button
+          size="small"
+          type="primary"
+          :disabled="selectedIds.length === 0"
+          @click="openBulkStatus"
+        >
+          <i class="fas fa-list-check"></i> {{ t('feedbackAdmin.bulkStatusAction') }}
+        </el-button>
+        <el-button
+          v-if="canDeleteOthers"
+          size="small"
+          type="danger"
+          plain
+          :disabled="selectedIds.length === 0"
+          :loading="bulkDeleting"
+          @click="bulkRemove"
+        >
+          <i class="fas fa-trash"></i> {{ t('feedbackAdmin.bulkDeleteAction') }}
+        </el-button>
+        <el-button v-if="selectedIds.length" size="small" text @click="clearSelection">
+          {{ t('feedbackAdmin.clearSelection') }}
+        </el-button>
+      </div>
+    </div>
+
     <el-skeleton v-if="loading" :rows="6" animated />
     <el-empty v-else-if="items.length === 0" :description="t('feedbackAdmin.empty')" />
 
@@ -106,6 +151,13 @@
         :class="`is-${item.status}`"
       >
         <div class="item-head">
+          <!-- 第 138 批：多选（只有能操作反馈的人看得到多选框） -->
+          <el-checkbox
+            v-if="selectable"
+            class="item-check"
+            :model-value="selectedIds.includes(item.id)"
+            @change="toggleSelect(item.id)"
+          />
           <!-- 提交人：这就是管理员要看的"用户名字" -->
           <span class="submitter">
             <i class="fas fa-user"></i>
@@ -217,6 +269,57 @@
         <el-button type="primary" :loading="replying" @click="submitReply">{{ t('profile.save') }}</el-button>
       </template>
     </el-dialog>
+
+    <!--
+      批量流转状态（第 138 批）
+      ------------------------------------------------------------------
+      与单条回复同一条规则：**标记「已处理」必须填回复内容**（后端也是 400）。
+      所以这里把"回复内容"做成必填条件而不是可选装饰 —— 否则用户会看到
+      "已处理"却没有任何交代，那比不处理还糟。
+    -->
+    <el-dialog
+      v-model="bulkStatusVisible"
+      :title="t('feedbackAdmin.bulkStatusTitle', { count: selectedIds.length })"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-position="top">
+        <el-form-item :label="t('feedbackAdmin.statusFilter')">
+          <el-radio-group v-model="bulkStatusForm.status">
+            <el-radio-button value="pending">{{ t('feedbackAdmin.statusPending') }}</el-radio-button>
+            <el-radio-button value="processing">{{ t('feedbackAdmin.statusProcessing') }}</el-radio-button>
+            <el-radio-button value="resolved">{{ t('feedbackAdmin.statusResolved') }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item
+          :label="t('feedbackAdmin.replyContent')"
+          :required="bulkStatusForm.status === 'resolved'"
+        >
+          <el-input
+            v-model="bulkStatusForm.admin_reply"
+            type="textarea"
+            :rows="4"
+            maxlength="500"
+            show-word-limit
+            :placeholder="bulkStatusForm.status === 'resolved'
+              ? t('feedbackAdmin.bulkReplyRequired')
+              : t('feedbackAdmin.bulkReplyOptional')"
+          />
+          <p class="field-hint">{{ t('feedbackAdmin.bulkReplyHint') }}</p>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bulkStatusVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="bulkStatusSubmitting"
+          :disabled="bulkStatusForm.status === 'resolved' && !bulkStatusForm.admin_reply.trim()"
+          @click="submitBulkStatus"
+        >
+          {{ t('feedbackAdmin.bulkStatusSubmit') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -233,7 +336,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { fetchMyFeedback, replyFeedback, deleteFeedback } from '@/api/feedback';
+import { fetchMyFeedback, replyFeedback, deleteFeedback, bulkDeleteFeedback, bulkUpdateFeedbackStatus } from '@/api/feedback';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 67 批：多语言
@@ -266,7 +369,118 @@ export default {
     const pageSize = ref(10);
     const deletingId = ref(null);
 
+    // -- 多选与批量操作（第 138 批）----------------------------------------
+    /**
+     * 谁能多选：能操作反馈的人（有 feedback 模块）—— 与后端批量接口的
+     * `IsFeedbackEditor` 同一口径。普通用户看到的是自己的反馈列表，
+     * 给他多选没有意义（他既不能改状态也没有批量接口权限）。
+     */
+    const selectable = computed(() => authStore.hasContentModule?.('feedback')
+      || authStore.hasCapability?.('content'));
+
+    const selectedIds = ref([]);
+    const bulkStatusVisible = ref(false);
+    const bulkStatusSubmitting = ref(false);
+    const bulkDeleting = ref(false);
+    const bulkStatusForm = ref({ status: 'processing', admin_reply: '' });
+
+    const allPageSelected = computed(() => (
+      items.value.length > 0 && items.value.every((item) => selectedIds.value.includes(item.id))
+    ));
+    const somePageSelected = computed(() => (
+      selectedIds.value.length > 0 && !allPageSelected.value
+    ));
+
+    const toggleSelect = (id) => {
+      const index = selectedIds.value.indexOf(id);
+      if (index === -1) selectedIds.value.push(id);
+      else selectedIds.value.splice(index, 1);
+    };
+
+    /** 全选/取消全选**本页**（不是全库 —— 跨页选择会让人误删看不见的东西） */
+    const toggleSelectAllPage = () => {
+      selectedIds.value = allPageSelected.value ? [] : items.value.map((item) => item.id);
+    };
+
+    const clearSelection = () => { selectedIds.value = []; };
+
+    // ⚠️ 「翻页/换筛选时清空选择」的那个 watch **不能写在这里** ——
+    //    它的取值函数会立刻读 `filters.value`，而 `const filters = ref(...)` 在下面才声明，
+    //    于是抛 `Cannot access 'filters' before initialization`（TDZ）。
+    //    这个错误被 Vue 在组件内部捕获、只在界面上弹红条，**不会**变成 pageerror，
+    //    所以第一版端到端脚本（只看 pageerror）还是绿的 —— 是截图里那三条红提示才暴露出来。
+    //    现在它挪到 `filters` 声明之后。
+
+    const openBulkStatus = () => {
+      bulkStatusForm.value = { status: 'processing', admin_reply: '' };
+      bulkStatusVisible.value = true;
+    };
+
+    /** 把"成功 N 条 / 失败 M 条"说清楚（逐条成败，不能只报总数） */
+    const reportBulkResult = (data, okKey, failKey) => {
+      if (!data || data.failed === 0) {
+        ElMessage.success(t(okKey, { count: data?.succeeded ?? 0 }));
+        return;
+      }
+      ElMessage.warning(t(failKey, { ok: data.succeeded, failed: data.failed }));
+    };
+
+    const submitBulkStatus = async () => {
+      const form = bulkStatusForm.value;
+      if (form.status === 'resolved' && !form.admin_reply.trim()) {
+        ElMessage.warning(t('feedbackAdmin.bulkReplyRequired'));
+        return;
+      }
+      bulkStatusSubmitting.value = true;
+      try {
+        const data = await bulkUpdateFeedbackStatus(
+          selectedIds.value, form.status, form.admin_reply.trim(),
+        );
+        reportBulkResult(data, 'feedbackAdmin.bulkStatusOk', 'feedbackAdmin.bulkStatusPartial');
+        bulkStatusVisible.value = false;
+        clearSelection();
+        await Promise.all([loadList(), fetchStats()]);
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('feedbackAdmin.bulkStatusFailed')));
+      } finally {
+        bulkStatusSubmitting.value = false;
+      }
+    };
+
+    const bulkRemove = async () => {
+      const count = selectedIds.value.length;
+      try {
+        await ElMessageBox.confirm(
+          t('feedbackAdmin.bulkDeleteConfirm', { count }),
+          t('feedbackAdmin.bulkDeleteAction'),
+          {
+            type: 'warning',
+            confirmButtonText: t('feedbackAdmin.bulkDeleteAction'),
+            cancelButtonText: t('common.cancel'),
+          },
+        );
+      } catch {
+        return;   // 用户点了取消
+      }
+      bulkDeleting.value = true;
+      try {
+        const data = await bulkDeleteFeedback(selectedIds.value);
+        reportBulkResult(data, 'feedbackAdmin.bulkDeleteOk', 'feedbackAdmin.bulkDeletePartial');
+        clearSelection();
+        await Promise.all([loadList(), fetchStats()]);
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('feedbackAdmin.bulkDeleteFailed')));
+      } finally {
+        bulkDeleting.value = false;
+      }
+    };
+
     const filters = ref({ status: '', category: '', search: '' });
+
+    /** 翻页/换筛选时清空选择：选中的是"上一屏的东西"，留着容易误操作
+     *  ⚠️ 必须放在 `filters` 声明**之后**（取值函数会立刻读它，写在前面就是 TDZ 报错） */
+    watch([page, pageSize, () => filters.value.status, () => filters.value.category,
+      () => filters.value.search], () => { clearSelection(); });
 
     const replyVisible = ref(false);
     const replying = ref(false);
@@ -486,6 +700,21 @@ export default {
       openReply,
       submitReply,
       removeItem,
+      // 第 138 批：多选与批量操作
+      selectable,
+      selectedIds,
+      allPageSelected,
+      somePageSelected,
+      toggleSelect,
+      toggleSelectAllPage,
+      clearSelection,
+      bulkStatusVisible,
+      bulkStatusSubmitting,
+      bulkStatusForm,
+      openBulkStatus,
+      submitBulkStatus,
+      bulkDeleting,
+      bulkRemove,
     };
   },
 };
@@ -676,6 +905,36 @@ export default {
   margin-top: 6px;
   font-size: 12px;
   color: var(--ink-400, #9aa4b2);
+}
+
+/* 第 138 批：批量操作工具条与卡片多选框 */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--ink-50);
+}
+
+.bulk-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand-700, #1c6b4b);
+}
+
+.bulk-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.item-check {
+  margin-right: 4px;
 }
 
 /* 第 89 批：原来的"加载更多"按钮已换成真分页（见模板里的 el-pagination） */
