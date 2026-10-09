@@ -48,7 +48,6 @@ DetectionHistoryClearView = import_view('api.views', 'DetectionHistoryClearView'
 ImageUploadView = import_view('api.views', 'ImageUploadView')
 FeedbackView = import_view('api.views', 'FeedbackView')
 StatisticsView = import_view('api.views', 'StatisticsView')
-DetectionReportView = import_view('api.views', 'DetectionReportView')
 PestTypesView = import_view('api.views', 'PestTypesView')
 
 # 从其他模块导入视图
@@ -126,7 +125,6 @@ NotificationViewSet = import_view('api.views_notify', 'NotificationViewSet')
 AnnouncementViewSet = import_view('api.views_notify', 'AnnouncementViewSet')
 AnnouncementLatestView = import_view('api.views_notify', 'AnnouncementLatestView')
 
-DetectionPestTypesView = import_view('api.views_pest_types', 'DetectionPestTypesView')
 NewsViewSet = import_view('api.news_views', 'NewsViewSet')
 
 # 论坛相关视图
@@ -268,7 +266,6 @@ api_urlpatterns = [
     path('detect/', DetectView.as_view(), name='detect'),
     path('preventions/', PreventionDataView.as_view(), name='preventions-data'),
     path('pest-types/', PestTypesView.as_view(), name='pest-types'),
-    path('detection-pest-types/', DetectionPestTypesView.as_view(), name='detection-pest-types'),
     
     # 检测历史
     path('detection-history/', DetectionHistoryView.as_view(), name='detection-history-list'),
@@ -278,8 +275,6 @@ api_urlpatterns = [
     # 清空记录：必须放在 <int:pk> 之前（clear-all 不是整数，放在前面更直观）
     path('detection-history/clear-all/', DetectionHistoryClearView.as_view(), name='detection-history-clear-all'),
     path('detection-history/<int:pk>/', DetectionHistoryDetailView.as_view(), name='detection-history-detail'),
-    path('detection-history/<int:pk>/download-report/', DetectionHistoryView.as_view(http_method_names=['get']), name='detection-history-download-report'),
-    path('detection-history/<int:pk>/report/', DetectionReportView.as_view(), name='detection-history-report'),
 
     # 通用图片上传（论坛发帖/编辑器插图）
     path('upload/image/', ImageUploadView.as_view(), name='image-upload'),
