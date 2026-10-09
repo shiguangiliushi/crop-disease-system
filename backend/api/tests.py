@@ -9462,3 +9462,127 @@ class FeedbackBulkActionTests(APITestCase):
             self.client_super.post('/api/feedback/bulk-delete/',
                                    {'ids': [self.theirs[0].id]}, format='json')
         self.assertIn('批量删除反馈', '\n'.join(captured.output))
+
+
+# ============================================================================
+# 第 140 批：版块管理（Console 页面的两条接口）
+# ============================================================================
+# 背景：`boards/<id>/set_status/`（启停）与 `boards/update_order/`（排序）**接口早就有**，
+# 但控制台里没有版块管理页 —— 两条接口等于死代码；而版块的启停与排序只能进 Django admin。
+# 本批把页面补上，这里补上这两条接口的测试（它们此前一条测试都没有）。
+#
+# 测试重点来自它们注释里记着的两个真实事故：
+#   1. `set_status` 曾把不存在的 `updated_by` 字段写进 update_fields → 稳定 500；
+#   2. `get_permissions` 的白名单曾漏掉 `update_order` → **任何登录用户**都能改排序（实测 200）。
+# ============================================================================
+class ForumBoardAdminTests(APITestCase):
+    """版块启停 / 排序（第 140 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.broadcast_admin = User.objects.create_user(
+            username='zz_bd_admin', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_bd_editor', password='pw12345678', role='EDITOR',
+        )
+        self.plain = User.objects.create_user(
+            username='zz_bd_plain', password='pw12345678', role='USER',
+        )
+        self.board_a = ForumBoard.objects.create(name='zz版块A', order=1, is_active=True)
+        self.board_b = ForumBoard.objects.create(name='zz版块B', order=2, is_active=True)
+
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.broadcast_admin)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    # ---------- 启停 ----------
+    def test_broadcast_admin_can_disable_and_enable(self):
+        """启停真的生效，且**不 500**（回归：曾把不存在的 updated_by 写进 update_fields）"""
+        off = self.client_admin.post(f'/api/forums/boards/{self.board_a.id}/set_status/',
+                                     {'is_active': False}, format='json')
+        self.assertEqual(off.status_code, status.HTTP_200_OK, off.data)
+        self.assertFalse(off.data['is_active'])
+        self.board_a.refresh_from_db()
+        self.assertFalse(self.board_a.is_active)
+
+        on = self.client_admin.post(f'/api/forums/boards/{self.board_a.id}/set_status/',
+                                    {'is_active': True}, format='json')
+        self.assertEqual(on.status_code, status.HTTP_200_OK, on.data)
+        self.board_a.refresh_from_db()
+        self.assertTrue(self.board_a.is_active)
+
+    def test_set_status_requires_is_active(self):
+        response = self.client_admin.post(f'/api/forums/boards/{self.board_a.id}/set_status/',
+                                          {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+
+    def test_disabled_board_hidden_from_users_but_visible_to_manager(self):
+        """停用的版块：农户端看不到，但版块管理者仍看得到（否则停用后就再也开不回来）"""
+        self.client_admin.post(f'/api/forums/boards/{self.board_a.id}/set_status/',
+                               {'is_active': False}, format='json')
+
+        public = APIClient()
+        public.force_authenticate(user=self.plain)
+        names = [b['name'] for b in public.get('/api/forums/boards/').data
+                 if isinstance(b, dict)]
+        self.assertNotIn('zz版块A', names)
+
+        admin_view = self.client_admin.get('/api/forums/boards/')
+        admin_names = [b['name'] for b in admin_view.data if isinstance(b, dict)]
+        self.assertIn('zz版块A', admin_names)
+
+    # ---------- 排序 ----------
+    def test_broadcast_admin_can_reorder(self):
+        response = self.client_admin.post('/api/forums/boards/update_order/', {
+            'orders': [{'id': self.board_a.id, 'order': 9},
+                       {'id': self.board_b.id, 'order': 1}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['updated'], 2)
+        self.board_a.refresh_from_db()
+        self.board_b.refresh_from_db()
+        self.assertEqual(self.board_a.order, 9)
+        self.assertEqual(self.board_b.order, 1)
+
+    def test_reorder_rejects_bad_payload(self):
+        for payload, note in (
+            ({'orders': 'abc'}, 'orders 不是数组'),
+            ({'orders': [{'id': 'x', 'order': 1}]}, 'id 不是数字'),
+            ({'orders': [{'order': 1}]}, '缺 id'),
+        ):
+            response = self.client_admin.post('/api/forums/boards/update_order/', payload,
+                                              format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST,
+                             f'{note} 应当被拒：{response.data}')
+
+    # ---------- 权限（回归：曾经任何登录用户都能改排序）----------
+    def test_plain_user_cannot_touch_boards(self):
+        """普通用户既不能启停、也不能改排序（后者是真实出过的越权）"""
+        self.assertEqual(
+            self.client_plain.post(f'/api/forums/boards/{self.board_a.id}/set_status/',
+                                   {'is_active': False}, format='json').status_code,
+            status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            self.client_plain.post('/api/forums/boards/update_order/',
+                                   {'orders': [{'id': self.board_a.id, 'order': 5}]},
+                                   format='json').status_code,
+            status.HTTP_403_FORBIDDEN)
+        self.board_a.refresh_from_db()
+        self.assertEqual(self.board_a.order, 1, '越权请求不能真的改到数据')
+
+    def test_editor_without_broadcast_capability_cannot_touch_boards(self):
+        """信息编辑员只有内容能力，管不了版块（第 124/128 批的能力口径）"""
+        self.assertEqual(
+            self.client_editor.post(f'/api/forums/boards/{self.board_a.id}/set_status/',
+                                    {'is_active': False}, format='json').status_code,
+            status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            self.client_editor.post('/api/forums/boards/update_order/',
+                                    {'orders': [{'id': self.board_a.id, 'order': 5}]},
+                                    format='json').status_code,
+            status.HTTP_403_FORBIDDEN)
