@@ -71,7 +71,8 @@
             </el-form-item>
 
             <el-form-item :label="t('post.bodyLabel')" prop="content" class="editor-item">
-              <RichTextEditor v-model="form.content" />
+              <!-- 第 141 批：论坛发帖走**通用**图片上传通道（新闻编辑器走 news 通道） -->
+        <RichTextEditor v-model="form.content" upload-target="generic" />
               <p class="field-hint">
                 <i class="fas fa-lightbulb"></i>
                 {{ t('post.bodyHint') }}

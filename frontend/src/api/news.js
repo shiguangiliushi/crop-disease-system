@@ -140,6 +140,25 @@ export async function deleteNews(id) {
   return true;
 }
 
+/**
+ * 上传新闻正文里的插图（第 141 批接上前端）
+ *
+ * 接口 `POST /api/news/upload_image/` **早就有**（第 91 批还专门加固过：大小上限、
+ * 按**文件头**判真实格式而不是信 `content_type`、随机文件名），但前端从没调用过 ——
+ * 于是 Quill 的图片按钮一直走默认行为，把图片转成 **base64 内联进正文**：
+ * 一张手机照片就让正文膨胀好几 MB，图片也无法复用。
+ *
+ * 返回体：`{url, image_url, message}`（两个字段同值，历史原因都留着）。
+ *
+ * @param {FormData} formData 需含 `image` 字段
+ */
+export async function uploadNewsImage(formData) {
+  const response = await http.post('/news/upload_image/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+}
+
 export default {
   fetchNewsList,
   fetchNewsDetail,
@@ -147,6 +166,7 @@ export default {
   updateNews,
   toggleNewsPublished,
   deleteNews,
+  uploadNewsImage,
   formatNewsError,
   getNewsCategoryLabel,
   NEWS_CATEGORIES,

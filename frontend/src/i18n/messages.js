@@ -473,6 +473,13 @@ export const zhCN = {
   // 现在 `/pests` 是纯阅读页，管理动作都在这里，所以文案也拆开了：
   // 通用动作（新增/编辑/删除/批量导入）继续用 `wiki.*`，本页独有的放这里。
   // ==========================================================================
+  editor: {
+    uploadOk: '图片已上传',
+    uploadFailed: '图片上传失败：{detail}',
+    uploadNoUrl: '上传接口没有返回图片地址',
+    uploading: '图片上传中…',
+    uploadTooLarge: '图片太大了（上限 5 MB）',
+  },
   boardAdmin: {
     title: '版块管理',
     subtitle: '论坛版块的排序与启用状态；停用的版块在农户端不可见',
@@ -3015,6 +3022,13 @@ export const en = {
     footerNote: 'Administrator actions are logged. Do not stay signed in on shared devices.',
   },
   // Disease-wiki maintenance (admin console /admin/pests, batch 122)
+  editor: {
+    uploadOk: 'Image uploaded',
+    uploadFailed: 'Image upload failed: {detail}',
+    uploadNoUrl: 'The upload endpoint returned no image URL',
+    uploading: 'Uploading image…',
+    uploadTooLarge: 'Image is too large (5 MB max)',
+  },
   boardAdmin: {
     title: 'Board management',
     subtitle: 'Order and visibility of forum boards; disabled boards are hidden from growers',
