@@ -9088,3 +9088,198 @@ class SeededSensitiveWordGlossTests(TestCase):
             if not SensitiveWord.objects.filter(word=word).exclude(word_en='').exists()
         ]
         self.assertEqual(missing, [], f'这些默认敏感词还缺英文对照：{missing}')
+
+
+# ============================================================================
+# 第 137 批：停用 / 恢复账号
+# ============================================================================
+# 背景：用户管理页早就有「已禁用」筛选与状态标签，却**没有入口能把账号停用** ——
+# 状态只能来自 ①用户自助注销（冷静期）②管理员删除（软删除）③Django admin 手动取消 active，
+# 而 ①② 都被默认列表查询排除，于是那个筛选在控制台里永远筛不出东西。
+#
+# 这组测试盯四件事：
+#   1. 停用**真的生效**：对方立刻掉线（同一个 token 401）、重新登录被拒；
+#   2. 恢复**真的能用**：不需要改密码就能重新登录（这是与"删除"的关键区别）；
+#   3. 护栏：不能停用自己、非超管不能停用权限不低于自己的人、已删除/冷静期账号查不到；
+#   4. 幂等与日志：重复点同一个状态不报错、不写第二条日志。
+# ============================================================================
+class AdminUserStatusTests(APITestCase):
+    """停用 / 恢复账号（第 137 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_st_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.staff = User.objects.create_user(
+            username='zz_st_staff', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_st_editor', password='pw12345678', role='EDITOR',
+        )
+        self.target = User.objects.create_user(
+            username='zz_st_target', password='pw12345678', role='USER',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_staff = APIClient()
+        self.client_staff.force_authenticate(user=self.staff)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_target = APIClient()
+        self.client_target.force_authenticate(user=self.target)
+
+    def url(self, user_id=None):
+        return f'/api/admin/users/{user_id or self.target.id}/status/'
+
+    # ---------- 正向：停用 ----------
+    def test_disable_then_the_account_really_cannot_login(self):
+        """停用后：同一个 token 立刻 401、重新登录被拒（不是"只是界面上显示一下"）"""
+        # 先让对方正常登录拿到 token
+        token = Token.objects.create(user=self.target)
+        live = APIClient()
+        live.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        self.assertEqual(live.get('/api/check-auth/').status_code, status.HTTP_200_OK)
+
+        response = self.client_super.post(self.url(), {'is_active': False}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertTrue(response.data['changed'])
+        self.target.refresh_from_db()
+        self.assertFalse(self.target.is_active)
+
+        # 1) 旧 token 立刻失效（DRF 的 TokenAuthentication 会判 is_active）
+        self.assertIn(live.get('/api/check-auth/').status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        # 2) token 记录本身也被清掉了（否则恢复那一刻旧凭证会"复活"）
+        self.assertFalse(Token.objects.filter(user=self.target).exists())
+        # 3) 重新登录被拒（密码仍然是对的，是账号被停用）
+        relogin = APIClient().post('/api/login/', {
+            'username': 'zz_st_target', 'password': 'pw12345678',
+        }, format='json')
+        self.assertNotEqual(relogin.status_code, status.HTTP_200_OK)
+
+    def test_enable_restores_login_without_changing_password(self):
+        """恢复后：密码没被动过，直接能登回来（与"删除"的关键区别）"""
+        self.client_super.post(self.url(), {'is_active': False}, format='json')
+        response = self.client_super.post(self.url(), {'is_active': True}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertTrue(response.data['changed'])
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.is_active)
+        self.assertTrue(self.target.has_usable_password(), '恢复不该动密码')
+
+        login = APIClient().post('/api/login/', {
+            'username': 'zz_st_target', 'password': 'pw12345678',
+        }, format='json')
+        self.assertEqual(login.status_code, status.HTTP_200_OK, login.data)
+        # ⚠️ 登录回包的 user 里**没有** is_active（那是管理端序列化器的字段），
+        #    所以这里只断言"能登回来"，状态本身看数据库（上面已断言）。
+        self.assertEqual(login.data['data']['user']['username'], 'zz_st_target')
+
+    def test_disabled_user_shows_up_in_the_console_filter(self):
+        """
+        停用后的账号**能被「已禁用」筛选筛到**
+
+        这条正是这个接口存在的理由：删除（is_deleted）与注销冷静期都会把账号
+        从默认列表里排除掉，所以那个筛选在此之前的真实数据里筛不出任何东西。
+        """
+        self.client_super.post(self.url(), {'is_active': False}, format='json')
+        response = self.client_super.get('/api/admin/users/?status=disabled')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = [row['username'] for row in response.data['results']]
+        self.assertIn('zz_st_target', names)
+        # 而且确实标记成禁用状态（前端的状态标签据此渲染）
+        row = next(r for r in response.data['results'] if r['username'] == 'zz_st_target')
+        self.assertFalse(row['is_active'])
+
+    # ---------- 护栏 ----------
+    def test_cannot_disable_self(self):
+        response = self.client_super.post(self.url(self.superuser.id), {'is_active': False},
+                                          format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        self.superuser.refresh_from_db()
+        self.assertTrue(self.superuser.is_active)
+
+    def test_non_superuser_cannot_disable_admin(self):
+        """staff 管理员不能停用同为管理员的账号（否则"谁能被停用"取决于谁先动手）"""
+        response = self.client_staff.post(self.url(self.superuser.id), {'is_active': False},
+                                          format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        # 但普通用户可以停用（口径与删除一致：能删就能停）
+        ok = self.client_staff.post(self.url(), {'is_active': False}, format='json')
+        self.assertEqual(ok.status_code, status.HTTP_200_OK, ok.data)
+
+    def test_superuser_can_disable_another_admin(self):
+        response = self.client_super.post(self.url(self.staff.id), {'is_active': False},
+                                          format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.staff.refresh_from_db()
+        self.assertFalse(self.staff.is_active)
+
+    def test_editor_without_user_admin_capability_cannot_disable(self):
+        """信息编辑员只有内容能力，碰不了用户管理（第 124/128 批的能力体系）"""
+        response = self.client_editor.post(self.url(), {'is_active': False}, format='json')
+        self.assertIn(response.status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.is_active)
+
+    def test_plain_user_cannot_disable(self):
+        response = self.client_target.post(self.url(self.staff.id), {'is_active': False},
+                                           format='json')
+        self.assertIn(response.status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_deleted_and_grace_accounts_are_not_reachable(self):
+        """
+        已删除 / 注销冷静期的账号：404
+
+        这两类的状态由删除与注销流程管理，不该在用户管理里改 ——
+        `_admin_user_queryset()` 已把它们排除，所以这里应当是"查不到"。
+        """
+        User = get_user_model()
+        gone = User.objects.create_user(username='zz_st_gone', password='pw12345678',
+                                        role='USER')
+        gone.soft_delete(by=self.superuser, reason='admin')
+        response = self.client_super.post(self.url(gone.id), {'is_active': True}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND, response.data)
+
+        pending = User.objects.create_user(username='zz_st_pending', password='pw12345678',
+                                           role='USER')
+        pending.request_deletion()
+        response2 = self.client_super.post(self.url(pending.id), {'is_active': True},
+                                           format='json')
+        self.assertEqual(response2.status_code, status.HTTP_404_NOT_FOUND, response2.data)
+
+    # ---------- 幂等 / 入参 / 日志 ----------
+    def test_idempotent_when_already_in_target_state(self):
+        """重复点同一个状态：200 + changed=False，且不写第二条日志"""
+        first = self.client_super.post(self.url(), {'is_active': True}, format='json')
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertFalse(first.data['changed'])
+
+        # ⚠️ 这里要用 assertNoLogs（而不是 assertLogs + assertNotIn）：
+        #    assertLogs 要求"至少有一条日志"，幂等路径**一条都不该有**，
+        #    用它反而会因为"没有日志"而失败（第一版就是这么写错的）。
+        with self.assertNoLogs('api.views_user', level='INFO'):
+            second = self.client_super.post(self.url(), {'is_active': True}, format='json')
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertFalse(second.data['changed'])
+
+    def test_rejects_non_boolean(self):
+        """不收 "false" 这种字符串：前端传错时宁可 400，也别猜错了把账号停掉"""
+        for bad in ('false', 0, None, ''):
+            response = self.client_super.post(self.url(), {'is_active': bad}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST,
+                             f'{bad!r} 应当被拒：{response.data}')
+        self.target.refresh_from_db()
+        self.assertTrue(self.target.is_active)
+
+    def test_change_is_logged(self):
+        with self.assertLogs('api.views_user', level='INFO') as captured:
+            self.client_super.post(self.url(), {'is_active': False}, format='json')
+        joined = '\n'.join(captured.output)
+        self.assertIn('停用', joined)
+        self.assertIn('zz_st_target', joined)
+        self.assertIn('作废', joined)

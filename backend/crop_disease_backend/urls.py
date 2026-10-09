@@ -65,6 +65,8 @@ AdminUserResetLinkView = import_view('api.views_user', 'AdminUserResetLinkView')
 AdminUserRoleView = import_view('api.views_user', 'AdminUserRoleView')
 # 第 131 批：开通编辑员账号（仅超管；无可用密码 + 一次性设置密码链接）
 AdminUserCreateEditorView = import_view('api.views_user', 'AdminUserCreateEditorView')
+# 第 137 批：停用 / 恢复账号（补上"有「已禁用」筛选却没有停用入口"的缺口）
+AdminUserStatusView = import_view('api.views_user', 'AdminUserStatusView')
 UserCommentsView = import_view('api.views_user', 'UserCommentsView')  # 第 25 批：用户的评论列表
 # 第 23 批：用户资料完善（真实头像 + 修改密码）
 UserAvatarView = import_view('api.views_user', 'UserAvatarView')
@@ -335,6 +337,10 @@ api_urlpatterns = [
          name='admin-user-reset-link'),
     # 第 127 批：调整角色（仅超级管理员，且只能在 信息编辑员 ↔ 普通用户 之间调）
     path('admin/users/<int:user_id>/role/', AdminUserRoleView.as_view(), name='admin-user-role'),
+    # 第 137 批：停用 / 恢复账号。权限与删除一致（USER_ADMIN + 不能停用自己 /
+    # 权限不低于自己的人）；停用时会作废对方的 token，恢复后需重新登录。
+    path('admin/users/<int:user_id>/status/', AdminUserStatusView.as_view(),
+         name='admin-user-status'),
     path('admin/users/<int:user_id>/', AdminUserDetailView.as_view(), name='admin-user-detail'),
 
     # 举报（第 41 批）

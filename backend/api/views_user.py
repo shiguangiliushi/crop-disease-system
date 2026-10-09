@@ -976,6 +976,90 @@ class AdminUserDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AdminUserStatusView(APIView):
+    """
+    停用 / 恢复某个账号：
+    `POST /api/admin/users/<user_id>/status/`
+        body: `{"is_active": false}`   # false = 停用，true = 恢复
+
+    第 137 批。**为什么要有这个接口**：用户管理页早就有「已禁用」这个筛选和状态标签，
+    却**没有任何入口能把账号停用** —— 状态只可能来自
+      ① 用户自助注销（冷静期内）；
+      ② 管理员删除用户（软删除，`is_active=False` + `is_deleted=True`）；
+      ③ Django admin 里手动取消 active。
+    而 ①② 都被默认列表查询排除（见 `_admin_user_queryset`，只留 `?include_deleted` 审计用），
+    所以「已禁用」筛选在控制台里**永远筛不出东西**；更别扭的是「重置密码」的拒绝语写着
+    "请先恢复账号再重置密码"，界面上却根本没有"恢复"这个入口。
+    这个接口把这条链路补齐：停用 → 列表里就能筛到 → 需要时一键恢复。
+
+    护栏见 `_check_status_allowed`：不能停用自己、非超管不能停用权限不低于自己的账号。
+    权限与删除一致（`IsUserAdmin`）—— 见那个函数里"为什么不比删除更严"的说明。
+
+    两个刻意行为（都写在测试里，防止以后被"顺手改掉"）：
+
+      · **停用时顺带作废对方的 token**。DRF 的 `TokenAuthentication` 本来就会拒
+        `is_active=False` 的用户（已实测：同一个 token 停用后立刻 401），所以作废 token
+        不是为了"挡住现在"，而是为了**恢复之后** —— 否则停用期间对方设备上那个 token
+        一直挂着，一恢复就"自己登回来了"。代价是恢复后需要重新登录，这是正确的代价。
+      · **恢复不需要对方改密码**（密码全程没被动过）—— 这一点与 `soft_delete` 不同，
+        后者会把密码随机化，因此"删除"不可逆、而"停用"可逆。
+    """
+
+    permission_classes = [IsUserAdmin]
+
+    def post(self, request, user_id):
+        actor = request.user
+        # ⚠️ 用 `_admin_user_queryset()` 而不是裸 User：已删除与注销冷静期的账号在这里
+        #    直接 404（那两类状态由删除/注销流程管理，不该在用户管理里改）。
+        target = get_object_or_404(_admin_user_queryset(), pk=user_id)
+
+        raw = request.data.get('is_active')
+        if not isinstance(raw, bool):
+            # 不收 "false" 这种字符串：前端传错时宁可 400，也别猜错了把账号停掉
+            return Response(
+                {'is_active': ['请传布尔值 true（恢复）或 false（停用）']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        blocked = _check_status_allowed(actor, target)
+        if blocked:
+            # 状态码口径与删除一致：停用自己是"请求本身不合理"（400），
+            # 越权动管理员是"权限不足"（403）
+            code = (status.HTTP_403_FORBIDDEN if '超级管理员' in blocked
+                    else status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': blocked}, status=code)
+
+        if target.is_active == raw:
+            # 幂等：重复点击不报错，也不写第二条日志（页面刷新后状态可能已经变了）
+            return Response({
+                'status': 'success',
+                'changed': False,
+                'user': AdminUserSerializer(target, context={'request': request}).data,
+                'message': '该账号已经是这个状态',
+            })
+
+        target.is_active = raw
+        target.save(update_fields=['is_active'])
+
+        if not raw:
+            Token.objects.filter(user=target).delete()
+
+        logger.info(
+            '管理员 %s %s了用户 %s(%s)%s',
+            actor.username, '停用' if not raw else '恢复',
+            target.username, target.id,
+            '，并作废其登录凭证' if not raw else '，对方可重新登录',
+        )
+
+        return Response({
+            'status': 'success',
+            'changed': True,
+            'user': AdminUserSerializer(target, context={'request': request}).data,
+            'message': ('账号已停用：对方会立刻掉线，且无法登录'
+                        if not raw else '账号已恢复：对方可以重新登录（需要重新输密码）'),
+        })
+
+
 # ---------------------------------------------------------------------------
 # 改角色（第 127 批）
 # ---------------------------------------------------------------------------
@@ -1364,6 +1448,33 @@ def _check_reset_allowed(actor, target):
         return '该账号已停用或已注销，请先恢复账号再重置密码'
     if _is_elevated_user(target) and not actor.is_superuser:
         return '不能为权限不低于你的账号签发重置链接（只有超级管理员可以）'
+    return ''
+
+
+def _check_status_allowed(actor, target):
+    """
+    停用 / 恢复账号的两道护栏（第 137 批）
+
+    与 `_check_delete_allowed` **同一套口径**，只是动作可逆所以少一条
+    （删除才需要"不能删超级管理员"那条底线，停用可以再恢复）：
+
+      1. **不能停用自己** —— 一按就把自己锁在管理端外面，而"谁能救你"取决于
+         是否还有另一个管理员在线，这种锁死不该由一次点击造成；
+      2. **非超管不能停用权限不低于自己的账号** —— 否则"谁能被停用"就取决于谁先动手。
+
+    ⚠️ 为什么不比删除更严（删除不可逆都允许普通管理员做）：
+    如果停用只允许超管，就会出现"**能删却不能停用**"的怪事 —— 口径不一致本身就是 bug。
+
+    已删除（`is_deleted=True`）与注销冷静期的账号走不到这里：
+    `_admin_user_queryset()` 已经把这两类排除了（查不到 → 404）。
+    它们的状态由删除/注销流程管理，不该在用户管理里改。
+
+    返回空串表示允许，否则返回拒绝原因。
+    """
+    if target.id == actor.id:
+        return '不能停用自己的账号。'
+    if _is_elevated_user(target) and not actor.is_superuser:
+        return '只有超级管理员可以停用其他管理员账号。'
     return ''
 
 
