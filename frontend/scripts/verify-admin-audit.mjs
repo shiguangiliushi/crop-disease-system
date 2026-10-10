@@ -44,6 +44,8 @@ const cleanup = () => {
       'from django.contrib.auth import get_user_model',
       'from api.models import EditorModuleGrant',
       'from api.models_audit import AdminAuditLog',
+      'from api.models_forum import ForumBoard',
+      "print('cleaned boards:', ForumBoard.objects.filter(name__startswith='zze2e审计版块').delete()[0])",
       "print('cleaned logs:', AdminAuditLog.objects.filter(actor_repr__startswith='zze2e_al_').delete()[0])",
       "EditorModuleGrant.objects.filter(user__username__startswith='zze2e_al_').delete()",
       'U = get_user_model()',
@@ -188,6 +190,36 @@ const postStatus = await page.evaluate(async ({ api, today }) => {
   return res.status;
 }, { api: API, today });
 check('日志接口不接受 POST（无新增入口）', postStatus === 405, `HTTP ${postStatus}`);
+
+// ---------------------------------------------------------------------------
+// ⑤b 第 150 批新接入的动作：新建版块也要能查到
+//     （顺带验证"动作下拉来自后端 choices"——新动作不用改前端）
+// ---------------------------------------------------------------------------
+clearThrottle();
+runDjango([
+  'from django.contrib.auth import get_user_model',
+  'from rest_framework.test import APIClient',
+  'U = get_user_model()',
+  `admin = U.objects.get(username='${superName}')`,
+  'c = APIClient(); c.force_authenticate(user=admin)',
+  `r = c.post('/api/forums/boards/', {'name': 'zze2e审计版块${suffix}', 'order': 999}, format='json')`,
+  "print('BOARD', r.status_code)",
+]);
+
+await page.goto(`${UI}/admin/audit-logs?search=zze2e审计版块`, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(2500);
+const boardLog = (await rowTexts()).join(' || ');
+check('第 150 批新接入的「新建版块」也能在日志页查到',
+  boardLog.includes('新建版块'), boardLog.slice(0, 100));
+check('日志里带版块名（快照）', boardLog.includes('zze2e审计版块'), '');
+
+await page.locator('.filter-bar .el-select').first().click();
+await page.waitForTimeout(800);
+const actionOptions = await page.locator('.el-select-dropdown__item:visible').allInnerTexts();
+check('动作下拉里出现「新建版块」', actionOptions.join(' | ').includes('新建版块'),
+  actionOptions.slice(0, 6).join(' / '));
+await page.keyboard.press('Escape');
+await page.waitForTimeout(500);
 
 // ---------------------------------------------------------------------------
 // ⑥ 编辑员：看不到、进不去

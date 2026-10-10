@@ -138,11 +138,30 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
 
     def perform_create(self, serializer):  # 定义创建操作
         # 保存帖子
-        serializer.save()  # 保存序列化器数据
+        board = serializer.save()  # 保存序列化器数据
+        # 第 150 批：新建版块是"农户端能看到什么"的结构性改动，落一条审计日志
+        log_admin_action(
+            self.request.user, 'board.create', target=board,
+            detail=f'新建版块（排序 {board.order}，{"启用" if board.is_active else "停用"}）',
+            request=self.request,
+        )
 
     def perform_update(self, serializer):  # 定义更新操作
         # 更新帖子
-        serializer.save()  # 保存序列化器数据
+        # 第 150 批：编辑版块也留痕 —— 并把**改了哪些字段**记下来。
+        # 只写"编辑了版块"等于没写：事后追查要知道"名字是不是被人改过"。
+        tracked = ('name', 'description', 'icon', 'order', 'is_active')
+        before = {field: getattr(serializer.instance, field, None) for field in tracked}
+        board = serializer.save()  # 保存序列化器数据
+        changed = [
+            f'{field}: {before[field]} → {getattr(board, field, None)}'
+            for field in tracked if before[field] != getattr(board, field, None)
+        ]
+        log_admin_action(
+            self.request.user, 'board.update', target=board,
+            detail='编辑版块：' + ('；'.join(changed) if changed else '无字段变化'),
+            request=self.request,
+        )
 
     @action(detail=True, methods=['post'])  # 定义自定义动作
     def set_status(self, request, pk=None):  # 定义设置状态方法

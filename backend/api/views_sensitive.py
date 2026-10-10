@@ -11,6 +11,7 @@
 """
 from rest_framework import viewsets
 
+from .audit import log_admin_action  # 第 150 批：敏感词增删留痕
 from .capabilities import IsBroadcastManager  # 第 124 批：能力口径统一（原为 DRF IsAdminUser）
 from .models import SensitiveWord
 from .serializers import SensitiveWordSerializer
@@ -27,6 +28,25 @@ class SensitiveWordViewSet(viewsets.ModelViewSet):
     serializer_class = SensitiveWordSerializer
     permission_classes = [IsBroadcastManager]
     pagination_class = None  # 词库通常不多，一次返回全部
+
+    def perform_create(self, serializer):
+        # 第 150 批：敏感词决定哪些内容会被拦下/替换，增删都要留痕
+        word = serializer.save()
+        log_admin_action(
+            self.request.user, 'word.create', target=word,
+            detail=f'新增敏感词（分类 {getattr(word, "category", "") or "未分类"}）',
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        # 删词比加词更值得记：加错了只是误伤，删错了等于放过违规内容
+        preview = getattr(instance, 'word', '') or f'#{instance.pk}'
+        log_admin_action(
+            self.request.user, 'word.delete', target=instance,
+            detail=f'删除敏感词（分类 {getattr(instance, "category", "") or "未分类"}）',
+            request=self.request,
+        )
+        instance.delete()
 
     def get_queryset(self):
         queryset = SensitiveWord.objects.all()

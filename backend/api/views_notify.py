@@ -30,6 +30,7 @@ from .models_notify import Announcement, Notification
 from .serializers_notify import AnnouncementSerializer, NotificationSerializer
 
 logger = logging.getLogger(__name__)
+from .audit import log_admin_action  # noqa: E402  第 150 批：管理操作日志
 User = get_user_model()
 
 #: 生效中的公告：已启用 且（没有过期时间 或 还没到期）
@@ -152,6 +153,12 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
             ):
                 created += 1
         logger.info('公告已发布 id=%s，投递通知 %s 条', announcement.id, created)
+        # 第 150 批：公告是**面向全体用户**的广播，必须留痕（谁发的、发了几条通知）
+        log_admin_action(
+            self.request.user, 'announcement.create', target=announcement,
+            detail=f'发布公告，投递站内通知 {created} 条',
+            request=self.request,
+        )
 
     def perform_destroy(self, instance):
         """
@@ -161,6 +168,13 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         用户至少知道"发生过这件事"。但公告不一样：公告删了之后，
         通知里点进去什么也没有，留着只会让人困惑，所以这里一并删除。
         """
+        # 第 150 批：删除公告会**连带清掉**这次扇出的通知（见下方说明），
+        # 属于不可逆动作，先记日志再删。
+        log_admin_action(
+            self.request.user, 'announcement.delete', target=instance,
+            detail=f'删除公告（连带清理 {Notification.objects.filter(announcement=instance).count()} 条通知）',
+            request=self.request,
+        )
         removed = Notification.objects.filter(announcement=instance).delete()[0]
         logger.info('删除公告 id=%s，连带清理通知 %s 条', instance.id, removed)
         instance.delete()

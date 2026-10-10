@@ -10567,3 +10567,84 @@ class AdminCommentManagementTests(APITestCase):
             self.assertTrue(comment.is_deleted)
         self.post.refresh_from_db()
         self.assertEqual(self.post.comment_count, 1)
+
+
+class MoreAuditActionsTests(APITestCase):
+    """
+    第 150 批：把剩下的管理动作也接进审计日志
+
+    第 146 批接的是用户/反馈/版块启停与排序，第 147/149 批又补了帖子与评论。
+    这一批补齐**内容侧的增删改**：版块新建与编辑、敏感词增删、公告发布与删除。
+    这三类都属于"改了会影响农户端看到什么"的动作，出事之后必须能回答
+    "是谁在什么时候改的、改成了什么"。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_maa_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+
+    def test_board_create_and_update_are_logged_with_changes(self):
+        response = self.client_super.post('/api/forums/boards/', {
+            'name': 'zz审计版块', 'description': '初始描述', 'icon': 'fa-leaf', 'order': 77,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        board_id = response.data['id']
+
+        created = AdminAuditLog.objects.get(action='board.create')
+        self.assertEqual(created.target_repr, 'zz审计版块')
+        self.assertIn('77', created.detail)
+
+        self.client_super.patch(f'/api/forums/boards/{board_id}/',
+                                {'name': 'zz审计版块改名', 'order': 88}, format='json')
+        updated = AdminAuditLog.objects.get(action='board.update')
+        # 只写"编辑了版块"等于没写 —— 必须能看出改了哪些字段
+        self.assertIn('name', updated.detail)
+        self.assertIn('zz审计版块改名', updated.detail)
+        self.assertIn('order', updated.detail)
+        self.assertNotIn('description', updated.detail, '没改的字段不该出现在日志里')
+        get_user_model()  # noqa: B018 —— 保持与其它测试一致的读法
+
+    def test_sensitive_word_create_and_delete_are_logged(self):
+        response = self.client_super.post('/api/sensitive-words/', {
+            'word': 'zz测试敏感词', 'category': 'ad',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        word_id = response.data['id']
+
+        created = AdminAuditLog.objects.get(action='word.create')
+        self.assertEqual(created.target_repr, 'zz测试敏感词')
+
+        self.client_super.delete(f'/api/sensitive-words/{word_id}/')
+        deleted = AdminAuditLog.objects.get(action='word.delete')
+        self.assertEqual(deleted.target_type, 'word')
+        self.assertEqual(deleted.target_repr, 'zz测试敏感词',
+                         '删除后仍要知道删的是哪个词（快照）')
+
+    def test_announcement_create_and_delete_are_logged(self):
+        response = self.client_super.post('/api/announcements/', {
+            'title': 'zz审计公告', 'content': '公告内容', 'is_active': True, 'is_pinned': False,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        announcement_id = response.data['id']
+
+        created = AdminAuditLog.objects.get(action='announcement.create')
+        self.assertEqual(created.target_repr, 'zz审计公告')
+        self.assertIn('投递站内通知', created.detail)
+
+        self.client_super.delete(f'/api/announcements/{announcement_id}/')
+        deleted = AdminAuditLog.objects.get(action='announcement.delete')
+        self.assertEqual(deleted.target_repr, 'zz审计公告',
+                         '公告删了（连带通知也清了）之后，日志要还认得出是哪一条')
+
+    def test_all_choices_have_a_label(self):
+        """动作清单都在下拉里能读懂（新增动作时别忘了给中文名）"""
+        response = self.client_super.get('/api/admin/audit-logs/actions/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        for row in response.data:
+            self.assertTrue(row['label'], f'{row["value"]} 缺少中文名')
+            self.assertNotEqual(row['label'], row['value'])
