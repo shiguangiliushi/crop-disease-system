@@ -1308,7 +1308,8 @@ export const zhCN = {
     roleUser: '普通用户',
     statusFilter: '状态',
     statusActive: '正常',
-    statusDisabled: '已禁用',
+    // 第 144 批：与动作「停用/恢复」统一用词（原为「已禁用」，同一个状态两个说法）
+    statusDisabled: '已停用',
     statusExpert: '专家',
     statusStaff: '管理员',
     // 第 88 批：筛选栏"回到全部用户"（清掉角色/状态/搜索三个条件）
@@ -1416,6 +1417,17 @@ export const zhCN = {
     resetLinkHowTo: '把链接发给本人（微信/短信都行），对方打开后自己设置新密码 —— 你全程看不到他的新密码。',
     resetLinkFailed: '签发重置链接失败',
     resetBlockedInactive: '该账号已停用或已注销，请先恢复账号',
+    // 第 144 批：账号范围（已注销 / 注销冷静期）与状态语义拆分
+    scopeFilter: '账号范围',
+    scopeNormal: '正常账号',
+    scopeIncludeDeleted: '包含已注销',
+    scopePendingDeletion: '只看注销冷静期',
+    statusDeleted: '已删除',
+    statusGrace: '注销冷静期',
+    statusGraceDays: '注销冷静期（还剩 {days} 天）',
+    statusBlockedDeleted: '已注销的账号不能再改状态',
+    statusBlockedGrace: '冷静期账号由本人登录取消注销，管理员不代为恢复',
+    resetBlockedDeleted: '已注销的账号无法重置密码',
     resetBlockedElevated: '只有超级管理员可以为管理员账号签发重置链接',
     // ========================================================================
     // 第 127 批：改角色（仅超级管理员；只能在 信息编辑员 ↔ 普通用户 之间调）
@@ -3981,6 +3993,17 @@ export const en = {
     resetLinkHowTo: 'Send the link to the owner (WeChat/SMS both fine). They set the new password themselves — you never see it.',
     resetLinkFailed: 'Could not issue a reset link',
     resetBlockedInactive: 'This account is disabled or deactivated — restore it first',
+    // 第 144 批：account scope + finer status labels
+    scopeFilter: 'Account scope',
+    scopeNormal: 'Active only',
+    scopeIncludeDeleted: 'Include deleted',
+    scopePendingDeletion: 'Pending deletion only',
+    statusDeleted: 'Deleted',
+    statusGrace: 'Pending deletion',
+    statusGraceDays: 'Pending deletion ({days} days left)',
+    statusBlockedDeleted: 'Deleted accounts cannot be changed',
+    statusBlockedGrace: 'Pending-deletion accounts are restored by their owner, not by admins',
+    resetBlockedDeleted: 'Cannot reset the password of a deleted account',
     resetBlockedElevated: 'Only a superuser can issue a reset link for an administrator account',
     // ========================================================================
     // 第 127 批：role assignment (superuser only; EDITOR <-> USER only)

@@ -94,6 +94,23 @@
         <el-option :label="t('adminUsers.statusExpert')" value="expert" />
         <el-option :label="t('adminUsers.statusStaff')" value="staff" />
       </el-select>
+      <!--
+        第 144 批：账号范围（默认只看"正常"账号）
+        ----------------------------------------------------------------
+        在此之前已注销与注销冷静期的账号在控制台里**完全看不到** ——
+        端点其实一直支持（`?include_deleted=true` / `?pending_deletion=true`，第 95/101 批），
+        只是界面没有开关，要看只能直连接口。这三档互斥，所以做成一个下拉而不是两个勾选框。
+      -->
+      <el-select
+        v-model="filters.scope"
+        :placeholder="t('adminUsers.scopeFilter')"
+        style="width: 168px"
+        @change="applyFilter"
+      >
+        <el-option :label="t('adminUsers.scopeNormal')" value="" />
+        <el-option :label="t('adminUsers.scopeIncludeDeleted')" value="include_deleted" />
+        <el-option :label="t('adminUsers.scopePendingDeletion')" value="pending_deletion" />
+      </el-select>
       <el-input
         v-model="filters.search"
         :placeholder="t('adminUsers.searchPlaceholder')"
@@ -748,7 +765,7 @@ export default {
     const page = ref(1);
     // 第 89 批：默认每页条数与意见反馈管理页对齐（原来 20，两页一个 10 一个 20，观感不一致）
     const pageSize = ref(10);
-    const filters = ref({ search: '', role: '', status: '' });
+    const filters = ref({ search: '', role: '', status: '', scope: '' });   // 第 144 批：scope = 账号范围
     const stats = ref({ total: 0, staff: 0, expert: 0, normal: 0 });
     /** 第 100 批：后端排序（`?ordering=`），空串 = 默认按注册时间倒序 */
     const ordering = ref('');
@@ -795,6 +812,9 @@ export default {
      */
     const statusBlockedReason = (row) => {
       if (!row) return '';
+      // 第 144 批：这两类账号由"删除/注销"流程管状态，用户管理里改不了（后端也是 404）
+      if (row.is_deleted) return t('adminUsers.statusBlockedDeleted');
+      if (isGraceAccount(row)) return t('adminUsers.statusBlockedGrace');
       if (row.id === currentUserId.value) return t('adminUsers.statusBlockedSelf');
       if ((row.is_staff || row.is_superuser || row.role === 'ADMIN') && !currentIsSuperuser.value) {
         return t('adminUsers.statusBlockedElevated');
@@ -857,6 +877,8 @@ export default {
      */
     const resetLinkBlockedReason = (row) => {
       if (!row) return '';
+      // 第 144 批：区分"已注销"与"停用/冷静期"——前者重置了也没人能登录
+      if (row.is_deleted) return t('adminUsers.resetBlockedDeleted');
       if (!row.is_active) return t('adminUsers.resetBlockedInactive');
       if (row.id === currentUserId.value) return '';   // 自己：允许（本来就登着）
       if ((row.is_staff || row.is_superuser || row.role === 'ADMIN') && !currentIsSuperuser.value) {
@@ -883,6 +905,8 @@ export default {
     const canChangeRole = (row) => Boolean(
       row
       && currentIsSuperuser.value
+      && !row.is_deleted            // 第 144 批：已注销账号不改角色
+      && !isGraceAccount(row)       // 第 144 批：冷静期账号也不改
       && row.id !== currentUserId.value
       && !row.is_staff
       && !row.is_superuser
@@ -1156,10 +1180,36 @@ export default {
     }[row?.role] || 'info');
 
     // 「账号状态」只表达可用性；管理员/专家身份各有独立标签，避免一个格子塞三种含义
-    const statusTagType = (row) => (row?.is_active === false ? 'danger' : 'success');
+    /**
+     * 账号状态标签（第 144 批拆细）
+     *
+     * 以前只有两档：is_active 为真 → "正常"，否则 → "已禁用"。但"不可用"其实有三种，
+     * 而**该做什么完全不同**：
+     *   · 已删除（软删除，用户名都让出去了）→ 什么都做不了，只能看；
+     *   · 注销冷静期 → 由本人登录取消注销，管理员不代为恢复；
+     *   · 被管理员停用 → 可以「恢复」。
+     * 混成一个"已禁用"，管理员就会对着冷静期账号找"恢复"按钮（而那个按钮是 404）。
+     */
+    const isGraceAccount = (row) => Boolean(row && !row.is_deleted && row.deletion_scheduled_for);
 
-    const statusLabel = (row) =>
-      row?.is_active === false ? t('adminUsers.statusDisabled') : t('adminUsers.statusActive');
+    const statusTagType = (row) => {
+      if (!row) return 'info';
+      if (row.is_deleted) return 'info';
+      if (isGraceAccount(row)) return 'warning';
+      return row.is_active === false ? 'danger' : 'success';
+    };
+
+    const statusLabel = (row) => {
+      if (!row) return '';
+      if (row.is_deleted) return t('adminUsers.statusDeleted');
+      if (isGraceAccount(row)) {
+        // 剩余天数是**后端算的**（冷静期长度可配置，前端不写死）
+        return row.deletion_days_left === null || row.deletion_days_left === undefined
+          ? t('adminUsers.statusGrace')
+          : t('adminUsers.statusGraceDays', { days: row.deletion_days_left });
+      }
+      return row.is_active === false ? t('adminUsers.statusDisabled') : t('adminUsers.statusActive');
+    };
 
     const fullName = (row) => [row?.last_name, row?.first_name].filter(Boolean).join(' ').trim();
 
@@ -1169,6 +1219,11 @@ export default {
       if (filters.value.search.trim()) params.search = filters.value.search.trim();
       if (filters.value.role) params.role = filters.value.role;
       if (filters.value.status) params.status = filters.value.status;
+      // 第 144 批：账号范围 —— 已注销 / 注销冷静期（端点早就支持，界面上此前没有开关）。
+      // ⚠️ 两条参数**不能同时发**：include_deleted 让后端返回"全部账号"（含正常），
+      //    pending_deletion 则是"只看冷静期"，按当前选择二选一。
+      if (filters.value.scope === 'include_deleted') params.include_deleted = 'true';
+      if (filters.value.scope === 'pending_deletion') params.pending_deletion = 'true';
       // 第 100 批：排序交后端（白名单字段，后端会忽略非法值）
       if (ordering.value) params.ordering = ordering.value;
       return params;
@@ -1230,6 +1285,10 @@ export default {
         search: { ref: filterRef('search'), type: 'string', default: '' },
         role: { ref: filterRef('role'), type: 'string', default: '' },
         status: { ref: filterRef('status'), type: 'string', default: '' },
+        // 第 144 批：账号范围也要进 URL —— 第 100 批那次教训（ordering 没登记 → 点了表头没反应）
+        // 在这里同样适用：不进 URL 的话刷新/后退/把链接发给同事都会**丢掉这个筛选**，
+        // 于是"我明明筛出了已注销账号，别人打开却看不到"。
+        scope: { ref: filterRef('scope'), type: 'string', default: '' },
         // ⚠️ 排序也必须登记进来（第 100 批的坑）：`tableSortOrdering` 自己改了 ref，
         // 但没告诉 useQueryState，于是**后端收不到 ordering、地址栏也不变** ——
         // 表现是"点了表头没反应"。实测诊断日志里 onSortChange 已经算出
@@ -1264,12 +1323,13 @@ export default {
     const handleClear = () => applyFilter();
 
     const hasFilter = computed(() =>
-      Boolean(filters.value.role || filters.value.status || filters.value.search.trim()),
+      Boolean(filters.value.role || filters.value.status || filters.value.scope
+        || filters.value.search.trim()),
     );
 
     /** 一键回到全部用户：把三个条件一起清掉再查 */
     const resetFilters = () => {
-      filters.value = { search: '', role: '', status: '' };
+      filters.value = { search: '', role: '', status: '', scope: '' };
       applyFilter();
     };
 
