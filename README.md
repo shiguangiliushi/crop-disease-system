@@ -131,6 +131,7 @@ python docs/tools/check_line_endings.py        # 行尾一律 LF
 python docs/tools/strip_bom.py --check backend/api frontend/src docs
 python docs/tools/check_md_links.py            # .md 里的相对链接/图片都存在且**已入库**
 python docs/tools/check_i18n_coverage.py       # 模板里还有多少裸露中文（当前 0 条）
+python docs/tools/refresh_audit_report.py --check  # 注释审计报告的数字是否需要刷新
 python docs/tools/push_and_verify.py           # 推送并**核对远端 ref**（不是看命令有没有报错）
 
 # 备份到底可不可信：真跑一次演练（造标记物 → 备份 → 破坏 → 恢复 → 逐项核对）
