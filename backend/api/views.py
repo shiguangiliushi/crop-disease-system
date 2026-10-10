@@ -471,6 +471,46 @@ class LogoutView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+def _inactive_login_response(user):
+    """
+    「账号不可用」的登录响应（第 142 批抽成函数：**提前拦**与**兜底**共用一份文案）
+
+    ⚠️ 为什么必须在 `authenticate()` **之前**判：Django 的 `ModelBackend` 对
+    `is_active=False` 的用户直接返回 None（`user_can_authenticate`），
+    所以登录视图里 `authenticate()` 之后那段 `if not user.is_active` **够不着** ——
+    被停用的账号拿到的是 401「密码错误，还可尝试 N 次」，而且**每次都在消耗失败次数**，
+    5 次之后账号还会被临时锁定（第 137 批实测：把用户停用后，他用正确密码登录，
+    看到的是"密码错误，还可尝试 4 次"）。这条分支留着做兜底，但主路径在下面提前拦。
+
+    两种"不可用"要分开说，因为用户该做的事完全不同：
+      · **注销冷静期**（`has_pending_deletion`）→ 告诉他可以点「取消注销」自助恢复；
+      · **被管理员停用** → 告诉他没有自助入口，需要联系管理员。
+    """
+    if user.has_pending_deletion:
+        return Response({
+            'status': 'error',
+            'message': (
+                f'该账号已申请注销，正在 {user.deletion_grace_days()} 天冷静期内'
+                # ⚠️ `deletion_days_left` 是 **property**，不能加括号 ——
+                #    写成 `deletion_days_left()` 会得到
+                #    `TypeError: 'int' object is not callable`（实测：登录直接 500，
+                #    而视图的 except 把它包成"服务器内部错误"，堆栈只在日志里）
+                f'（还剩 {user.deletion_days_left} 天）。'
+                '如需继续使用，请点击「取消注销」并输入密码。'
+            ),
+            'code': 'account_pending_deletion',
+            'can_cancel': True,
+            'days_left': user.deletion_days_left,
+            'scheduled_for': user.deletion_scheduled_for,
+        }, status=status.HTTP_403_FORBIDDEN)
+
+    return Response({
+        'status': 'error',
+        'message': '账户已被停用，请联系管理员',
+        'code': 'account_disabled',
+    }, status=status.HTTP_403_FORBIDDEN)
+
+
 class LoginView(APIView):
     """
     用户登录API视图
@@ -562,24 +602,14 @@ class LoginView(APIView):
             #    用户会以为密码记错了，而实际上点一下"取消注销"就能恢复。
             #    所以这里提前判断，并用 `check_password` 自己验密码（验过了才告知，
             #    避免"知道用户名就能探测该账号是否在冷静期"）。
-            if existing_user and existing_user.has_pending_deletion:
+            #
+            # 第 142 批：条件从 `has_pending_deletion` **放宽到 `not is_active`** ——
+            #    同一个坑还有另一半：**被管理员停用**的账号（没有冷静期）此前也走不到
+            #    那条专门的提示，用户看到的是"密码错误，还可尝试 N 次"，还会**白白消耗失败次数**。
+            #    现在两种"账号不可用"都在这里拦，并按原因给不同说法（见 _inactive_login_response）。
+            if existing_user and not existing_user.is_active:
                 if existing_user.check_password(password):
-                    return Response({
-                        'status': 'error',
-                        'message': (
-                            f'该账号已申请注销，正在 {existing_user.deletion_grace_days()} 天冷静期内'
-                            # ⚠️ `deletion_days_left` 是 **property**，不能加括号 ——
-                            #    写成 `deletion_days_left()` 会得到
-                            #    `TypeError: 'int' object is not callable`（实测：登录直接 500，
-                            #    而视图的 except 把它包成"服务器内部错误"，堆栈只在日志里）
-                            f'（还剩 {existing_user.deletion_days_left} 天）。'
-                            '如需继续使用，请点击「取消注销」并输入密码。'
-                        ),
-                        'code': 'account_pending_deletion',
-                        'can_cancel': True,
-                        'days_left': existing_user.deletion_days_left,
-                        'scheduled_for': existing_user.deletion_scheduled_for,
-                    }, status=status.HTTP_403_FORBIDDEN)
+                    return _inactive_login_response(existing_user)
                 # 密码不对：与普通失败一视同仁（累加失败次数）
                 just_locked, remaining = existing_user.register_failed_login(
                     max_attempts=self.MAX_LOGIN_ATTEMPTS,
@@ -633,30 +663,10 @@ class LoginView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
 
             if not user.is_active:
-                # 第 101 批：**注销冷静期**要单独引导。
-                # 走到这里说明密码是对的（authenticate 成功了）—— 那用户最需要的不是
-                # "账户已被禁用，请联系管理员"，而是"你申请过注销，点这里可以取消"。
-                # 不区分的话，用户会以为密码记错了或账号被封了，而 15 天的冷静期
-                # 就白设了（没人知道还能反悔）。
-                if user.has_pending_deletion:
-                    return Response({
-                        'status': 'error',
-                        'message': (
-                            f'该账号已申请注销，正在 {user.deletion_grace_days()} 天冷静期内'
-                            f'（还剩 {user.deletion_days_left()} 天）。'
-                            '如需继续使用，请点击「取消注销」并输入密码。'
-                        ),
-                        'code': 'account_pending_deletion',
-                        'can_cancel': True,
-                        'days_left': user.deletion_days_left(),
-                        'scheduled_for': user.deletion_scheduled_for,
-                    }, status=status.HTTP_403_FORBIDDEN)
-
-                return Response({
-                    'status': 'error',
-                    'message': '账户已被禁用，请联系管理员',
-                    'code': 'account_disabled'
-                }, status=status.HTTP_403_FORBIDDEN)
+                # 第 142 批：这里现在只是**兜底**（主路径已在 authenticate 之前拦下，
+                # 见上面那段注释与 `_inactive_login_response`）。留着是因为认证后端将来
+                # 若换成"允许停用用户通过认证"的实现，这道判断还能接住。
+                return _inactive_login_response(user)
 
             # 第 35 批：登录成功 → 清零失败计数与锁定状态
             user.reset_login_failures()

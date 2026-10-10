@@ -315,6 +315,9 @@ export const zhCN = {
     welcome: '欢迎回来',
     // 第 84 批：登录页兜底错误（脚本里写死中文）
     networkError: '登录失败，请检查网络连接或稍后再试。',
+    // 第 142 批：被停用账号的登录提示（后端 code=account_disabled；这里给双语版本，
+    // 因为后端那句是中文，英文界面下会中英混排）
+    accountDisabled: '该账号已被停用，请联系管理员',
     loginSubtitle: '登录后即可拍照识别作物病害，获取科学防治方案。',
     username: '用户名',
     password: '密码',
@@ -2888,6 +2891,8 @@ export const en = {
     welcome: 'Welcome back',
     // 第 84 批
     networkError: 'Sign-in failed — check your connection and try again.',
+    // 第 142 批：suspended account on login (backend code=account_disabled)
+    accountDisabled: 'This account has been suspended. Please contact an administrator.',
     loginSubtitle: 'Sign in to identify crop diseases from photos and get treatment advice.',
     username: 'Username',
     password: 'Password',

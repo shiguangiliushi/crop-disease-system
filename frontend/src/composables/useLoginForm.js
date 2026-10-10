@@ -209,7 +209,13 @@ export function useLoginForm({ adminEntry = false } = {}) {
       pendingDeletion.value = error?.code === 'account_pending_deletion'
         ? { message: error.message || '', daysLeft: error.daysLeft }
         : null;
-      errorMessage.value = error?.message || t('auth.networkError');
+      // 第 142 批：被**停用**（不是冷静期）的账号，后端已经能给出准确原因了
+      // （`account_disabled`）。这里用前端文案覆盖一下：后端那句是中文，
+      // 英文界面下会中英混排 —— 这类**固定**提示适合放语言包里，
+      // 带动态数字的（如"还可尝试 N 次"）才继续用后端文案。
+      errorMessage.value = error?.code === 'account_disabled'
+        ? t('auth.accountDisabled')
+        : (error?.message || t('auth.networkError'));
     } finally {
       isLoading.value = false;
     }

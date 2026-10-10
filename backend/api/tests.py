@@ -9586,3 +9586,117 @@ class ForumBoardAdminTests(APITestCase):
                                     {'orders': [{'id': self.board_a.id, 'order': 5}]},
                                     format='json').status_code,
             status.HTTP_403_FORBIDDEN)
+
+
+# ============================================================================
+# 第 142 批：被停用的账号登录时要说清原因，且**不消耗失败次数**
+# ============================================================================
+# 修的是什么：登录视图里本来就有 `account_disabled` 分支，但它**够不着** ——
+# Django 的 ModelBackend 对 is_active=False 的用户直接返回 None，
+# 于是被停用的账号拿到的提示是「密码错误，还可尝试 4 次」（第 137 批实测），
+# 而且**每试一次都在扣失败次数**，5 次后账号还会被临时锁定 ——
+# 用户拿着正确密码，却被告知密码错，越试越像"密码错了"。
+#
+# 修法：把第 101 批为"注销冷静期"写的**提前拦**从 `has_pending_deletion`
+# 放宽到 `not is_active`，两种不可用分别给说法（见 `_inactive_login_response`）。
+#
+# 这组测试盯四件事：
+#   1. 停用 + 密码正确 → 403/account_disabled，**失败次数不增加**、不发 token；
+#   2. 停用 + 密码错误 → 与普通失败一视同仁（**防枚举**：不知道密码的人拿不到区别）；
+#   3. 冷静期账号的老行为不变（仍给 can_cancel 自助恢复信息）；
+#   4. 恢复后能正常登录（停用是可逆的）。
+# ============================================================================
+class DisabledAccountLoginTests(APITestCase):
+    """被停用账号的登录提示（第 142 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_dis_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.user = User.objects.create_user(
+            username='zz_dis_user', password='pw12345678', role='USER',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+
+    def _login(self, password='pw12345678'):
+        return APIClient().post('/api/login/', {
+            'username': 'zz_dis_user', 'password': password,
+        }, format='json')
+
+    def _suspend(self):
+        self.client_super.post(f'/api/admin/users/{self.user.id}/status/',
+                               {'is_active': False}, format='json')
+        self.user.refresh_from_db()
+
+    def test_suspended_with_correct_password_gets_clear_message(self):
+        self._suspend()
+        before = self.user.failed_login_attempts
+
+        response = self._login()
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.assertEqual(response.data['code'], 'account_disabled')
+        self.assertIn('停用', response.data['message'])
+        # 不能发 token，也不该消耗失败次数
+        self.assertNotIn('token', response.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.failed_login_attempts, before,
+                         '密码是对的，不该消耗失败次数')
+        self.assertFalse(Token.objects.filter(user=self.user).exists())
+
+    def test_repeated_attempts_do_not_lock_the_account(self):
+        """反复登录（密码正确）不会把账号试到锁定 —— 这正是修复前的问题"""
+        self._suspend()
+        for _ in range(6):
+            response = self._login()
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(response.data['code'], 'account_disabled')
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_locked, '停用账号不该因为"登录被拒"而被锁定')
+        self.assertEqual(self.user.failed_login_attempts, 0)
+
+    def test_suspended_with_wrong_password_looks_like_a_normal_failure(self):
+        """防枚举：不知道密码的人拿不到"这个账号被停用了"这个区别"""
+        self._suspend()
+        response = self._login(password='wrong-password')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED, response.data)
+        self.assertEqual(response.data['code'], 'invalid_password')
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.failed_login_attempts, 1)
+
+    def test_reenabled_account_can_login_again(self):
+        self._suspend()
+        self.assertEqual(self._login().data['code'], 'account_disabled')
+        self.client_super.post(f'/api/admin/users/{self.user.id}/status/',
+                               {'is_active': True}, format='json')
+        ok = self._login()
+        self.assertEqual(ok.status_code, status.HTTP_200_OK, ok.data)
+        self.assertTrue(ok.data['data']['token'])
+
+    def test_pending_deletion_still_gets_self_service_hint(self):
+        """第 101 批的老行为不能破：冷静期账号仍要拿到"可以取消注销"的信息"""
+        self.user.request_deletion()
+        response = self._login()
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.assertEqual(response.data['code'], 'account_pending_deletion')
+        self.assertTrue(response.data['can_cancel'])
+        self.assertIn('days_left', response.data)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.failed_login_attempts, 0)
+
+    def test_soft_deleted_account_is_indistinguishable(self):
+        """
+        已被删除（软删除）的账号：外部探测不出"这个账号存在过"
+
+        `soft_delete()` 做三件事：**改写用户名**（`deleted_<id>`）、清空个人信息、
+        把密码换成随机串。所以拿原用户名来登录，得到的只是"用户名或密码错误"（404）——
+        既不暴露"该账号被停用/被删除"，也不暴露它曾经存在。
+        （第一版测试断言的是 401 invalid_password，实际是 404 user_not_found：
+         用户名已经被让出去了，这比"密码错"更彻底地不可区分。）
+        """
+        self.user.soft_delete(by=self.superuser, reason='admin')
+        response = self._login()
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND, response.data)
+        self.assertEqual(response.data['code'], 'user_not_found')
