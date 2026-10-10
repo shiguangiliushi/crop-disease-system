@@ -10363,3 +10363,207 @@ class AuditLogDateFilterTests(APITestCase):
         response = self.client_super.get('/api/admin/audit-logs/?start=不是日期&end=2026-13-45')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 3)
+
+
+# ============================================================================
+# 第 149 批：控制台的评论管理
+# ============================================================================
+# 农户端的评论列表是**挂在帖子下**的（`forums/posts/<post_pk>/comments/`），
+# 控制台要跨帖子看评论（"最近有没有人在刷广告"），所以补了一套全局接口。
+# 权限口径**沿用既有实现**（不是新定的）：
+#   · 软删除（内容置 [已删除]、行还在）= 内容审核工作 → review 模块；
+#   · 硬删除（从库里真删、不可逆）= 仅全权管理员；
+#   · 批量只做**软**删除 —— 批量硬删除是不可逆的成批破坏，控制台不该有那个按钮。
+# ============================================================================
+class AdminCommentManagementTests(APITestCase):
+    """控制台评论管理（第 149 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_acm_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_acm_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review',
+                                         granted_by=self.superuser)
+        self.news_editor = User.objects.create_user(
+            username='zz_acm_news', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.news_editor, module='news',
+                                         granted_by=self.superuser)
+        self.plain = User.objects.create_user(
+            username='zz_acm_plain', password='pw12345678', role='USER',
+        )
+        self.board = ForumBoard.objects.create(name='zz评论管理版块', order=990)
+        self.post = Post.objects.create(title='zz评论管理帖子', content='<p>x</p>',
+                                        author=self.plain, board=self.board,
+                                        status='published')
+        self.comments = [
+            Comment.objects.create(post=self.post, author=self.plain,
+                                   content=f'zz评论内容{i}')
+            for i in range(3)
+        ]
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_news = APIClient()
+        self.client_news.force_authenticate(user=self.news_editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    # ---------- 列表 ----------
+    def test_review_editor_can_list(self):
+        response = self.client_editor.get('/api/admin/comments/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertGreaterEqual(response.data['count'], 3)
+        row = response.data['results'][0]
+        for field in ('id', 'content', 'author', 'post', 'is_deleted', 'created_at'):
+            self.assertIn(field, row)
+        self.assertIn('title', row['post'], '列表要带所属帖子的标题，否则管理员不知道是哪条帖子下的')
+
+    def test_list_requires_review_module(self):
+        self.assertEqual(self.client_plain.get('/api/admin/comments/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        # 只有 news 模块的编辑员也不行：评论审核属于 review
+        self.assertEqual(self.client_news.get('/api/admin/comments/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+
+    def test_list_filters(self):
+        self.client_editor.post(f'/api/admin/comments/{self.comments[0].id}/soft-delete/')
+
+        # 默认不含已删除（否则列表里全是 [已删除]）
+        default_rows = self.client_editor.get('/api/admin/comments/').data['results']
+        self.assertNotIn('[已删除]', [row['content'] for row in default_rows])
+
+        # only_deleted=true → 只看已删除
+        deleted = self.client_editor.get('/api/admin/comments/?only_deleted=true').data
+        self.assertEqual(deleted['count'], 1)
+        self.assertTrue(deleted['results'][0]['is_deleted'])
+
+        # 按帖子 / 作者 / 关键字
+        self.assertEqual(
+            self.client_editor.get(f'/api/admin/comments/?post={self.post.id}').data['count'], 2)
+        self.assertEqual(
+            self.client_editor.get(f'/api/admin/comments/?author={self.plain.id}').data['count'], 2)
+        self.assertEqual(
+            self.client_editor.get('/api/admin/comments/?search=zz评论内容1').data['count'], 1)
+
+        # 非法筛选值忽略，不该 500
+        self.assertEqual(
+            self.client_editor.get('/api/admin/comments/?ordering=不存在的字段&post=abc').status_code,
+            status.HTTP_200_OK)
+
+    # ---------- 软删除 ----------
+    def test_soft_delete_replaces_content_and_recounts(self):
+        target = self.comments[0]
+        response = self.client_editor.post(f'/api/admin/comments/{target.id}/soft-delete/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertTrue(response.data['changed'])
+
+        target.refresh_from_db()
+        self.post.refresh_from_db()
+        self.assertEqual(target.content, '[已删除]')
+        self.assertTrue(target.is_deleted)
+        self.assertEqual(self.post.comment_count, 2,
+                         '帖子的评论数要跟着减少（第 17 批的老坑：update_fields 会跳过重算）')
+
+    def test_soft_delete_is_idempotent(self):
+        target = self.comments[0]
+        self.client_editor.post(f'/api/admin/comments/{target.id}/soft-delete/')
+        again = self.client_editor.post(f'/api/admin/comments/{target.id}/soft-delete/')
+        self.assertEqual(again.status_code, status.HTTP_200_OK)
+        self.assertFalse(again.data['changed'], '再点一次不该报错，也不该重复记日志')
+        self.assertEqual(AdminAuditLog.objects.filter(action='comment.soft_delete').count(), 1)
+
+    def test_soft_delete_logs_original_content(self):
+        """软删除要留原内容：内容被置成 [已删除] 之后，日志是唯一的线索"""
+        target = self.comments[1]
+        self.client_editor.post(f'/api/admin/comments/{target.id}/soft-delete/')
+        log = AdminAuditLog.objects.get(action='comment.soft_delete')
+        self.assertEqual(log.target_type, 'comment')
+        self.assertIn('zz评论内容1', log.target_repr)
+        self.assertIn('zz评论内容1', log.detail)
+
+    def test_plain_user_cannot_soft_delete(self):
+        response = self.client_plain.post(
+            f'/api/admin/comments/{self.comments[0].id}/soft-delete/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.comments[0].refresh_from_db()
+        self.assertFalse(self.comments[0].is_deleted)
+
+    # ---------- 硬删除 ----------
+    def test_hard_delete_is_full_admin_only(self):
+        target = self.comments[0]
+        # 有 review 模块的编辑员也不行：不可逆动作只给全权管理员
+        self.assertEqual(
+            self.client_editor.delete(f'/api/admin/comments/{target.id}/').status_code,
+            status.HTTP_403_FORBIDDEN)
+        self.assertTrue(Comment.objects.filter(id=target.id).exists())
+
+        response = self.client_super.delete(f'/api/admin/comments/{target.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Comment.objects.filter(id=target.id).exists())
+        self.post.refresh_from_db()
+        self.assertEqual(self.post.comment_count, 2)
+
+    def test_hard_delete_keeps_the_original_text_in_the_log(self):
+        """行都删了，日志里必须留下原文 —— 否则事后无从追查删掉的是什么"""
+        target = self.comments[2]
+        self.client_super.delete(f'/api/admin/comments/{target.id}/')
+        log = AdminAuditLog.objects.get(action='comment.hard_delete')
+        self.assertIn('zz评论内容2', log.detail)
+        self.assertIn('不可逆', log.detail)
+
+    # ---------- 批量（只做软删除）----------
+    def test_bulk_soft_delete(self):
+        ids = [c.id for c in self.comments]
+        response = self.client_editor.post('/api/admin/comments/bulk-delete/',
+                                           {'ids': ids + [999999]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['succeeded'], 3)
+        self.assertEqual(response.data['failed'], 1, '不存在的 id 要逐条说明，而不是整体失败')
+        for comment in self.comments:
+            comment.refresh_from_db()
+            self.assertTrue(comment.is_deleted)
+        log = AdminAuditLog.objects.get(action='comment.bulk_delete')
+        self.assertIn('3/4', log.detail)
+        self.assertIn('zz评论内容', log.target_repr, '批量也要能看出删的是什么内容')
+
+    def test_bulk_delete_input_validation(self):
+        for payload in ({'ids': 'abc'}, {'ids': []}, {'ids': list(range(1, 202))}):
+            self.assertEqual(
+                self.client_editor.post('/api/admin/comments/bulk-delete/', payload,
+                                        format='json').status_code,
+                status.HTTP_400_BAD_REQUEST)
+
+    def test_bulk_delete_requires_review_module(self):
+        self.assertEqual(
+            self.client_news.post('/api/admin/comments/bulk-delete/',
+                                  {'ids': [self.comments[0].id]}, format='json').status_code,
+            status.HTTP_403_FORBIDDEN)
+
+    def test_nested_soft_delete_and_admin_soft_delete_agree(self):
+        """
+        农户端那条路径与控制台这条**必须是同一个实现**
+
+        同一个动作写两遍，迟早变成两套口径（这个项目第 16/17 批已经栽过一次：
+        两条删除路径的评论数维护不一样）。这里把两条路径跑一遍，结果必须一致。
+        """
+        via_nested = self.comments[0]
+        self.client_editor.post(
+            f'/api/forums/posts/{self.post.id}/comments/{via_nested.id}/delete/')
+        via_admin = self.comments[1]
+        self.client_editor.post(f'/api/admin/comments/{via_admin.id}/soft-delete/')
+
+        for comment in (via_nested, via_admin):
+            comment.refresh_from_db()
+            self.assertEqual(comment.content, '[已删除]')
+            self.assertTrue(comment.is_deleted)
+        self.post.refresh_from_db()
+        self.assertEqual(self.post.comment_count, 1)

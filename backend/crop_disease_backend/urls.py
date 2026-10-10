@@ -69,6 +69,11 @@ AdminUserStatusView = import_view('api.views_user', 'AdminUserStatusView')
 # 第 146 批：管理操作日志（只读，仅全权管理员）
 AdminAuditLogListView = import_view('api.views_audit', 'AdminAuditLogListView')
 AdminAuditLogActionsView = import_view('api.views_audit', 'AdminAuditLogActionsView')
+# 第 149 批：控制台的评论管理（全局列表 + 软删/硬删/批量软删）
+AdminCommentListView = import_view('api.views_comments_admin', 'AdminCommentListView')
+AdminCommentSoftDeleteView = import_view('api.views_comments_admin', 'AdminCommentSoftDeleteView')
+AdminCommentHardDeleteView = import_view('api.views_comments_admin', 'AdminCommentHardDeleteView')
+AdminCommentBulkDeleteView = import_view('api.views_comments_admin', 'AdminCommentBulkDeleteView')
 UserCommentsView = import_view('api.views_user', 'UserCommentsView')  # 第 25 批：用户的评论列表
 # 第 23 批：用户资料完善（真实头像 + 修改密码）
 UserAvatarView = import_view('api.views_user', 'UserAvatarView')
@@ -331,6 +336,16 @@ api_urlpatterns = [
     # 第 131 批：开通编辑员账号（仅超管；账号无可用密码，返回一次性设置密码链接）。
     # ⚠️ 必须放在 `<int:user_id>/` 之前 —— 虽然 "create-editor" 不是 int、匹配不上，
     #    但顺序一致更不容易出错（同 bulk-delete 的约定）。
+    # 第 149 批：控制台的评论管理
+    # ⚠️ `bulk-delete/` 必须放在 `<int:pk>/` 之前 —— 否则 'bulk-delete' 会被
+    #    当成 pk 去匹配（int 转换失败 → 404，而不是走批量那条）。
+    path('admin/comments/', AdminCommentListView.as_view(), name='admin-comments'),
+    path('admin/comments/bulk-delete/', AdminCommentBulkDeleteView.as_view(),
+         name='admin-comments-bulk-delete'),
+    path('admin/comments/<int:pk>/soft-delete/',
+         AdminCommentSoftDeleteView.as_view(), name='admin-comment-soft-delete'),
+    path('admin/comments/<int:pk>/', AdminCommentHardDeleteView.as_view(),
+         name='admin-comment-hard-delete'),
     # 第 146 批：管理操作日志（只读，仅全权管理员）
     path('admin/audit-logs/', AdminAuditLogListView.as_view(), name='admin-audit-logs'),
     path('admin/audit-logs/actions/', AdminAuditLogActionsView.as_view(),

@@ -1222,21 +1222,11 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
                 {'detail': '您没有权限删除此评论'}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-            
-        # 软删除评论
-        comment.content = '[已删除]'
-        comment.is_deleted = True
-        comment.save(update_fields=['content', 'is_deleted', 'updated_at'])
 
-        # 第 17 批修复：软删除走的是 update_fields 保存，而 Comment.save() 里维护
-        # post.comment_count 的条件是「未删除且不是回复」—— 此时 is_deleted=True，
-        # 该分支被跳过 → 帖子上的「评论数」不会减少。这里显式重算一次。
-        comment.post.update_comment_count()
-
-        # 说明：原代码这里会去维护 comment.parent.reply_count，但 Comment 模型
-        # **没有 reply_count 字段**，save(update_fields=['reply_count', ...]) 直接抛
-        # ValueError → 删除评论接口稳定 500（且评论其实已经软删除，属于"半成功"）。
-        # 回复数是实时用 replies.filter(...).count() 统计的，本就不需要这个冗余字段。
+        # 第 149 批：实现抽到模块级 `soft_delete_comment()` ——
+        # 控制台的评论管理（`views_comments_admin.py`）也要走**同一个**函数，
+        # 否则"农户端删评论"与"控制台删评论"迟早会变成两套口径。
+        soft_delete_comment(comment)
         return Response(status=status.HTTP_204_NO_CONTENT)
         
     def perform_destroy(self, instance):
@@ -1486,3 +1476,30 @@ class LikeViewSet(viewsets.ModelViewSet):  # 定义点赞视图集
                 {'detail': str(e)},  # 设置错误详情
                 status=status.HTTP_400_BAD_REQUEST  # 设置HTTP状态码
             )
+
+
+# ============================================================================
+# 第 149 批：软删除评论（农户端与控制台**共用**这一个实现）
+# ============================================================================
+def soft_delete_comment(comment):
+    """
+    软删除一条评论：内容置为 `[已删除]`、`is_deleted=True`，并重算帖子的评论数
+
+    为什么抽成模块级函数：农户端（`CommentViewSet.delete`）与控制台的评论管理
+    （`views_comments_admin.py`）都要做这件事。**同一件事写两遍，迟早变成两套口径**
+    —— 这个项目里已经栽过几次（第 16/17 批的评论数、第 128 批的双删除口径）。
+
+    两个历史坑都在这里兜住（原注释保留）：
+      · 软删除走的是 `update_fields` 保存，而 `Comment.save()` 里维护
+        `post.comment_count` 的条件是「未删除且不是回复」—— 此时 `is_deleted=True`，
+        该分支被跳过 → 帖子的评论数不会减少。所以这里**显式重算一次**。
+      · 原代码还会去维护 `comment.parent.reply_count`，但 Comment 模型**没有这个字段**，
+        `save(update_fields=[...])` 直接抛 ValueError → 删除评论接口稳定 500
+        （而评论其实已经软删除了，属于"半成功"）。回复数是实时统计的，本不需要这个冗余字段。
+    """
+    comment.content = '[已删除]'
+    comment.is_deleted = True
+    comment.save(update_fields=['content', 'is_deleted', 'updated_at'])
+    if comment.post_id:
+        comment.post.update_comment_count()
+    return comment
