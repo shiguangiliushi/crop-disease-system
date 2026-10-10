@@ -102,7 +102,7 @@ cd mobile && npm install && npm run dev        # http://127.0.0.1:5174
 > 它写清了 `pip install -r requirements.txt` **照原样装不出能跑的环境**这件事，
 > 以及生产启动（gunicorn + WhiteNoise）、环境变量、必须挂的几个定时任务。
 > 演示数据可用 `add_sample_news` / `add_popular_pests` / `add_detailed_pests` 等管理命令灌入
-> （共 19 个管理命令，`python manage.py help` 可查）。
+> （共 **20 个**管理命令，`python manage.py help` 可查）。
 
 ---
 
@@ -132,6 +132,9 @@ python docs/tools/strip_bom.py --check backend/api frontend/src docs
 python docs/tools/check_md_links.py            # .md 里的相对链接/图片都存在且**已入库**
 python docs/tools/check_i18n_coverage.py       # 模板里还有多少裸露中文（当前 0 条）
 python docs/tools/push_and_verify.py           # 推送并**核对远端 ref**（不是看命令有没有报错）
+
+# 备份到底可不可信：真跑一次演练（造标记物 → 备份 → 破坏 → 恢复 → 逐项核对）
+cd backend && python manage.py backup_drill --yes
 ```
 
 ---
