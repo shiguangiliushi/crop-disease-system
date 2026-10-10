@@ -51,6 +51,9 @@ const navItems = [
   // 第 147 批：论坛管理（与内容审核同一模块：能审帖的人就能管理帖子）
   { to: '/admin/forum', icon: 'fas fa-comments', labelKey: 'manage.forum',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
+  // 第 149 批：评论管理（与论坛管理同一模块：评论审核就是内容审核工作）
+  { to: '/admin/comments', icon: 'fas fa-comment-dots', labelKey: 'manage.comments',
+    capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
   // 第 148 批：操作日志（**仅全权管理员** —— 显示"谁对谁做了什么"，编辑员不该看到）
   { to: '/admin/audit-logs', icon: 'fas fa-clipboard-list', labelKey: 'manage.auditLogs',
     capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },

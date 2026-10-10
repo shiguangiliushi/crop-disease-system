@@ -454,6 +454,24 @@ const router = createRouter({
       }
     },
     {
+      // 第 149 批：管理端「评论管理」
+      // 帖子有「论坛管理」页，评论却一直没有控制台入口 —— 一波广告刷在十几条帖子的
+      // 评论区里，只能一条条帖子点进去删。农户端的评论列表还挂在帖子下，没法跨帖子看。
+      path: '/admin/comments',
+      name: 'admin-comments',
+      component: () => import('@/views/AdminCommentsView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        capability: 'CONTENT',
+        module: 'review',   // 与内容审核 / 论坛管理同一模块：审核评论正是审核工作
+        adminArea: true,
+        title: '评论管理',
+        breadcrumb: ['管理', '评论管理']
+      }
+    },
+
+    {
       // 第 148 批：管理端「操作日志」
       // 第 146 批把管理动作落进了 AdminAuditLog 表并给了只读接口，但只能在 Django admin 里看。
       // 这一页把它接进控制台：按动作/操作人/时间/关键字筛选。**仅全权管理员**。
