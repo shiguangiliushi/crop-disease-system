@@ -188,6 +188,38 @@
                   <b>{{ post.like_count || 0 }}</b><i>{{ t('forum.likes') }}</i>
                 </span>
               </div>
+
+              <!--
+                第 145 批：版主的「置顶 / 加精」开关
+                ----------------------------------------------------------------
+                这两个能力（`posts/<id>/set_pinned/`、`set_essence/`）第 24 批就写好了，
+                但界面上一直只有**作者自己的编辑页**有勾选框 —— 也就是说
+                "版主给别人的帖子加精/置顶"**根本做不到**（接口成了死代码）。
+                开关放在这里（而不是控制台）是因为版主就是在浏览帖子时决定哪条值得置顶。
+                ⚠️ `@click.stop`：整行是可点的（进帖子详情），别让按钮顺手把人带走。
+              -->
+              <div v-if="canModerate" class="post-row-moderate" @click.stop>
+                <el-button
+                  size="small"
+                  :type="post.is_pinned ? 'danger' : 'default'"
+                  :plain="!post.is_pinned"
+                  :loading="moderatingId === `pin-${post.id}`"
+                  @click="togglePin(post)"
+                >
+                  <i class="fas fa-thumbtack"></i>
+                  {{ post.is_pinned ? t('forum.unpinAction') : t('forum.pinAction') }}
+                </el-button>
+                <el-button
+                  size="small"
+                  :type="post.is_essence ? 'warning' : 'default'"
+                  :plain="!post.is_essence"
+                  :loading="moderatingId === `essence-${post.id}`"
+                  @click="toggleEssence(post)"
+                >
+                  <i class="fas fa-star"></i>
+                  {{ post.is_essence ? t('forum.unessenceAction') : t('forum.essenceAction') }}
+                </el-button>
+              </div>
             </li>
           </ul>
 
@@ -290,7 +322,11 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { getForumBoards, getHotPosts, getPosts, getMyPosts } from '@/api/forum';
+import {
+  getForumBoards, getHotPosts, getPosts, getMyPosts,
+  setPostEssence, setPostPinned,   // 第 145 批：版主置顶/加精
+} from '@/api/forum';
+import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
 import { useAuthStore } from '@/stores/auth';
 import PageExtras from '@/components/PageExtras.vue';
@@ -511,6 +547,59 @@ export default {
 
     const goToBoard = (boardId) => router.push({ name: 'forum-board', params: { id: boardId } });
     const goToPost = (postId) => router.push({ name: 'post-detail', params: { id: postId } });
+
+    // ========================================================================
+    // 第 145 批：版主的「置顶 / 加精」
+    // ========================================================================
+    /**
+     * 谁能看到这两个按钮
+     *
+     * 与后端 `is_moderator()` **同一口径**：有 `review` 内容模块（信息编辑员/管理员）
+     * 或属于 Moderators 组。前端拿不到"组"的信息，所以这里按前两条判断 ——
+     * 只看组的那种用户看不到按钮（后端仍会放行），这是刻意选择：
+     * **画一个后端可能拒绝的按钮，比少画一个按钮更糟**（后者只是不显示，用户不会白点）。
+     */
+    const canModerate = computed(() => Boolean(
+      authStore.hasContentModule?.('review')
+      || authStore.user?.is_staff
+      || authStore.user?.is_superuser,
+    ));
+
+    const moderatingId = ref('');
+
+    /**
+     * 置顶 / 取消置顶
+     *
+     * 接口返回的是**最新状态**（`{id, is_pinned}`），所以用返回值就地更新那一行，
+     * 不整页重载 —— 重载会把版主正在看的列表滚回顶部。置顶会改变排序，
+     * 但"点完就跳位置"更让人困惑，所以这里只改标记，让用户自己刷新看新顺序。
+     */
+    const togglePin = async (post) => {
+      moderatingId.value = `pin-${post.id}`;
+      try {
+        const data = await setPostPinned(post.id, !post.is_pinned);
+        post.is_pinned = data?.is_pinned ?? !post.is_pinned;
+        ElMessage.success(post.is_pinned ? t('forum.pinOk') : t('forum.unpinOk'));
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('forum.pinFailed')));
+      } finally {
+        moderatingId.value = '';
+      }
+    };
+
+    /** 加精 / 取消加精（同上） */
+    const toggleEssence = async (post) => {
+      moderatingId.value = `essence-${post.id}`;
+      try {
+        const data = await setPostEssence(post.id, !post.is_essence);
+        post.is_essence = data?.is_essence ?? !post.is_essence;
+        ElMessage.success(post.is_essence ? t('forum.essenceOk') : t('forum.unessenceOk'));
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('forum.essenceFailed')));
+      } finally {
+        moderatingId.value = '';
+      }
+    };
     const goToNewPost = () => router.push({ name: 'new-post' });
     const goToFavorites = () => router.push({ name: 'forum-favorites' });
 
@@ -553,6 +642,8 @@ export default {
       changePage,
       goToBoard,
       goToPost,
+      // 第 145 批：版主置顶/加精
+      canModerate, moderatingId, togglePin, toggleEssence,
       goToNewPost,
       goToFavorites,
       goToMyPosts,

@@ -23,6 +23,35 @@ const API_CONFIG = {
  * 版块相关API
  */
 /**
+ * 置顶 / 取消置顶（第 145 批接上前端）
+ *
+ * 接口第 24 批就有（`posts/<id>/set_pinned/`，后端用 `is_moderator()` 判定：
+ * 有 review 内容模块或属于 Moderators 组），但界面上一直只有**作者自己的编辑页**
+ * 有那个勾选框 —— "版主给别人的帖子置顶"根本做不到，接口等于死代码。
+ * 现在论坛列表里直接给版主一个开关。
+ *
+ * 返回 `{id, is_pinned}`（最新状态），调用方就地更新那一行。
+ *
+ * @param {number} postId
+ * @param {boolean} isPinned
+ */
+export function setPostPinned(postId, isPinned) {
+  return http.post(`/forums/posts/${postId}/set_pinned/`, { is_pinned: isPinned })
+    .then((res) => res.data);
+}
+
+/**
+ * 加精 / 取消加精（第 145 批）—— 同 `setPostPinned`，返回 `{id, is_essence}`
+ *
+ * @param {number} postId
+ * @param {boolean} isEssence
+ */
+export function setPostEssence(postId, isEssence) {
+  return http.post(`/forums/posts/${postId}/set_essence/`, { is_essence: isEssence })
+    .then((res) => res.data);
+}
+
+/**
  * 新建版块（第 143 批，管理端「版块管理」页用）
  *
  * 接口本来就有（`POST /forums/boards/`，权限 `IsBroadcastManager | IsModeratorOrReadOnly`），
