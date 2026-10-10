@@ -68,7 +68,8 @@ from .pagination import CustomPagination  # 导入自定义分页类
 
 User = get_user_model()  # 第 38 批：给版主发通知时需要
 
-logger = logging.getLogger(__name__)  # 日志记录器（配置见 settings.LOGGING 的 api 记录器）
+logger = logging.getLogger(__name__)
+from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志  # 日志记录器（配置见 settings.LOGGING 的 api 记录器）
 
 
 def is_moderator(user):
@@ -160,6 +161,9 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
         board.save(update_fields=['is_active', 'updated_at'])  # 保存更新
 
         action = '启用' if is_active else '禁用'  # 设置操作名称
+        # 第 146 批：落一条操作日志（版块启停直接影响农户端能不能看到它）
+        log_admin_action(request.user, 'board.set_status', target=board,
+                         detail=f'{action}版块', request=request)
         return Response({  # 返回成功响应
             'detail': f'已{action}版块',
             'is_active': board.is_active  # 返回更新后的状态
@@ -200,6 +204,9 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
                 updated_at=timezone.now()  # 设置更新时间
             )
 
+        # 第 146 批：排序会改变农户端论坛里版块的先后顺序，值得留痕
+        log_admin_action(request.user, 'board.update_order', target_type='board',
+                         detail=f'更新 {updated} 个版块的排序', request=request)
         return Response({  # 返回成功响应
             'detail': f'成功更新 {updated} 个版块的排序',
             'updated': updated  # 返回更新数量

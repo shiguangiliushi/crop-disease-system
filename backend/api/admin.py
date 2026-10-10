@@ -2,6 +2,7 @@ from django.contrib import admin  # 导入Django管理后台模块
 from django.contrib.auth.admin import UserAdmin  # 导入用户管理类
 from django.utils.html import format_html  # 导入HTML格式化工具
 from .models import CustomUser, PestInfo, PreventionMethod, DetectionHistory, Feedback, News  # 导入模型
+from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志（只读注册）
 from .models_forum import ForumBoard, Post, Comment, Like  # 导入论坛模型
 from .models_notify import Announcement, Notification  # 第 37 批：通知与公告
 # 第 49 批：专家咨询（管理员也可以在 Django 后台授予专家、审阅问答）
@@ -201,6 +202,37 @@ class LikeAdmin(admin.ModelAdmin):  # 点赞管理类
 # ============================================================================
 # 通知与公告（第 37 批）
 # ============================================================================
+# ============================================================================
+# 管理操作日志（第 146 批）—— **只读**
+# ============================================================================
+# 为什么只读：这张表是"谁在什么时候对谁做了什么"的凭据。
+# 允许在 admin 里改它，等于让有权限的人**篡改审计记录**，那它就失去意义了。
+# 所以三个动作全部禁掉，只留查看/搜索/筛选（新增只能由 `api/audit.py` 的助手写入）。
+@admin.register(AdminAuditLog)
+class AdminAuditLogAdmin(admin.ModelAdmin):
+    list_display = ('created_at', 'actor_repr', 'action', 'target_type',
+                    'target_repr', 'detail_short', 'ip')
+    list_filter = ('action', 'target_type', 'created_at')
+    search_fields = ('actor_repr', 'target_repr', 'detail')
+    date_hierarchy = 'created_at'
+    ordering = ('-created_at',)
+    list_per_page = 50
+
+    def has_add_permission(self, request):        # 不允许手工补记录
+        return False
+
+    def has_change_permission(self, request, obj=None):   # 不允许改
+        return False
+
+    def has_delete_permission(self, request, obj=None):   # 不允许删
+        return False
+
+    @admin.display(description='说明')
+    def detail_short(self, obj):
+        text = obj.detail or ''
+        return text if len(text) <= 60 else f'{text[:60]}…'
+
+
 @admin.register(Announcement)
 class AnnouncementAdmin(admin.ModelAdmin):
     list_display = ('title', 'is_active', 'is_pinned', 'expires_at', 'created_by', 'created_at')

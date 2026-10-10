@@ -27,6 +27,7 @@ from .pagination import CustomPagination  # 第 76 批：认 page_size 的全站
 from rest_framework.parsers import MultiPartParser, FormParser  # 第23批：头像上传需要 multipart 解析
 from rest_framework.authtoken.models import Token  # 第23批：改密码后轮换 token
 from django.contrib.auth import get_user_model  # 导入获取用户模型的函数
+from .audit import log_admin_action  # 第 146 批：管理操作日志
 from django.contrib.auth import logout  # 第 95 批：注销账号时清掉当前会话
 from django.db.models import Count  # 导入Django的计数聚合函数
 import logging  # 导入日志模块
@@ -910,6 +911,12 @@ class AdminUserListView(ListAPIView):
             except Exception as exc:  # noqa: BLE001
                 logger.warning('批量删除时清理头像失败: %s', exc)
 
+        log_admin_action(
+            request.user, 'user.bulk_delete', target_type='user',
+            target_id=','.join(str(i) for i in ids[:20]),
+            detail=f'批量软删除账号 {ok_count}/{len(ids)} 条',
+            request=request,
+        )
         logger.info('批量删除用户 by=%s 成功=%s/%s', request.user.id, ok_count, len(ids))
         return Response({
             'requested': len(ids),
@@ -964,6 +971,7 @@ class AdminUserDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        deleted_name = target.username   # 第 146 批：日志快照用（删除会改名）
         old_avatar = target.soft_delete(by=actor, reason='admin')
         if old_avatar:
             try:
@@ -972,6 +980,10 @@ class AdminUserDetailView(APIView):
             except Exception as exc:  # noqa: BLE001
                 logger.warning('删除被注销用户的头像文件失败: %s', exc)
 
+        # ⚠️ 快照要显式传原用户名：`soft_delete()` 已经把 username 改成 `deleted_<id>`，
+        #    不传的话日志会变成"管理员删除了 deleted_953" —— 读的人不知道删的是谁。
+        log_admin_action(actor, 'user.delete', target=target, target_repr=deleted_name,
+                         detail='软删除（用户名已让出、个人信息清空）', request=request)
         logger.info('管理员 %s 删除了用户 %s（软删除）', actor.username, target.id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1049,6 +1061,11 @@ class AdminUserStatusView(APIView):
             actor.username, '停用' if not raw else '恢复',
             target.username, target.id,
             '，并作废其登录凭证' if not raw else '，对方可重新登录',
+        )
+        log_admin_action(
+            actor, 'user.suspend' if not raw else 'user.restore', target=target,
+            detail=('停用并作废其登录凭证' if not raw else '恢复账号（密码未改动）'),
+            request=request,
         )
 
         return Response({
@@ -1182,6 +1199,11 @@ class AdminUserCreateEditorView(APIView):
         reset_url = build_password_reset_url(user)
         mailed = bool(email) and send_password_reset_mail(user)
 
+        log_admin_action(
+            actor, 'user.create_editor', target=user,
+            detail=f'角色=EDITOR，模块={modules}，邮箱={email or "无"}（无可用密码，已签发设置密码链接）',
+            request=request,
+        )
         logger.info(
             '超级管理员 %s 开通了编辑员账号 %s(%s)：模块=%s，邮箱=%s',
             actor.username, user.username, user.id,
@@ -1316,6 +1338,14 @@ class AdminUserRoleView(APIView):
         else:
             EditorModuleGrant.objects.filter(user=target).delete()
 
+        # 第 146 批：改角色是**提权类**操作，必须留痕（谁、把谁、从什么改成什么、模块变化）
+        log_admin_action(
+            actor, 'user.role_change', target=target,
+            detail=(f'角色 {ROLE_LABELS.get(old_role, old_role)} → '
+                    f'{ROLE_LABELS.get(new_role, new_role)}；'
+                    f'模块 {old_modules or "无"} → {content_modules_of(target) or "无"}'),
+            request=request,
+        )
         logger.info(
             '超级管理员 %s 调整了用户 %s(%s)：角色 %s → %s；模块 %s → %s',
             actor.username, target.username, target.id,
@@ -1416,6 +1446,13 @@ class AdminUserResetLinkView(APIView):
         # 顺手给绑了邮箱的账号也发一封（能发就发；发不出去不影响返回的链接）
         mailed = bool(target.email) and send_password_reset_mail(target)
 
+        # 第 146 批：落日志 —— ⚠️ detail 里**绝不能放整条链接**：
+        # 链接带着一次性 token，写进日志等于把"改别人密码的凭证"抄进数据库。
+        log_admin_action(
+            actor, 'user.reset_link', target=target,
+            detail='签发一次性密码重置链接（1 小时有效、改密即失效）',
+            request=request,
+        )
         logger.info(
             '管理员 %s 为用户 %s 生成了密码重置链接（mailed=%s）',
             actor.username, target.id, mailed,

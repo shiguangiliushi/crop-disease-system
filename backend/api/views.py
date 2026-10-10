@@ -96,6 +96,7 @@ from .xlsx import build_workbook
 
 # 配置日志记录器
 logger = logging.getLogger(__name__)
+from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志
 
 from .ai_service import get_ai_service
 from .models import (
@@ -1357,6 +1358,12 @@ class FeedbackView(viewsets.ModelViewSet):
 
         logger.info('批量流转反馈状态 status=%s by=%s 成功=%s/%s',
                     status_value, request.user.id, ok_count, len(ids))
+        log_admin_action(
+            request.user, 'feedback.bulk_status', target_type='feedback',
+            target_id=','.join(str(i) for i in ids[:20]),
+            detail=f'批量流转为 {status_value}，{ok_count}/{len(ids)} 条',
+            request=request,
+        )
         return Response({
             'status': status_value,
             'requested': len(ids),
@@ -1419,6 +1426,12 @@ class FeedbackView(viewsets.ModelViewSet):
             results.append({'id': feedback_id, 'ok': True, 'detail': 'deleted'})
 
         logger.info('批量删除反馈 by=%s 成功=%s/%s', request.user.id, ok_count, len(ids))
+        log_admin_action(
+            request.user, 'feedback.bulk_delete', target_type='feedback',
+            target_id=','.join(str(i) for i in ids[:20]),
+            detail=f'批量删除反馈 {ok_count}/{len(ids)} 条（失败 {len(ids) - ok_count} 条）',
+            request=request,
+        )
         return Response({
             'requested': len(ids),
             'succeeded': ok_count,

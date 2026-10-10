@@ -66,6 +66,9 @@ AdminUserRoleView = import_view('api.views_user', 'AdminUserRoleView')
 AdminUserCreateEditorView = import_view('api.views_user', 'AdminUserCreateEditorView')
 # 第 137 批：停用 / 恢复账号（补上"有「已禁用」筛选却没有停用入口"的缺口）
 AdminUserStatusView = import_view('api.views_user', 'AdminUserStatusView')
+# 第 146 批：管理操作日志（只读，仅全权管理员）
+AdminAuditLogListView = import_view('api.views_audit', 'AdminAuditLogListView')
+AdminAuditLogActionsView = import_view('api.views_audit', 'AdminAuditLogActionsView')
 UserCommentsView = import_view('api.views_user', 'UserCommentsView')  # 第 25 批：用户的评论列表
 # 第 23 批：用户资料完善（真实头像 + 修改密码）
 UserAvatarView = import_view('api.views_user', 'UserAvatarView')
@@ -328,6 +331,10 @@ api_urlpatterns = [
     # 第 131 批：开通编辑员账号（仅超管；账号无可用密码，返回一次性设置密码链接）。
     # ⚠️ 必须放在 `<int:user_id>/` 之前 —— 虽然 "create-editor" 不是 int、匹配不上，
     #    但顺序一致更不容易出错（同 bulk-delete 的约定）。
+    # 第 146 批：管理操作日志（只读，仅全权管理员）
+    path('admin/audit-logs/', AdminAuditLogListView.as_view(), name='admin-audit-logs'),
+    path('admin/audit-logs/actions/', AdminAuditLogActionsView.as_view(),
+         name='admin-audit-log-actions'),
     path('admin/users/create-editor/', AdminUserCreateEditorView.as_view(),
          name='admin-user-create-editor'),
     # 第 120 批：给某个用户签发一次性密码重置链接（管理员）。

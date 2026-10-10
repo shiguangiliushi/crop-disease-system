@@ -43,6 +43,7 @@ from .models_notify import Announcement, Notification  # 第 37 批：通知与�
 from .models_social import Follow  # 第 40 批：关注关系
 from .models_report import Report  # 第 41 批：举报
 from .models_calendar import CalendarTask  # 第 47 批：种植日历
+from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志
 from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile  # 第 49 批：专家咨询
 from .models_message import DirectMessage  # 第 42 批：私信
 from .models_message import conversation_key_for  # 第 114 批：私信测试要自己造会话消息
@@ -9900,3 +9901,212 @@ class PostModerationByEditorTests(APITestCase):
         self.assertEqual(rows[0]['id'], self.post.id,
                          '置顶帖应当排在最前（列表默认按 -is_pinned 排序）')
         self.assertEqual(rows[1]['id'], other.id)
+
+
+# ============================================================================
+# 第 146 批：管理操作日志（AuditLog）
+# ============================================================================
+# 在此之前，管理端的敏感动作（停用/恢复、改角色、开通编辑员、删账号、批量删反馈、
+# 版块启停与排序）**只写 logger.info** —— 日志会轮转、没法按操作人筛选、更没法展示。
+#
+# 这组测试盯四件事：
+#   1. 关键动作**真的落库**，且带"谁 / 对谁 / 做了什么"（快照字段）；
+#   2. **绝不记录凭证**：签发重置链接的日志里不能出现 token（那等于把改密码的凭证抄进库）；
+#   3. 写日志**失败不能影响主操作**（助手内部兜异常）；
+#   4. 读取接口**仅全权管理员**，且支持按动作/操作人/关键字筛选。
+# ============================================================================
+class AdminAuditLogTests(APITestCase):
+    """管理操作日志（第 146 批）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_al_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_al_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='feedback',
+                                         granted_by=self.superuser)
+        self.target = User.objects.create_user(
+            username='zz_al_target', password='pw12345678', role='USER',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+
+    # ---------- 写入 ----------
+    def test_suspend_and_restore_are_logged(self):
+        self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                               {'is_active': False}, format='json')
+        self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                               {'is_active': True}, format='json')
+
+        logs = list(AdminAuditLog.objects.filter(target_repr='zz_al_target'))
+        actions = [log.action for log in logs]
+        self.assertIn('user.suspend', actions)
+        self.assertIn('user.restore', actions)
+        suspend = next(log for log in logs if log.action == 'user.suspend')
+        self.assertEqual(suspend.actor_repr, 'zz_al_super', '要记下操作人用户名快照')
+        self.assertEqual(suspend.target_type, 'user')
+        self.assertIn('作废', suspend.detail)
+
+    def test_role_change_is_logged(self):
+        self.client_super.post(f'/api/admin/users/{self.target.id}/role/',
+                               {'role': 'EDITOR', 'modules': ['news']}, format='json')
+        log = AdminAuditLog.objects.get(action='user.role_change')
+        self.assertEqual(log.target_repr, 'zz_al_target')
+        self.assertIn('普通用户', log.detail)   # 用中文角色名，读日志的人不需要查代码
+        self.assertIn('编辑员', log.detail)
+        self.assertIn('news', log.detail)
+
+    def test_create_editor_is_logged(self):
+        self.client_super.post('/api/admin/users/create-editor/', {
+            'username': 'zz_al_newone', 'modules': ['news'],
+        }, format='json')
+        log = AdminAuditLog.objects.get(action='user.create_editor')
+        self.assertEqual(log.target_repr, 'zz_al_newone')
+        self.assertIn('EDITOR', log.detail)
+        get_user_model().objects.filter(username='zz_al_newone').delete()
+
+    def test_delete_and_bulk_delete_are_logged(self):
+        other = get_user_model().objects.create_user(
+            username='zz_al_other', password='pw12345678', role='USER',
+        )
+        self.client_super.delete(f'/api/admin/users/{self.target.id}/',
+                                 {'confirm': 'zz_al_target'}, format='json')
+        self.client_super.post('/api/admin/users/bulk-delete/',
+                               {'ids': [other.id]}, format='json')
+
+        self.assertTrue(AdminAuditLog.objects.filter(action='user.delete',
+                                                     target_repr='zz_al_target').exists())
+        bulk = AdminAuditLog.objects.get(action='user.bulk_delete')
+        self.assertIn('1/1', bulk.detail)
+
+    def test_reset_link_token_is_not_logged(self):
+        """
+        签发重置链接的日志里**不能出现 token**
+
+        链接形如 `<前端地址>/reset-password?uid=..&token=..` —— 把整条链接写进日志，
+        等于把"改别人密码的凭证"抄进数据库：任何能读日志的人都能去改那个账号的密码。
+        这里同时验证两件事：动作被记下、链接/令牌没被记下。
+        """
+        response = self.client_super.post(
+            f'/api/admin/users/{self.target.id}/reset-link/', {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        token = response.data['url'].split('token=')[-1]
+
+        log = AdminAuditLog.objects.get(action='user.reset_link')
+        self.assertNotIn('token', log.detail.lower())
+        self.assertNotIn(token, log.detail)
+        self.assertNotIn('/reset-password', log.detail)
+        self.assertEqual(log.target_repr, 'zz_al_target')
+
+    def test_bulk_feedback_delete_is_logged(self):
+        rows = [Feedback.objects.create(user=self.target, suggestion=f'zz日志测试{i}')
+                for i in range(3)]
+        self.client_super.post('/api/feedback/bulk-delete/',
+                               {'ids': [r.id for r in rows]}, format='json')
+        log = AdminAuditLog.objects.get(action='feedback.bulk_delete')
+        self.assertEqual(log.target_type, 'feedback')
+        self.assertIn('3/3', log.detail)
+
+    def test_board_status_and_order_are_logged(self):
+        board = ForumBoard.objects.create(name='zz日志版块', order=1)
+        self.client_super.post(f'/api/forums/boards/{board.id}/set_status/',
+                               {'is_active': False}, format='json')
+        self.client_super.post('/api/forums/boards/update_order/',
+                               {'orders': [{'id': board.id, 'order': 5}]}, format='json')
+        self.assertTrue(AdminAuditLog.objects.filter(action='board.set_status',
+                                                     target_repr='zz日志版块').exists())
+        self.assertTrue(AdminAuditLog.objects.filter(action='board.update_order').exists())
+
+    # ---------- 助手本身的护栏 ----------
+    def test_helper_never_raises(self):
+        """
+        写日志失败不能影响主操作：助手内部兜住异常并返回 None
+
+        ⚠️ 第一版我传了个超长 action 想让它失败 —— 结果 SQLite 不校验 CharField 长度，
+        记录照样写进去了（断言因此失败）。现在直接**让 create 抛异常**来测契约，
+        这才是真正要保证的事：底层炸了也不能把停用/删除这类主操作带崩。
+        """
+        from unittest import mock
+
+        from .audit import log_admin_action
+
+        with mock.patch('api.models_audit.AdminAuditLog.objects.create',
+                        side_effect=RuntimeError('磁盘满了')):
+            result = log_admin_action(self.superuser, 'user.suspend', target=self.target,
+                                      detail='测试')
+        self.assertIsNone(result, '写不进去时应当返回 None，而不是抛异常')
+
+        # 主流程照常可用（上面的异常被兜在助手内部）
+        response = self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                                          {'is_active': False}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(AdminAuditLog.objects.filter(action='user.suspend').exists())
+
+    def test_sanitize_detail_masks_credentials(self):
+        """detail 里的 `token=...` 会被保险丝抹掉（即使调用方写错了）"""
+        from .audit import sanitize_detail
+        masked = sanitize_detail('链接 /reset-password?uid=1&token=abcdef 已签发')
+        self.assertNotIn('abcdef', masked)
+        self.assertIn('token=***', masked)
+
+    def test_actor_snapshot_survives_account_deletion(self):
+        """操作人账号被删后，日志仍读得懂（这正是存快照的理由）"""
+        self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                               {'is_active': False}, format='json')
+        log = AdminAuditLog.objects.get(action='user.suspend')
+        # 把操作人真删掉（hard delete → actor 外键变 NULL）
+        get_user_model().objects.filter(id=self.superuser.id).delete()
+        log.refresh_from_db()
+        self.assertIsNone(log.actor)
+        self.assertEqual(log.actor_repr, 'zz_al_super', '快照要留着，否则日志变成"某人对某人"')
+
+    # ---------- 读取接口 ----------
+    def test_list_requires_full_admin(self):
+        self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                               {'is_active': False}, format='json')
+        # 有 feedback 模块的编辑员也读不到（日志是管理端内部信息）
+        self.assertEqual(self.client_editor.get('/api/admin/audit-logs/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        response = self.client_super.get('/api/admin/audit-logs/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(response.data['count'], 1)
+        row = response.data['results'][0]
+        self.assertIn('actor_name', row)
+        self.assertIn('action_display', row)
+
+    def test_list_filters(self):
+        self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                               {'is_active': False}, format='json')
+        self.client_super.post(f'/api/admin/users/{self.target.id}/status/',
+                               {'is_active': True}, format='json')
+
+        only_suspend = self.client_super.get('/api/admin/audit-logs/?action=user.suspend')
+        self.assertEqual(only_suspend.data['count'], 1)
+
+        by_actor = self.client_super.get(f'/api/admin/audit-logs/?actor={self.superuser.id}')
+        self.assertEqual(by_actor.data['count'], 2)
+
+        # 非法筛选值**忽略**，不该 500（与其它管理列表一致）
+        self.assertEqual(
+            self.client_super.get('/api/admin/audit-logs/?action=不存在的动作').status_code,
+            status.HTTP_200_OK)
+
+        searched = self.client_super.get('/api/admin/audit-logs/?search=zz_al_target')
+        self.assertGreaterEqual(searched.data['count'], 1)
+
+    def test_actions_endpoint(self):
+        response = self.client_super.get('/api/admin/audit-logs/actions/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        values = [row['value'] for row in response.data]
+        self.assertIn('user.suspend', values)
+        self.assertIn('board.create', values)
+        self.assertEqual(self.client_editor.get('/api/admin/audit-logs/actions/').status_code,
+                         status.HTTP_403_FORBIDDEN)
