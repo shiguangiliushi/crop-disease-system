@@ -19,7 +19,7 @@ cd backend && python manage.py runserver 127.0.0.1:8000
 
 # 另一终端
 cd frontend
-npm run e2e              # 只跑 chromium（推荐，约 3.5 分钟 / 23 条）
+npm run e2e              # 只跑 chromium（推荐，约 3.5 分钟 / 24 条）
 npm run e2e:headed       # 带界面看过程（调试用）
 npm run e2e:all          # 跑全部浏览器项目（chromium + firefox）
 npx playwright test e2e/02-safety.spec.mjs          # 只跑某个文件
@@ -40,7 +40,7 @@ E2E 前置检查失败：后端没在 http://127.0.0.1:8000 上响应。
 
 ---
 
-## 二、现有的用例（23 条）
+## 二、现有的用例（24 条：01 五个 / 02 四个 / 03 五个 / 04 四个 / 05 六个）
 
 | 文件 | 覆盖什么 | 为什么值得固化 |
 |---|---|---|

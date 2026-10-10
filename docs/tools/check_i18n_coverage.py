@@ -43,6 +43,13 @@ ATTR = re.compile(r'(?::)?([a-zA-Z-]+)\s*=\s*"([^"]*)"')
 # 于是"待翻译条数"长期被低估（DetectView 实际远多于 4 条）。
 TEXT_NODE = re.compile(r'>([^<>{}]*[\u4e00-\u9fff][^<>{}]*)<', re.S)
 
+#: **必须保持中文**的文案（第 153 批补）
+#:
+#: 覆盖率报告长期停在"待翻译 2 条"，而那 2 条是页脚的 ICP 备案号与公网安备号 ——
+#: 它们按法规必须显示中文，翻译成英文反而是错的。与其为了凑 100% 硬翻，
+#: 不如把它列成**白名单**并在报告里说明：这样"0 条待翻译"才是诚实的。
+ZH_ALLOWED = re.compile(r'ICP备|公网安备|备案号')
+
 
 def strip_comments(text):
     """去掉 HTML 注释（只用于模板区间，见 analyse 的说明）"""
@@ -75,6 +82,8 @@ def analyse(path):
             continue
         for attr_name, attr_value in ATTR.findall(line):
             if attr_name.lower() in TRANSLATABLE_ATTRS and CHINESE.search(attr_value):
+                if ZH_ALLOWED.search(attr_value):
+                    continue      # 白名单：备案号一类必须保持中文的文案
                 hits.append((line_no, attr_value.strip()[:60]))
 
     # ② 标签之间的中文：在**整段模板**上匹配，因此跨行写法也能抓到了
@@ -82,6 +91,8 @@ def analyse(path):
         value = match_obj.group(1)
         if not CHINESE.search(value):
             continue
+        if ZH_ALLOWED.search(value):
+            continue              # 白名单：同上
         # 把匹配起点换算成行号，便于 --file 定位
         line_no = template.count('\n', 0, match_obj.start()) + 1
         cleaned = ' '.join(value.split())[:60]

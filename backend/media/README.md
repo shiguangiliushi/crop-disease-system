@@ -72,6 +72,6 @@ python manage.py prune_media --min-age-days 7 --yes    # 真删
 实测：跑 43 条含上传的用例，真实 `media/` 文件数零变化。
 
 > 已知的历史断链（不是清理造成的，第 106 批就记录过）：
-> `detection_history/i18n-audit_placeholder_*.jpg` 共 10 条 ——
+> （已处理）早期 i18n 审计脚本留下的 `i18n-audit_placeholder_*.jpg` 占位记录与悬空引用**已清理**：库内 `image like '%i18n-audit%'` 现为 0 条 ——
 > 那是早期 i18n 审计脚本往数据库里写的占位记录，**当初就没在磁盘上建过文件**。
 > 要修的话应当删掉这 10 条记录（它们没有对应的图，前端列表里是空图）。

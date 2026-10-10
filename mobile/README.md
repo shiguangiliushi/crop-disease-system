@@ -30,9 +30,12 @@ npm run dev                                        # http://localhost:5174
 ```
 
 手机实机调试：电脑与手机连同一个 Wi-Fi，用电脑的局域网 IP 访问
-`http://<电脑IP>:5174`（dev server 已开 `host: true`，vite 会把 `/api`、`/media` 代理到本机后端）。
+`http://<电脑IP>:5174`（dev server 监听 `host: '0.0.0.0'` —— 刻意不用 `host: true`，
+因为它会解析成 `::`、Windows 上排障困难；vite 会把 `/api`、`/media` 代理到本机后端）。
 
-Windows 上也可以直接双击仓库根目录的 `start_mobile.bat`（会同时拉起后端 + 移动端）。
+Windows 上也可以直接双击**项目外层目录**（仓库的上一级，与 `start_project.bat` 同级）的
+`start_mobile.bat`（会同时拉起后端 + 移动端）。它**不在仓库里** —— 属于本机启动脚本，
+不随代码发布。
 
 ## 三、📷 拍照：两条路径（这是本端最需要理解的一点）
 
@@ -64,10 +67,11 @@ Windows 上也可以直接双击仓库根目录的 `start_mobile.bat`（会同�
 ```
 mobile/
 ├─ src/
-│  ├─ api/            http.js（统一客户端：Token/CSRF/错误文案/**401 自愈**）、auth.js、detection.js、history.js、user.js、content.js
+│  ├─ api/            http.js（统一客户端：Token/CSRF/错误文案/**401 自愈**）、auth.js、account.js（注销/冷静期）、
+│  │                  detection.js、history.js、user.js、content.js
 │  ├─ components/     CameraCapture.vue（整屏取景）、TabBar.vue、OfflineIndicator.vue（离线/待传提示）
 │  ├─ i18n/           极简多语言（zh-CN / en，缺翻译回落中文）
-│  ├─ router/         6 个页面 + 登录守卫
+│  ├─ router/         7 个页面（8 条路由，`/result` 与 `/result/:id` 共用 ResultView）+ 登录守卫
 │  ├─ stores/         auth.js（登录态/持久化/clearAuth）、detect.js（当前识别结果，sessionStorage 恢复）
 │  ├─ utils/          camera.js、image.js（压缩）、detectionResult.js（两处结果统一整形）、authStorage.js
 │  │                  offlineQueue.js / offlineStorage.js / offlineSync.js（离线队列，第 91 批）
