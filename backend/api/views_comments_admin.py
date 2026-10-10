@@ -64,6 +64,14 @@ def _serialize(comment):
         'content': comment.content,
         'content_en': comment.content_en,
         'is_deleted': comment.is_deleted,
+        # 第 152 批：删除前的原文（控制台展示"原内容"，也用来判断能不能恢复）
+        'original_content': comment.original_content or '',
+        # 谁删的：作者本人删除的评论，恢复前应当让管理员意识到"这是他的心意"
+        'deleted_by': (
+            getattr(comment.deleted_by, 'username', '') or None
+        ) if comment.deleted_by_id else None,
+        # 能不能恢复：删过 **且** 留了原文（本批之前删的没有原文 → 恢复不了）
+        'can_restore': bool(comment.is_deleted and (comment.original_content or '').strip()),
         'author': {
             'id': comment.author_id,
             # 作者账号被注销后 author 可能是 None（SET_NULL）—— 快照兜底
@@ -116,8 +124,13 @@ class AdminCommentListView(APIView):
 
         search = (params.get('search') or '').strip()
         if search:
+            # 第 152 批：**连删除前的原文一起搜**。
+            # 这条不是可有可无：软删除会把 content 换成 `[已删除]`，只搜 content 的话
+            # "我记得那条评论里有个词，想找出来恢复"就永远搜不到 —— 而这正是恢复功能的入口。
             queryset = queryset.filter(
-                Q(content__icontains=search) | Q(content_en__icontains=search))
+                Q(content__icontains=search)
+                | Q(content_en__icontains=search)
+                | Q(original_content__icontains=search))
 
         ordering = (params.get('ordering') or '-created_at').strip()
         if ordering not in ORDERING_WHITELIST:
@@ -130,6 +143,61 @@ class AdminCommentListView(APIView):
         if page is not None:
             return paginator.get_paginated_response(rows)
         return Response({'count': len(rows), 'results': rows})
+
+
+class AdminCommentRestoreView(APIView):
+    """
+    恢复一条被软删除的评论（第 152 批，**仅全权管理员**）
+
+    为什么恢复也只给全权管理员（和硬删除同档）：
+      · 软删除是**审核判断**（"这条违规，撤下来"），推翻它等于推翻另一个审核员的判断；
+      · 而且删除可能是**作者本人**做的（`deleted_by` 记着），把他自己删掉的评论
+        放回去更需要权限，不该随手能做。
+    编辑员要做的是"删"（本职），"恢复"是纠错 —— 纠错找管理员。
+
+    ⚠️ 一个必须说清的边界：**本批之前删除的评论没有留存原文**（那时还没有这个字段），
+    所以恢复不了 —— 这时返回 400 并明确说明原因，而不是"恢复"成 `[已删除]`
+    （那样比不恢复更糟：看起来恢复了，内容却是占位文案）。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        if not (is_full_admin(request.user)
+                or request.user.groups.filter(name='Moderators').exists()):
+            return Response({'detail': '只有管理员可以恢复评论'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        from .views_forum import restore_comment
+
+        comment = Comment.objects.filter(pk=pk).select_related('post').first()
+        if comment is None:
+            return Response({'detail': '评论不存在'}, status=status.HTTP_404_NOT_FOUND)
+        if not comment.is_deleted:
+            return Response({'detail': '这条评论没有被删除，无需恢复'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not (comment.original_content or '').strip():
+            return Response(
+                {'detail': '这条评论没有留存原文（第 152 批之前删除的，或已被彻底删除），无法恢复'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        restored_text = comment.original_content
+        deleted_by = getattr(comment.deleted_by, 'username', '') or '（未知）'
+        restore_comment(comment)
+
+        log_admin_action(
+            request.user, 'comment.restore', target_type='comment', target_id=pk,
+            target_repr=restored_text[:50],
+            detail=(f'恢复被删除的评论（原删除人：{deleted_by}）：{restored_text[:50]}'),
+            request=request,
+        )
+        return Response({
+            'id': comment.id,
+            'content': comment.content,
+            'is_deleted': False,
+            'restored_from': deleted_by,
+        })
 
 
 class AdminCommentSoftDeleteView(APIView):
@@ -152,7 +220,7 @@ class AdminCommentSoftDeleteView(APIView):
             return Response({'id': comment.id, 'is_deleted': True, 'changed': False})
 
         preview = (comment.content or '')[:50]
-        soft_delete_comment(comment)
+        soft_delete_comment(comment, by=request.user)
         log_admin_action(
             request.user, 'comment.soft_delete', target_type='comment', target_id=comment.id,
             target_repr=preview or f'#{comment.id}',
@@ -234,7 +302,7 @@ class AdminCommentBulkDeleteView(APIView):
                                 'detail': '评论不存在或已被删除'})
                 continue
             previews.append((comment.content or '')[:20])
-            soft_delete_comment(comment)
+            soft_delete_comment(comment, by=request.user)
             ok_count += 1
             results.append({'id': comment_id, 'ok': True,
                             'detail': (comment.content or '')[:30]})

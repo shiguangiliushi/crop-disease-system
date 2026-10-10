@@ -41,6 +41,7 @@ class AdminAuditLog(models.Model):
         ('user.bulk_delete', '批量删除账号'),
         ('user.reset_link', '签发密码重置链接'),
         ('comment.soft_delete', '软删除评论'),
+        ('comment.restore', '恢复已删除的评论'),
         ('comment.hard_delete', '彻底删除评论'),
         ('comment.bulk_delete', '批量软删除评论'),
         ('feedback.bulk_status', '批量流转反馈状态'),

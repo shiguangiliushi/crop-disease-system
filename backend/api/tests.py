@@ -10843,3 +10843,190 @@ class ForumOnlyEditorTests(APITestCase):
             status.HTTP_403_FORBIDDEN)
         self.assertEqual(client.get('/api/admin/comments/').status_code,
                          status.HTTP_403_FORBIDDEN)
+
+
+class CommentRestoreTests(APITestCase):
+    """
+    评论软删除**可恢复**（第 152 批）
+
+    起因：控制台有「删除」与「彻底删除」两个按钮，但"删除"其实也是不可恢复的 ——
+    第 17 批的实现是把 `content` 直接覆盖成 `[已删除]`，原文就没了。
+    于是一旦删错（点错行、判断失误），只能去审计日志里"看"原文，没法把评论放回去。
+
+    这一批给 Comment 加 `original_content`（删除前转存原文）与 `deleted_by`（谁删的），
+    并加一个**仅全权管理员**的恢复接口。
+
+    为什么恢复也只给全权管理员：软删除是**审核判断**，推翻它等于推翻另一个审核员的判断；
+    而且删除可能是**作者本人**做的（`deleted_by` 记着），把他自己删掉的评论放回去
+    更需要权限。编辑员的本职是"删"，"恢复"是纠错。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_cr_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_cr_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review',
+                                         granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_cr_author', password='pw12345678', role='USER',
+        )
+        self.board = ForumBoard.objects.create(name='zz恢复测试版块', order=997)
+        self.post = Post.objects.create(title='zz恢复测试帖子', content='<p>x</p>',
+                                        author=self.author, board=self.board,
+                                        status='published')
+        self.comment = Comment.objects.create(post=self.post, author=self.author,
+                                              content='原始评论内容')
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_author = APIClient()
+        self.client_author.force_authenticate(user=self.author)
+
+    # ---------- 删除时留原文 ----------
+    def test_soft_delete_keeps_original_content(self):
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        self.comment.refresh_from_db()
+        self.assertEqual(self.comment.content, '[已删除]')
+        self.assertEqual(self.comment.original_content, '原始评论内容')
+        self.assertEqual(self.comment.deleted_by, self.editor, '要记下是谁删的')
+
+    def test_author_self_delete_also_keeps_original_and_records_author(self):
+        """作者自己删（农户端那条路径）也要留原文，并把删除人记成作者本人"""
+        self.client_author.post(
+            f'/api/forums/posts/{self.post.id}/comments/{self.comment.id}/delete/')
+        self.comment.refresh_from_db()
+        self.assertEqual(self.comment.original_content, '原始评论内容')
+        self.assertEqual(self.comment.deleted_by, self.author)
+
+    def test_second_soft_delete_does_not_clobber_original(self):
+        """
+        重复点删除（接口幂等）**不能**把 `[已删除]` 当成原文存进去
+
+        否则「恢复」会把占位文案恢复成正文 —— 比不恢复更糟。
+        """
+        url = f'/api/admin/comments/{self.comment.id}/soft-delete/'
+        self.client_editor.post(url)
+        self.client_editor.post(url)
+        self.comment.refresh_from_db()
+        self.assertEqual(self.comment.original_content, '原始评论内容')
+
+    def test_nested_soft_delete_also_keeps_original(self):
+        """农户端与控制台两条路径**都**要留原文（同一个 helper，口径必须一致）"""
+        self.client_editor.post(
+            f'/api/forums/posts/{self.post.id}/comments/{self.comment.id}/delete/')
+        self.comment.refresh_from_db()
+        self.assertEqual(self.comment.original_content, '原始评论内容')
+
+    # ---------- 列表暴露"能不能恢复" ----------
+    def test_list_exposes_original_and_can_restore(self):
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        rows = self.client_editor.get('/api/admin/comments/?only_deleted=true').data['results']
+        row = next(r for r in rows if r['id'] == self.comment.id)
+        self.assertEqual(row['original_content'], '原始评论内容')
+        self.assertEqual(row['deleted_by'], 'zz_cr_editor')
+        self.assertTrue(row['can_restore'])
+
+    def test_search_finds_deleted_comment_by_original_text(self):
+        """
+        搜索要能**按删除前的原文**找到已删除的评论
+
+        E2E 跑出来的真需求：软删除会把 `content` 换成 `[已删除]`，
+        只搜 content 的话"我记得那条评论里有个词，想找出来恢复"就永远搜不到 ——
+        而这正是恢复功能的入口。
+        """
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        rows = self.client_editor.get(
+            '/api/admin/comments/?only_deleted=true&search=原始评论').data['results']
+        self.assertEqual([r['id'] for r in rows], [self.comment.id],
+                         '要能用原文搜到已删除的评论')
+        # 反过来：搜已删除的占位文案也能搜到（两种记忆方式都照顾到）
+        rows = self.client_editor.get(
+            '/api/admin/comments/?only_deleted=true&search=已删除').data['results']
+        self.assertIn(self.comment.id, [r['id'] for r in rows])
+
+    def test_legacy_deleted_comment_is_not_restorable(self):
+        """
+        本批之前删掉的评论没有原文 → `can_restore` 为假
+
+        （造一条"删过但原文为空"的数据 —— 就是历史数据的形态。）
+        """
+        legacy = Comment.objects.create(post=self.post, author=self.author, content='[已删除]')
+        Comment.objects.filter(id=legacy.id).update(is_deleted=True, original_content='')
+        rows = self.client_editor.get('/api/admin/comments/?only_deleted=true').data['results']
+        row = next(r for r in rows if r['id'] == legacy.id)
+        self.assertFalse(row['can_restore'])
+        self.assertEqual(row['original_content'], '')
+
+    # ---------- 恢复 ----------
+    def test_restore_puts_the_text_back(self):
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        self.post.refresh_from_db()
+        self.assertEqual(self.post.comment_count, 0)
+
+        response = self.client_super.post(f'/api/admin/comments/{self.comment.id}/restore/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['content'], '原始评论内容')
+        self.assertEqual(response.data['restored_from'], 'zz_cr_editor',
+                         '响应里要告诉管理员这条原本是谁删的')
+
+        self.comment.refresh_from_db()
+        self.post.refresh_from_db()
+        self.assertEqual(self.comment.content, '原始评论内容')
+        self.assertFalse(self.comment.is_deleted)
+        self.assertEqual(self.comment.original_content, '')
+        self.assertIsNone(self.comment.deleted_by)
+        self.assertEqual(self.post.comment_count, 1, '恢复后帖子评论数要加回来')
+
+        # 农户端又能看到了
+        rows = self.client_author.get(f'/api/forums/posts/{self.post.id}/comments/').data
+        rows = rows.get('results', rows) if isinstance(rows, dict) else rows
+        self.assertIn('原始评论内容', [r['content'] for r in rows])
+
+    def test_restore_requires_full_admin(self):
+        """编辑员能删、但**不能**恢复（审核判断不该被同级推翻）"""
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        response = self.client_editor.post(f'/api/admin/comments/{self.comment.id}/restore/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.comment.refresh_from_db()
+        self.assertTrue(self.comment.is_deleted)
+
+    def test_restore_rejects_non_deleted_and_legacy(self):
+        # 没删过 → 400
+        response = self.client_super.post(f'/api/admin/comments/{self.comment.id}/restore/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('没有被删除', response.data['detail'])
+
+        # 删过但没原文（历史数据）→ 400，且**不能**恢复成 [已删除]
+        legacy = Comment.objects.create(post=self.post, author=self.author, content='[已删除]')
+        Comment.objects.filter(id=legacy.id).update(is_deleted=True, original_content='')
+        response = self.client_super.post(f'/api/admin/comments/{legacy.id}/restore/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('没有留存原文', response.data['detail'])
+        legacy.refresh_from_db()
+        self.assertTrue(legacy.is_deleted, '失败的恢复不能改数据')
+
+    def test_restore_is_logged(self):
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        self.client_super.post(f'/api/admin/comments/{self.comment.id}/restore/')
+        log = AdminAuditLog.objects.get(action='comment.restore')
+        self.assertEqual(log.target_repr, '原始评论内容')
+        self.assertIn('原删除人：zz_cr_editor', log.detail)
+
+    def test_hard_delete_still_removes_everything(self):
+        """彻底删除不受影响：连原文一起没了（这正是两者的区别）"""
+        self.client_editor.post(f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        response = self.client_super.delete(f'/api/admin/comments/{self.comment.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Comment.objects.filter(id=self.comment.id).exists())
+        # 想恢复也没有对象了
+        self.assertEqual(
+            self.client_super.post(f'/api/admin/comments/{self.comment.id}/restore/').status_code,
+            status.HTTP_404_NOT_FOUND)

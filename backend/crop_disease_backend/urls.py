@@ -72,6 +72,7 @@ AdminAuditLogActionsView = import_view('api.views_audit', 'AdminAuditLogActionsV
 # 第 149 批：控制台的评论管理（全局列表 + 软删/硬删/批量软删）
 AdminCommentListView = import_view('api.views_comments_admin', 'AdminCommentListView')
 AdminCommentSoftDeleteView = import_view('api.views_comments_admin', 'AdminCommentSoftDeleteView')
+AdminCommentRestoreView = import_view('api.views_comments_admin', 'AdminCommentRestoreView')
 AdminCommentHardDeleteView = import_view('api.views_comments_admin', 'AdminCommentHardDeleteView')
 AdminCommentBulkDeleteView = import_view('api.views_comments_admin', 'AdminCommentBulkDeleteView')
 UserCommentsView = import_view('api.views_user', 'UserCommentsView')  # 第 25 批：用户的评论列表
@@ -342,6 +343,8 @@ api_urlpatterns = [
     path('admin/comments/', AdminCommentListView.as_view(), name='admin-comments'),
     path('admin/comments/bulk-delete/', AdminCommentBulkDeleteView.as_view(),
          name='admin-comments-bulk-delete'),
+    path('admin/comments/<int:pk>/restore/',
+         AdminCommentRestoreView.as_view(), name='admin-comment-restore'),
     path('admin/comments/<int:pk>/soft-delete/',
          AdminCommentSoftDeleteView.as_view(), name='admin-comment-soft-delete'),
     path('admin/comments/<int:pk>/', AdminCommentHardDeleteView.as_view(),

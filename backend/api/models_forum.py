@@ -252,6 +252,15 @@ class Comment(TranslatableContentMixin):
                                     null=True, blank=True, related_name='replied_by_comments',
                                     verbose_name='回复给')  # 回复给哪个用户，允许为空
     is_deleted = models.BooleanField('是否删除', default=False)  # 是否删除字段，布尔值，默认未删除
+    # 第 152 批：软删除时把**原文**转存到这里 —— 否则"删除"就是不可恢复的
+    # （第 17 批的做法是直接把 content 覆盖成 `[已删除]`）。
+    # 控制台的「恢复」按钮靠它把内容放回去；本批之前删掉的评论这里是空的（无法恢复）。
+    original_content = models.TextField('删除前的原文', blank=True, default='')
+    # 谁删的：作者本人删 vs 版主删，恢复前应当让管理员知道（作者的心意不该被随手推翻）
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='deleted_comments', verbose_name='删除人',
+    )
     like_count = models.PositiveIntegerField('点赞数', default=0)  # 点赞数统计字段
     created_at = models.DateTimeField('创建时间', auto_now_add=True)  # 创建时间字段，自动设置为创建时间
     updated_at = models.DateTimeField('更新时间', auto_now=True)  # 更新时间字段，自动设置为更新时间

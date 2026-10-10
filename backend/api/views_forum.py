@@ -1248,7 +1248,8 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         # 第 149 批：实现抽到模块级 `soft_delete_comment()` ——
         # 控制台的评论管理（`views_comments_admin.py`）也要走**同一个**函数，
         # 否则"农户端删评论"与"控制台删评论"迟早会变成两套口径。
-        soft_delete_comment(comment)
+        # 第 152 批：把操作人一并记下（作者本人删 vs 版主删，恢复前要分得清）
+        soft_delete_comment(comment, by=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
         
     def perform_destroy(self, instance):
@@ -1503,7 +1504,32 @@ class LikeViewSet(viewsets.ModelViewSet):  # 定义点赞视图集
 # ============================================================================
 # 第 149 批：软删除评论（农户端与控制台**共用**这一个实现）
 # ============================================================================
-def soft_delete_comment(comment):
+#: 软删除后正文的占位文案（农户端与控制台都靠它识别"这条被删过"）
+DELETED_PLACEHOLDER = '[已删除]'
+
+
+def restore_comment(comment):
+    """
+    恢复一条被软删除的评论（第 152 批，**仅全权管理员**调用）
+
+    把 `content` 放回 `original_content`，并清空这两样删除痕迹。没有原文的
+    （本批之前删的、或硬删过的）**不在这里处理** —— 调用方先判断
+    `comment.original_content`，否则"恢复"会恢复成 `[已删除]`，比不恢复更糟。
+
+    返回值：恢复后的 comment（调用方负责记审计日志）。
+    """
+    comment.content = comment.original_content
+    comment.is_deleted = False
+    comment.original_content = ''
+    comment.deleted_by = None
+    comment.save(update_fields=['content', 'is_deleted', 'original_content',
+                                'deleted_by', 'updated_at'])
+    if comment.post_id:
+        comment.post.update_comment_count()
+    return comment
+
+
+def soft_delete_comment(comment, by=None):
     """
     软删除一条评论：内容置为 `[已删除]`、`is_deleted=True`，并重算帖子的评论数
 
@@ -1519,9 +1545,16 @@ def soft_delete_comment(comment):
         `save(update_fields=[...])` 直接抛 ValueError → 删除评论接口稳定 500
         （而评论其实已经软删除了，属于"半成功"）。回复数是实时统计的，本不需要这个冗余字段。
     """
-    comment.content = '[已删除]'
+    # 第 152 批：**先把原文转存下来**，否则"删除"就是不可恢复的。
+    # ⚠️ 只在"原本没删过"时才转存：重复点删除（接口是幂等的）不能把
+    #    `[已删除]` 当成原文存进去 —— 那样「恢复」会把占位文案恢复成正文。
+    if not comment.is_deleted and comment.content != DELETED_PLACEHOLDER:
+        comment.original_content = comment.content or ''
+        comment.deleted_by = by if getattr(by, 'is_authenticated', False) else None
+    comment.content = DELETED_PLACEHOLDER
     comment.is_deleted = True
-    comment.save(update_fields=['content', 'is_deleted', 'updated_at'])
+    comment.save(update_fields=['content', 'is_deleted', 'original_content',
+                                'deleted_by', 'updated_at'])
     if comment.post_id:
         comment.post.update_comment_count()
     return comment
