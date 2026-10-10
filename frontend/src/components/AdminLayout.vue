@@ -48,6 +48,9 @@ const navItems = [
     capability: authStore.CAP_USER_ADMIN },
   { to: '/admin/review', icon: 'fas fa-clipboard-check', labelKey: 'manage.review',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
+  // 第 147 批：论坛管理（与内容审核同一模块：能审帖的人就能管理帖子）
+  { to: '/admin/forum', icon: 'fas fa-comments', labelKey: 'manage.forum',
+    capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
   { to: '/admin/news', icon: 'fas fa-newspaper', labelKey: 'manage.news',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_NEWS },
   // 第 122 批：病害百科维护（原来长在农户端百科页上，现在归这里）

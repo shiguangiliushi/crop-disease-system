@@ -454,6 +454,25 @@ const router = createRouter({
       }
     },
     {
+      // 第 147 批：管理端「论坛管理」
+      // 在此之前控制台只能管理**待审核**的帖子（内容审核页）：已发布的帖子里有广告、
+      // 有吵架、也有该置顶加精的好帖，但控制台看不到它们 —— 只能回农户端论坛翻。
+      path: '/admin/forum',
+      name: 'admin-forum',
+      component: () => import('@/views/AdminForumView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        // 与内容审核同一口径：能审帖的人（review 模块）就能进来管理帖子
+        capability: 'CONTENT',
+        module: 'review',
+        adminArea: true,   // 第 117 批：管理后台外壳
+        title: '论坛管理',
+        breadcrumb: ['管理', '论坛管理']
+      }
+    },
+
+    {
       // 第 140 批：管理端「版块管理」
       // 补的是一个空档：后端 `boards/<id>/set_status/`（启停）与 `boards/update_order/`
       // （排序）接口早就有，但控制台没有任何入口 —— 版块启停与排序只能进 Django admin。

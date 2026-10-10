@@ -23,6 +23,22 @@ const API_CONFIG = {
  * 版块相关API
  */
 /**
+ * 批量删除帖子（第 147 批，**仅全权管理员**）
+ *
+ * 控制台「论坛管理」页的批量删除走这里，而不是在前端循环 DELETE：
+ * 后端是逐条处理、逐条给结果（哪几条失败、为什么），前端循环发 N 个请求既慢
+ * 又拿不到一致的结果。后端同样是 403 门禁（能审核 ≠ 能一次抹掉一批）。
+ *
+ * ⚠️ 这是**软删除**：评论、点赞、收藏都留在库里（见 Post.soft_delete），
+ * 真清理走管理命令。所以文案上说"从论坛移除"，不要说"彻底删除"。
+ *
+ * @param {number[]} ids 最多 200 条
+ */
+export function bulkDeletePosts(ids) {
+  return http.post('/forums/posts/bulk-delete/', { ids }).then((res) => res.data);
+}
+
+/**
  * 置顶 / 取消置顶（第 145 批接上前端）
  *
  * 接口第 24 批就有（`posts/<id>/set_pinned/`，后端用 `is_moderator()` 判定：
