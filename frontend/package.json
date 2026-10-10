@@ -8,13 +8,16 @@
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "test:unit": "vitest",
-    "test:e2e": "playwright test --project=chromium", "e2e": "playwright test --project=chromium", "e2e:all": "playwright test", "e2e:headed": "cross-env E2E_HEADED=1 playwright test --project=chromium",
+    "test:e2e": "playwright test --project=chromium",
+    "e2e": "playwright test --project=chromium",
+    "e2e:all": "playwright test",
+    "e2e:headed": "cross-env E2E_HEADED=1 playwright test --project=chromium",
     "smoke": "node scripts/smoke.mjs",
     "smoke:api": "node scripts/smoke.mjs --no-ui",
     "check:i18n-en": "node scripts/check-i18n-en-cjk.mjs",
     "check:i18n-consistency": "node scripts/check-i18n-consistency.mjs",
     "check:components": "node scripts/check-element-components.mjs",
-    "check": "run-s check:i18n-en check:i18n-consistency check:components",
+    "check": "run-s check:i18n-en check:i18n-consistency check:components check:doc-titles",
     "verify:camera": "node scripts/verify-split-camera.mjs",
     "verify:xss": "node scripts/verify-xss-sanitize.mjs",
     "verify:mobile": "node scripts/verify-mobile-four-pack.mjs",
@@ -24,7 +27,8 @@
     "lint:oxlint": "oxlint . --fix -D correctness --ignore-path .gitignore",
     "lint:eslint": "eslint . --fix",
     "lint": "run-s lint:*",
-    "format": "prettier --write src/"
+    "format": "prettier --write src/",
+    "check:doc-titles": "node scripts/check-doc-titles.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

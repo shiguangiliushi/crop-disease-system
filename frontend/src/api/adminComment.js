@@ -33,6 +33,17 @@ export function hardDeleteComment(commentId) {
   return http.delete(`/admin/comments/${commentId}/`).then((res) => res.data);
 }
 
+/**
+ * 恢复一条被软删除的评论（第 152 批，**仅全权管理员**）
+ *
+ * 会把 `content` 放回删除前的原文（后端 `original_content`）。
+ * ⚠️ 第 152 批之前删除的评论没有留存原文，后端会返回 400 并说明原因 ——
+ *    前端用 `can_restore` 提前禁用按钮，别让用户白点。
+ */
+export function restoreComment(commentId) {
+  return http.post(`/admin/comments/${commentId}/restore/`).then((res) => res.data);
+}
+
 /** 批量软删除（review 模块；最多 200 条，逐条成败） */
 export function bulkSoftDeleteComments(ids) {
   return http.post('/admin/comments/bulk-delete/', { ids }).then((res) => res.data);
@@ -40,4 +51,5 @@ export function bulkSoftDeleteComments(ids) {
 
 export default {
   fetchAdminComments, softDeleteComment, hardDeleteComment, bulkSoftDeleteComments,
+  restoreComment,
 };

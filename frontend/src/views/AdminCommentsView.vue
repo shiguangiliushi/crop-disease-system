@@ -66,6 +66,20 @@
           <div class="comment-text" :class="{ 'is-deleted': row.is_deleted }">
             {{ row.content || t('commentAdmin.emptyContent') }}
           </div>
+          <!-- 第 152 批：已删除的评论把**原内容**显示出来（后端留的档）——
+               管理员要看着原文才能判断"这条该不该恢复"。 -->
+          <div v-if="row.is_deleted && row.original_content" class="original-text">
+            <span class="original-label">{{ t('commentAdmin.originalContent') }}</span>
+            {{ row.original_content }}
+            <!-- 删除人写在行里：管理员**在决定要不要恢复之前**就该看到
+                 "这条是作者自己删的、还是版主删的" -->
+            <span v-if="row.deleted_by" class="deleted-by">
+              {{ t('commentAdmin.deletedBy', { name: row.deleted_by }) }}
+            </span>
+          </div>
+          <div v-else-if="row.is_deleted" class="original-text muted">
+            {{ t('commentAdmin.noOriginal') }}
+          </div>
           <div class="comment-sub">
             <span><i class="fas fa-user"></i> {{ row.author?.username || t('forum.unknownUser') }}</span>
             <span><i class="fas fa-clock"></i> {{ formatTime(row.created_at, 'YYYY-MM-DD HH:mm') }}</span>
@@ -95,6 +109,18 @@
         <template #default="{ row }">
           <el-button v-if="!row.is_deleted" size="small" type="danger" link @click="softRemove(row)">
             {{ t('commentAdmin.softDelete') }}
+          </el-button>
+          <!--
+            第 152 批：恢复（仅全权管理员）
+            · 只有"删过 + 留了原文"的才能恢复 → 用 can_restore 提前禁用，
+              并说明原因（本批之前删的评论没留原文，后端会 400）；
+            · 后端也是 is_full_admin 门禁 —— 编辑员的本职是"删"，"恢复"是纠错。
+          -->
+          <el-button v-if="canHardDelete && row.is_deleted" size="small" type="primary" link
+                     :disabled="!row.can_restore"
+                     :title="row.can_restore ? '' : t('commentAdmin.noOriginalHint')"
+                     @click="restore(row)">
+            {{ t('commentAdmin.restore') }}
           </el-button>
           <!-- 硬删除不可逆：只给全权管理员画这个按钮（后端也是 403） -->
           <el-button v-if="canHardDelete" size="small" type="danger" link @click="hardRemove(row)">
@@ -146,7 +172,8 @@ import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  bulkSoftDeleteComments, fetchAdminComments, hardDeleteComment, softDeleteComment,
+  bulkSoftDeleteComments, fetchAdminComments, hardDeleteComment, restoreComment,
+  softDeleteComment,
 } from '@/api/adminComment';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
@@ -236,6 +263,35 @@ export default {
       }
     };
 
+    /**
+     * 恢复一条被软删除的评论（第 152 批，仅全权管理员）
+     *
+     * 确认框里额外提示一件事：这条可能是**作者本人**删的（row.deleted_by）——
+     * 把他自己删掉的评论放回去之前，管理员应当知道自己在推翻谁的操作。
+     */
+    const restore = async (row) => {
+      const byAuthor = row.deleted_by
+        ? t('commentAdmin.restoreConfirmBy', { name: row.deleted_by })
+        : t('commentAdmin.restoreConfirmUnknown');
+      try {
+        await ElMessageBox.confirm(
+          t('commentAdmin.restoreConfirm', { text: row.original_content || '' }) + byAuthor,
+          t('commentAdmin.restore'),
+          { type: 'warning', confirmButtonText: t('commentAdmin.restore'),
+            cancelButtonText: t('common.cancel') },
+        );
+      } catch {
+        return;
+      }
+      try {
+        await restoreComment(row.id);
+        ElMessage.success(t('commentAdmin.restoreOk'));
+        await loadList();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('commentAdmin.restoreFailed')));
+      }
+    };
+
     const hardRemove = async (row) => {
       try {
         await ElMessageBox.confirm(
@@ -314,7 +370,7 @@ export default {
       canModerate, canHardDelete,
       loadList, applyFilter, handleSizeChange, resetFilters, hasFilter,
       onSelectionChange, clearSelection,
-      softRemove, hardRemove, bulkRemove, openPost, formatTime,
+      softRemove, restore, hardRemove, bulkRemove, openPost, formatTime,
     };
   },
 };
@@ -331,6 +387,30 @@ export default {
 .comment-text.is-deleted {
   color: var(--ink-400, #9dada5);
   font-style: italic;
+}
+
+.original-text {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--brand-300, #9ecfb8);
+  background: var(--ink-50);
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-600, #5b6b62);
+  word-break: break-word;
+}
+
+.original-label {
+  font-weight: 600;
+  margin-right: 4px;
+  color: var(--brand-700, #1c6b4b);
+}
+
+.deleted-by {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-400, #9dada5);
 }
 
 .comment-sub {
