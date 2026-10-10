@@ -454,6 +454,23 @@ const router = createRouter({
       }
     },
     {
+      // 第 148 批：管理端「操作日志」
+      // 第 146 批把管理动作落进了 AdminAuditLog 表并给了只读接口，但只能在 Django admin 里看。
+      // 这一页把它接进控制台：按动作/操作人/时间/关键字筛选。**仅全权管理员**。
+      path: '/admin/audit-logs',
+      name: 'admin-audit-logs',
+      component: () => import('@/views/AdminAuditLogView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        fullAdminOnly: true,   // 第 148 批：与后端 is_full_admin 同一档
+        adminArea: true,
+        title: '操作日志',
+        breadcrumb: ['管理', '操作日志']
+      }
+    },
+
+    {
       // 第 147 批：管理端「论坛管理」
       // 在此之前控制台只能管理**待审核**的帖子（内容审核页）：已发布的帖子里有广告、
       // 有吵架、也有该置顶加精的好帖，但控制台看不到它们 —— 只能回农户端论坛翻。
@@ -628,6 +645,14 @@ router.beforeEach(async (to, from, next) => {
         blockedByModule = !allowed;
       }
 
+      // 第 148 批：有几页**只有全权管理员**能看 —— 典型是「操作日志」：
+      // 它显示"谁在什么时候对谁做了什么"，内容编辑员不该看到别的管理员的操作记录
+      // （后端接口也是 is_full_admin 门禁，这里只是别让他白开一个空页面）。
+      const needsFullAdmin = to.matched.some(record => record.meta.fullAdminOnly);
+      if (allowed && needsFullAdmin && !authStore.isAdmin) {
+        allowed = false;
+      }
+
       if (!allowed) {
         // 提示并送回上一页；但直接输网址进来时 from 是空路径，
         // 送 "/" 比留在管理页更合理（第 103 批补：原来 `from.path || '/'` 在
@@ -639,6 +664,8 @@ router.beforeEach(async (to, from, next) => {
         const fallback = authStore.canAccessConsole ? '/admin/dashboard' : (from.path || '/');
         if (blockedByModule) {
           ElMessage.warning(t('msg.needModule', { module: t(`contentModule.${requiredModule}`) }));
+        } else if (needsFullAdmin) {
+          ElMessage.warning(t('msg.needFullAdmin'));
         } else {
           ElMessage.warning(required === 'USER_ADMIN'
             ? t('msg.needUserAdmin')

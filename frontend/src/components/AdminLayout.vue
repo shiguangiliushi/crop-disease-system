@@ -51,6 +51,9 @@ const navItems = [
   // 第 147 批：论坛管理（与内容审核同一模块：能审帖的人就能管理帖子）
   { to: '/admin/forum', icon: 'fas fa-comments', labelKey: 'manage.forum',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
+  // 第 148 批：操作日志（**仅全权管理员** —— 显示"谁对谁做了什么"，编辑员不该看到）
+  { to: '/admin/audit-logs', icon: 'fas fa-clipboard-list', labelKey: 'manage.auditLogs',
+    capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },
   { to: '/admin/news', icon: 'fas fa-newspaper', labelKey: 'manage.news',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_NEWS },
   // 第 122 批：病害百科维护（原来长在农户端百科页上，现在归这里）
@@ -74,6 +77,8 @@ const navItems = [
 const visibleNavItems = computed(() => navItems.filter((item) => {
   if (!authStore.hasCapability(item.capability)) return false;
   if (item.module && !authStore.hasContentModule(item.module)) return false;
+  // 第 148 批：只给全权管理员看的入口（操作日志）
+  if (item.fullAdminOnly && !authStore.isAdmin) return false;
   return true;
 }));
 
