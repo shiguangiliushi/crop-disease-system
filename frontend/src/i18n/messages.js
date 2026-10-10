@@ -200,6 +200,7 @@ export const zhCN = {
   // ==========================================================================
   contentModule: {
     review: '内容审核',
+    forum: '论坛交流',
     news: '新闻管理',
     pests: '病害百科',
     feedback: '意见反馈',
@@ -2381,6 +2382,7 @@ export const zhCN = {
     // 第 126 批：信息编辑员手输 /admin/users 时要说清"为什么"，而不是笼统一句没权限
     needUserAdmin: '这一页只有管理员可以访问（信息编辑员没有用户管理权限）',
     needFullAdmin: '这一页只有全权管理员可以访问（操作日志涉及其他管理员的操作记录）',
+    moduleOr: ' 或 ',
     // 第 128 批：内容侧按模块隔离 —— 手输别的模块网址时告诉他缺哪一块
     needModule: '你的账号没有「{module}」权限，请联系超级管理员开通',
     imageOnly: '只能上传图片文件',
@@ -2951,6 +2953,7 @@ export const en = {
   // 第 128 批：内容模块名（见中文侧说明）
   contentModule: {
     review: 'Content review',
+    forum: 'Forum management',
     news: 'News management',
     pests: 'Disease wiki',
     feedback: 'Feedback',
@@ -5078,6 +5081,7 @@ export const en = {
     // 第 126 批：与中文侧同一条（信息编辑员打开用户管理页时的说明）
     needUserAdmin: 'This page is for administrators only (editors have no user management access)',
     needFullAdmin: 'This page is for full administrators only',
+    moduleOr: ' or ',
     // 第 128 批：内容模块隔离（手输别的模块网址时的提示）
     needModule: 'Your account does not have the "{module}" permission — ask a superuser to grant it',
     imageOnly: 'Only image files can be uploaded',

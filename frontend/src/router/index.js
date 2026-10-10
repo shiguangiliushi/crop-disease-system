@@ -464,7 +464,8 @@ const router = createRouter({
         requiresAuth: true,
         requiresAdmin: true,
         capability: 'CONTENT',
-        module: 'review',   // 与内容审核 / 论坛管理同一模块：审核评论正是审核工作
+        // 第 151 批：「内容审核」或「论坛交流」任一即可（review 宽口径，forum 细口径）
+        modules: ['review', 'forum'],
         adminArea: true,
         title: '评论管理',
         breadcrumb: ['管理', '评论管理']
@@ -500,7 +501,8 @@ const router = createRouter({
         requiresAdmin: true,
         // 与内容审核同一口径：能审帖的人（review 模块）就能进来管理帖子
         capability: 'CONTENT',
-        module: 'review',
+        // 第 151 批：「内容审核」或「论坛交流」任一即可
+        modules: ['review', 'forum'],
         adminArea: true,   // 第 117 批：管理后台外壳
         title: '论坛管理',
         breadcrumb: ['管理', '论坛管理']
@@ -654,11 +656,20 @@ router.beforeEach(async (to, from, next) => {
       const requiredModule = to.matched
         .map(record => record.meta.module)
         .find(Boolean);
+      // 第 151 批：一个页面可以由**多个模块中的任意一个**开放 —— 典型是论坛管理/评论管理：
+      // 「内容审核」（宽口径：能审帖自然能管论坛）与「论坛交流」（细口径：只管论坛）
+      // 任一命中即可。用数组写 meta.modules，优先级高于单个 meta.module。
+      const requiredModules = to.matched
+        .map(record => record.meta.modules)
+        .find(list => Array.isArray(list) && list.length);
 
       // 没标能力的老路由：能进后台即可
       let allowed = required ? authStore.hasCapability(required) : authStore.canAccessConsole;
       let blockedByModule = false;
-      if (allowed && requiredModule) {
+      if (allowed && requiredModules) {
+        allowed = requiredModules.some(module => authStore.hasContentModule(module));
+        blockedByModule = !allowed;
+      } else if (allowed && requiredModule) {
         allowed = authStore.hasContentModule(requiredModule);
         blockedByModule = !allowed;
       }
@@ -681,7 +692,10 @@ router.beforeEach(async (to, from, next) => {
         // 有权限的那一页更说得通，并明确告诉他原因。
         const fallback = authStore.canAccessConsole ? '/admin/dashboard' : (from.path || '/');
         if (blockedByModule) {
-          ElMessage.warning(t('msg.needModule', { module: t(`contentModule.${requiredModule}`) }));
+          const moduleLabel = (requiredModules || [requiredModule])
+            .map(module => t(`contentModule.${module}`))
+            .join(t('msg.moduleOr'));
+          ElMessage.warning(t('msg.needModule', { module: moduleLabel }));
         } else if (needsFullAdmin) {
           ElMessage.warning(t('msg.needFullAdmin'));
         } else {

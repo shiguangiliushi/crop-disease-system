@@ -170,9 +170,15 @@ export default {
     const selectedIds = ref([]);
     const bulkActing = ref(false);
 
-    /** 能审核 = 能看评论管理、能软删（与后端 review 模块判定对齐） */
+    /**
+     * 能看评论管理、能软删（与后端门禁对齐）
+     *
+     * 第 151 批：`forum`（论坛交流）也算 —— 评论管理正是论坛工作的一部分；
+     * `review` 仍是宽口径，两边都留（老账号不掉权限）。
+     */
     const canModerate = computed(() => Boolean(
       authStore.hasContentModule?.('review')
+      || authStore.hasContentModule?.('forum')
       || authStore.user?.is_staff
       || authStore.user?.is_superuser,
     ));

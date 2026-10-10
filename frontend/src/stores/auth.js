@@ -189,10 +189,15 @@ export const useAuthStore = defineStore('auth', () => {
   // 病害百科维护（后端同样会 403）。
   // ==========================================================================
   const MODULE_REVIEW = 'review';
+// 第 151 批：论坛交流（只管论坛：帖子与评论，含置顶加精与帖子审核）
+const MODULE_FORUM = 'forum';
   const MODULE_NEWS = 'news';
   const MODULE_PESTS = 'pests';
   const MODULE_FEEDBACK = 'feedback';
-  const CONTENT_MODULES = [MODULE_REVIEW, MODULE_NEWS, MODULE_PESTS, MODULE_FEEDBACK];
+  // 顺序即用户管理弹窗里勾选框的顺序（与后端 capabilities.CONTENT_MODULES 一致）
+const CONTENT_MODULES = [
+  MODULE_REVIEW, MODULE_FORUM, MODULE_NEWS, MODULE_PESTS, MODULE_FEEDBACK,
+];
 
   /**
    * 当前账号拥有的内容模块
@@ -579,6 +584,7 @@ export const useAuthStore = defineStore('auth', () => {
     hasContentModule,
     CONTENT_MODULES,
     MODULE_REVIEW,
+    MODULE_FORUM,
     MODULE_NEWS,
     MODULE_PESTS,
     MODULE_FEEDBACK,

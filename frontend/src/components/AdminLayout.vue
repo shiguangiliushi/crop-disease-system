@@ -50,10 +50,12 @@ const navItems = [
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
   // 第 147 批：论坛管理（与内容审核同一模块：能审帖的人就能管理帖子）
   { to: '/admin/forum', icon: 'fas fa-comments', labelKey: 'manage.forum',
-    capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
+    capability: authStore.CAP_CONTENT,
+    modules: [authStore.MODULE_REVIEW, authStore.MODULE_FORUM] },
   // 第 149 批：评论管理（与论坛管理同一模块：评论审核就是内容审核工作）
   { to: '/admin/comments', icon: 'fas fa-comment-dots', labelKey: 'manage.comments',
-    capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
+    capability: authStore.CAP_CONTENT,
+    modules: [authStore.MODULE_REVIEW, authStore.MODULE_FORUM] },
   // 第 148 批：操作日志（**仅全权管理员** —— 显示"谁对谁做了什么"，编辑员不该看到）
   { to: '/admin/audit-logs', icon: 'fas fa-clipboard-list', labelKey: 'manage.auditLogs',
     capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },
@@ -80,6 +82,8 @@ const navItems = [
 const visibleNavItems = computed(() => navItems.filter((item) => {
   if (!authStore.hasCapability(item.capability)) return false;
   if (item.module && !authStore.hasContentModule(item.module)) return false;
+  // 第 151 批：多模块项（论坛管理 / 评论管理）—— 任一命中即可见
+  if (item.modules && !item.modules.some(m => authStore.hasContentModule(m))) return false;
   // 第 148 批：只给全权管理员看的入口（操作日志）
   if (item.fullAdminOnly && !authStore.isAdmin) return false;
   return true;

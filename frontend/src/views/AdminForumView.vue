@@ -310,9 +310,16 @@ export default {
     const bulkRejectMode = ref(false);
 
     // -- 权限 ---------------------------------------------------------------
-    /** 能审核/置顶加精：与后端 is_moderator() 对齐（前端判不了 Moderators 组，见第 145 批说明） */
+    /**
+     * 能审核 / 置顶 / 加精 / 删除：与后端 `is_moderator()` 对齐
+     *
+     * 第 151 批：`forum`（论坛交流）也算 —— 只勾这一个模块的编辑员就是"论坛管理员"，
+     * 不给他按钮等于这个模块名不副实（E2E 就是这么发现漏改的：后端放行、页面上一个按钮都没有）。
+     * 前端仍判不了 Moderators 组（组信息没下发），那种用户看不到按钮但后端放行 —— 见第 145 批说明。
+     */
     const canModerate = computed(() => Boolean(
       authStore.hasContentModule?.('review')
+      || authStore.hasContentModule?.('forum')
       || authStore.user?.is_staff
       || authStore.user?.is_superuser,
     ));
