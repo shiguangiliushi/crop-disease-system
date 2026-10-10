@@ -10296,3 +10296,70 @@ class ForumAdminListingTests(APITestCase):
         titles = self._titles(self.client_plain.get(
             f'/api/forums/posts/?board={self.board.id}&only_deleted=true'))
         self.assertEqual(titles, ['zz已发布'])
+
+
+class AuditLogDateFilterTests(APITestCase):
+    """
+    操作日志的时间范围筛选（第 148 批，控制台「操作日志」页要用）
+
+    审计最常见的问法就是"上周谁停用过账号"。`end` 必须**含当天**
+    （用 `created_at__date__lte` 而不是 `created_at__lte`）——
+    否则"查 3 月 1 日到 3 月 2 日"会把 3 月 2 日白天的记录全漏掉，
+    而这种漏是静默的：少几条谁也不会发现，直到真出事去对账。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_adf_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.target = User.objects.create_user(
+            username='zz_adf_target', password='pw12345678', role='USER',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+
+        # 造三条不同日期的日志（直接写表，避免被"只能由助手写"之外的因素干扰）
+        from .audit import log_admin_action
+        from django.utils import timezone
+        import datetime
+
+        today = timezone.localtime().date()
+        for offset, action in ((0, 'user.suspend'), (3, 'user.restore'), (10, 'user.delete')):
+            log = log_admin_action(self.superuser, action, target=self.target)
+            if log is not None:
+                AdminAuditLog.objects.filter(id=log.id).update(
+                    created_at=timezone.now() - datetime.timedelta(days=offset))
+
+    def test_date_range_is_inclusive_on_both_ends(self):
+        from django.utils import timezone
+        import datetime
+
+        today = timezone.localtime().date()
+        start = (today - datetime.timedelta(days=3)).isoformat()
+        end = (today - datetime.timedelta(days=3)).isoformat()
+        response = self.client_super.get(f'/api/admin/audit-logs/?start={start}&end={end}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        actions = [row['action'] for row in response.data['results']]
+        self.assertIn('user.restore', actions, '当天的记录要包含在区间里（end 含当天）')
+        self.assertNotIn('user.suspend', actions, '今天的不该落进"3 天前"那一天')
+
+    def test_open_ended_ranges(self):
+        from django.utils import timezone
+        import datetime
+
+        today = timezone.localtime().date()
+        # 只要 start：从 5 天前起 → 今天与 3 天前的都在
+        response = self.client_super.get(
+            f'/api/admin/audit-logs/?start={(today - datetime.timedelta(days=5)).isoformat()}')
+        actions = [row['action'] for row in response.data['results']]
+        self.assertIn('user.suspend', actions)
+        self.assertIn('user.restore', actions)
+        self.assertNotIn('user.delete', actions)
+
+    def test_invalid_dates_are_ignored(self):
+        """非法日期**忽略**（不该 500，也不该筛成空）——与其它管理列表一致"""
+        response = self.client_super.get('/api/admin/audit-logs/?start=不是日期&end=2026-13-45')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 3)
