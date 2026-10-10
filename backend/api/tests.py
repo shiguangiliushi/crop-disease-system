@@ -9806,3 +9806,97 @@ class ForumBoardCrudTests(APITestCase):
         self.assertEqual(edited.status_code, status.HTTP_403_FORBIDDEN, edited.data)
         board.refresh_from_db()
         self.assertEqual(board.name, 'zz只读版块')
+
+
+class PostModerationByEditorTests(APITestCase):
+    """
+    置顶 / 加精：信息编辑员（review 模块）也能用（第 145 批）
+
+    这一批给论坛列表加了版主开关（此前只有作者自己的编辑页有勾选框，
+    所以"版主给别人的帖子加精/置顶"在界面上做不到）。界面按
+    "有 review 模块 / is_staff / is_superuser"显隐，后端仍以 `is_moderator()` 为准 ——
+    这里把三类账号的行为钉住，避免以后有人把判定收紧或放宽而无人察觉。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_pm_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_pm_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review',
+                                         granted_by=self.superuser)
+        self.news_editor = User.objects.create_user(
+            username='zz_pm_newseditor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.news_editor, module='news',
+                                         granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_pm_author', password='pw12345678', role='USER',
+        )
+        self.board = ForumBoard.objects.create(name='zz版主测试版块', order=900)
+        self.post = Post.objects.create(
+            title='zz别人的帖子', content='<p>内容</p>', author=self.author,
+            board=self.board, status='published',
+        )
+
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_news = APIClient()
+        self.client_news.force_authenticate(user=self.news_editor)
+        self.client_author = APIClient()
+        self.client_author.force_authenticate(user=self.author)
+
+    def test_review_editor_can_pin_and_feature_others_post(self):
+        """有 review 模块的信息编辑员能给**别人的**帖子置顶/加精（这正是本批补的能力）"""
+        pinned = self.client_editor.post(
+            f'/api/forums/posts/{self.post.id}/set_pinned/', {'is_pinned': True}, format='json')
+        self.assertEqual(pinned.status_code, status.HTTP_200_OK, pinned.data)
+        self.assertTrue(pinned.data['is_pinned'])
+
+        essence = self.client_editor.post(
+            f'/api/forums/posts/{self.post.id}/set_essence/', {'is_essence': True}, format='json')
+        self.assertEqual(essence.status_code, status.HTTP_200_OK, essence.data)
+        self.assertTrue(essence.data['is_essence'])
+
+        self.post.refresh_from_db()
+        self.assertTrue(self.post.is_pinned and self.post.is_essence)
+
+        # 再点一次是取消（接口语义：传了值就按值设，没传就取反）
+        off = self.client_editor.post(
+            f'/api/forums/posts/{self.post.id}/set_pinned/', {'is_pinned': False}, format='json')
+        self.assertEqual(off.status_code, status.HTTP_200_OK)
+        self.post.refresh_from_db()
+        self.assertFalse(self.post.is_pinned)
+
+    def test_news_only_editor_and_author_cannot_moderate(self):
+        """只有 news 模块的编辑员、以及帖子作者本人，都不能置顶/加精（后端 403）"""
+        for client, label in ((self.client_news, '只有 news 模块的编辑员'),
+                              (self.client_author, '作者本人')):
+            pinned = client.post(f'/api/forums/posts/{self.post.id}/set_pinned/',
+                                 {'is_pinned': True}, format='json')
+            self.assertEqual(pinned.status_code, status.HTTP_403_FORBIDDEN,
+                             f'{label}不该能置顶：{pinned.data}')
+            essence = client.post(f'/api/forums/posts/{self.post.id}/set_essence/',
+                                  {'is_essence': True}, format='json')
+            self.assertEqual(essence.status_code, status.HTTP_403_FORBIDDEN,
+                             f'{label}不该能加精：{essence.data}')
+        self.post.refresh_from_db()
+        self.assertFalse(self.post.is_pinned or self.post.is_essence)
+
+    def test_pinned_post_comes_first_in_list(self):
+        """置顶真的影响列表顺序（否则这个开关对用户就是隐形的）"""
+        other = Post.objects.create(title='zz普通帖子', content='<p>x</p>',
+                                    author=self.author, board=self.board, status='published')
+        self.client_editor.post(f'/api/forums/posts/{self.post.id}/set_pinned/',
+                                {'is_pinned': True}, format='json')
+        rows = self.client_author.get(f'/api/forums/posts/?board={self.board.id}').data
+        rows = rows.get('results', rows) if isinstance(rows, dict) else rows
+        self.assertEqual(rows[0]['id'], self.post.id,
+                         '置顶帖应当排在最前（列表默认按 -is_pinned 排序）')
+        self.assertEqual(rows[1]['id'], other.id)
