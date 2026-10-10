@@ -520,6 +520,63 @@ def print_summary(reports: list[FileReport]) -> int:
     return 0
 
 
+def print_markdown(reports: list[FileReport], args) -> int:
+    """
+    把审计结果打成 Markdown（第 155 批）
+
+    用途：`docs/注释覆盖审计报告.md` 的"总体数据 / 缺头注释的文件 / 内部零注释的长函数"
+    三节，可以直接用这里的输出替换 —— 数字与清单**由脚本生成**，不再靠手抄。
+    这也正是那份报告在第 105~152 批之间悄悄过期（251 文件/9.0% 实际已是 271/10.9%）的原因。
+    """
+    total_lines = sum(r.lines for r in reports)
+    total_comments = sum(r.comment_lines for r in reports)
+    no_docstring = [r for r in reports if not r.module_has_docstring]
+    undocumented_total = sum(len(r.undocumented) for r in reports)
+    headers = [r for r in reports if not r.module_has_docstring and r.lines >= args.min_lines]
+
+    print('<!-- 本段由 `python tools/audit_comments.py --markdown` 生成，请勿手改数字 -->')
+    print()
+    print(f'统计口径：{len(reports)} 个源文件 / {total_lines} 行；'
+          f'注释行 {total_comments}（整体密度 **{total_comments / max(total_lines, 1):.1%}**）')
+    print()
+
+    # ① 缺头注释的文件（按行数排）
+    print(f'### 文件顶部没有模块说明的文件（共 {len(no_docstring)} 个，'
+          f'下表列出 ≥ {args.min_lines} 行的 {len(headers)} 个）')
+    print()
+    print('| 行数 | 文件 |')
+    print('|---:|---|')
+    for report in sorted(headers, key=lambda r: -r.lines):
+        print(f'| {report.lines} | `{report.path}` |')
+    print()
+
+    # ② 内部一条注释都没有的长函数
+    long_functions = [(r.path, item) for r in reports for item in r.long_functions]
+    print(f'### 长函数内部 0 条注释（≥60 行且无说明，共 {len(long_functions)} 处）')
+    print()
+    if long_functions:
+        print('| 文件 | 成员 |')
+        print('|---|---|')
+        for path, item in long_functions:
+            print(f'| `{path}` | {item} |')
+    else:
+        print('（无）')
+    print()
+
+    # ③ 缺文档字符串最多的文件（成员清单用 --members 看全量）
+    print(f'### 缺文档字符串最多的 15 个文件（全项目共 {undocumented_total} 个成员）')
+    print()
+    print('| 缺失数 | 文件 |')
+    print('|---:|---|')
+    ranked = sorted((r for r in reports if r.undocumented),
+                    key=lambda r: -len(r.undocumented))[:15]
+    for report in ranked:
+        print(f'| {len(report.undocumented)} | `{report.path}` |')
+    print()
+    print('> 完整成员清单：`python tools/audit_comments.py --members`')
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='注释覆盖审计')
     parser.add_argument('--path', help='只审某个子目录')
@@ -529,6 +586,10 @@ def main() -> int:
     parser.add_argument('--members', action='store_true', help='列出所有缺文档字符串的成员')
     parser.add_argument('--members-file', help='只列这个文件里的缺失成员')
     parser.add_argument('--summary', action='store_true', help='按目录分组给摘要')
+    # 第 155 批：把审计结果**直接打成 Markdown**，让报告文档里的三节可以一键重生成，
+    # 免得每次都要手工誊抄（第 105 批那份报告就是因为"数字靠手抄"而过期了 50 批）。
+    parser.add_argument('--markdown', action='store_true',
+                        help='输出 Markdown（总体表 / 无头注释文件 / 内部零注释的长函数）')
     args = parser.parse_args()
 
     reports: list[FileReport] = []
@@ -544,6 +605,9 @@ def main() -> int:
     if args.json:
         print(json.dumps([r.to_dict() for r in reports], ensure_ascii=False, indent=2))
         return 0
+
+    if args.markdown:
+        return print_markdown(reports, args)
 
     if args.members or args.members_file:
         for report in reports:
