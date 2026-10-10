@@ -23,6 +23,34 @@ const API_CONFIG = {
  * 版块相关API
  */
 /**
+ * 新建版块（第 143 批，管理端「版块管理」页用）
+ *
+ * 接口本来就有（`POST /forums/boards/`，权限 `IsBroadcastManager | IsModeratorOrReadOnly`），
+ * 只是控制台一直没入口 —— 在此之前**建版块只能进 Django admin**。
+ * 字段：name / name_en / description / description_en / icon / order / is_active
+ *      （`icon` 存 FontAwesome 后缀，渲染成 `fas fa-<icon>`，见 ForumView 的 boardIconClass）
+ *
+ * @param {{name:string, name_en?:string, description?:string, description_en?:string,
+ *          icon?:string, order?:number, is_active?:boolean}} payload
+ */
+export function createForumBoard(payload) {
+  return http.post('/forums/boards/', payload).then((res) => res.data);
+}
+
+/**
+ * 修改版块（第 143 批）
+ *
+ * 用 **PATCH** 只提交界面上真正改过的字段：`post_count` / `today_posts` /
+ * `last_updated_date` 是只读统计字段，用 PUT 全量提交容易把它们覆盖成 0。
+ *
+ * @param {number} boardId
+ * @param {object} payload
+ */
+export function updateForumBoard(boardId, payload) {
+  return http.patch(`/forums/boards/${boardId}/`, payload).then((res) => res.data);
+}
+
+/**
  * 停用 / 启用一个版块（第 140 批，管理端「版块管理」页用）
  *
  * 接口早就有（`boards/<id>/set_status/`），但控制台一直没有入口 ——

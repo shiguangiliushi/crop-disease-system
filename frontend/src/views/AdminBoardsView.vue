@@ -10,6 +10,10 @@
         </div>
       </div>
       <div class="admin-hero-actions">
+        <!-- 第 143 批：新建版块。在此之前**建版块只能进 Django admin**（接口一直有） -->
+        <el-button class="btn-on-brand" @click="openCreate">
+          <i class="fas fa-plus"></i> {{ t('boardAdmin.createAction') }}
+        </el-button>
         <el-button plain :loading="loading" @click="loadList">
           <i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}
         </el-button>
@@ -104,11 +108,72 @@
           >
             {{ board.is_active ? t('boardAdmin.disableAction') : t('boardAdmin.enableAction') }}
           </el-button>
+          <!-- 第 143 批：编辑版块（名称/英文名/描述/图标） -->
+          <el-button size="small" type="primary" plain @click="openEdit(board)">
+            {{ t('boardAdmin.editAction') }}
+          </el-button>
         </div>
       </div>
 
       <el-empty v-if="!boards.length" :description="t('boardAdmin.empty')" />
     </div>
+
+    <!--
+      新建 / 编辑版块（第 143 批）
+      ------------------------------------------------------------------
+      字段与后端 `ForumBoardSerializer` 对齐；`order` 留空时按"排在最后"处理
+      （不填 0 —— 0 会插到最前面，和"新建的排最后"这种直觉相反）。
+      名称/英文名都收：农户端英文界面读 `name_en`（第 85 批的译文机制），
+      留空时英文界面会回落到中文名。
+    -->
+    <el-dialog
+      v-model="formVisible"
+      :title="editing ? t('boardAdmin.editTitle') : t('boardAdmin.createTitle')"
+      width="560px"
+      :close-on-click-modal="false"
+      @closed="resetForm"
+    >
+      <el-form label-position="top">
+        <el-form-item :label="t('boardAdmin.fieldName')" required>
+          <el-input v-model="form.name" maxlength="50" show-word-limit
+                    :placeholder="t('boardAdmin.fieldNamePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('boardAdmin.fieldNameEn')">
+          <el-input v-model="form.name_en" maxlength="50"
+                    :placeholder="t('boardAdmin.fieldNameEnHint')" />
+        </el-form-item>
+        <el-form-item :label="t('boardAdmin.fieldDesc')">
+          <el-input v-model="form.description" type="textarea" :rows="2" maxlength="200" show-word-limit />
+        </el-form-item>
+        <el-form-item :label="t('boardAdmin.fieldDescEn')">
+          <el-input v-model="form.description_en" type="textarea" :rows="2" maxlength="200" show-word-limit />
+        </el-form-item>
+        <el-form-item :label="t('boardAdmin.fieldIcon')">
+          <el-select v-model="form.icon" style="width: 220px">
+            <el-option v-for="item in iconOptions" :key="item.value"
+                       :label="item.label" :value="item.value">
+              <i :class="`fas fa-${item.value}`"></i>
+              <span style="margin-left: 8px">{{ item.label }}</span>
+            </el-option>
+          </el-select>
+          <p class="field-hint">{{ t('boardAdmin.fieldIconHint') }}</p>
+        </el-form-item>
+        <el-form-item :label="t('boardAdmin.fieldOrder')">
+          <el-input-number v-model="form.order" :min="1" :max="999" />
+          <p class="field-hint">{{ t('boardAdmin.fieldOrderHint') }}</p>
+        </el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="form.is_active">{{ t('boardAdmin.fieldActive') }}</el-checkbox>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="formVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="submitting"
+                   :disabled="!form.name.trim()" @click="submitForm">
+          {{ t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -132,7 +197,9 @@
  */
 import { computed, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { getForumBoards, setForumBoardStatus, updateForumBoardOrder } from '@/api/forum';
+import {
+  createForumBoard, getForumBoards, setForumBoardStatus, updateForumBoard, updateForumBoardOrder,
+} from '@/api/forum';
 import { formatApiError } from '@/api/http';
 import { useI18n } from '@/i18n';
 import { useLocalized } from '@/utils/localized';
@@ -218,6 +285,92 @@ export default {
 
     loadList();
 
+    // -- 新建 / 编辑版块（第 143 批）--------------------------------------
+    /**
+     * 图标候选：只列与本系统内容相关的几个（图标名会渲染成 `fas fa-<icon>`）。
+     * 为什么不给自由输入：写错一个字母界面上就是一个空白方块，而管理端没人会去查图标库。
+     */
+    const iconOptions = [
+      { value: 'bug', label: t('boardAdmin.iconBug') },
+      { value: 'seedling', label: t('boardAdmin.iconSeedling') },
+      { value: 'flask', label: t('boardAdmin.iconFlask') },
+      { value: 'comments', label: t('boardAdmin.iconComments') },
+      { value: 'tractor', label: t('boardAdmin.iconTractor') },
+      { value: 'cloud-sun', label: t('boardAdmin.iconWeather') },
+      { value: 'newspaper', label: t('boardAdmin.iconNews') },
+      { value: 'circle-question', label: t('boardAdmin.iconHelp') },
+    ];
+
+    const formVisible = ref(false);
+    const submitting = ref(false);
+    const editing = ref(null);   // null = 新建；否则是被编辑的版块
+    const form = ref({
+      name: '', name_en: '', description: '', description_en: '',
+      icon: 'comments', order: 1, is_active: true,
+    });
+
+    const openCreate = () => {
+      editing.value = null;
+      // 新建默认排在**最后**（现有最大 order + 1），而不是 0 —— 0 会插到最前面
+      const maxOrder = boards.value.reduce((max, b) => Math.max(max, b.order || 0), 0);
+      form.value = {
+        name: '', name_en: '', description: '', description_en: '',
+        icon: 'comments', order: maxOrder + 1, is_active: true,
+      };
+      formVisible.value = true;
+    };
+
+    const openEdit = (board) => {
+      editing.value = board;
+      form.value = {
+        name: board.name || '',
+        name_en: board.name_en || '',
+        description: board.description || '',
+        description_en: board.description_en || '',
+        icon: board.icon || 'comments',
+        order: board.order || 1,
+        is_active: board.is_active !== false,
+      };
+      formVisible.value = true;
+    };
+
+    const resetForm = () => {
+      editing.value = null;
+    };
+
+    const submitForm = async () => {
+      const payload = {
+        name: form.value.name.trim(),
+        name_en: form.value.name_en.trim(),
+        description: form.value.description.trim(),
+        description_en: form.value.description_en.trim(),
+        icon: form.value.icon,
+        order: form.value.order,
+        is_active: form.value.is_active,
+      };
+      if (!payload.name) {
+        ElMessage.warning(t('boardAdmin.nameRequired'));
+        return;
+      }
+      submitting.value = true;
+      try {
+        if (editing.value) {
+          await updateForumBoard(editing.value.id, payload);
+          ElMessage.success(t('boardAdmin.updatedOk', { name: payload.name }));
+        } else {
+          await createForumBoard(payload);
+          ElMessage.success(t('boardAdmin.createdOk', { name: payload.name }));
+        }
+        formVisible.value = false;
+        await loadList();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t(editing.value
+          ? 'boardAdmin.updateFailed' : 'boardAdmin.createFailed')));
+      } finally {
+        submitting.value = false;
+      }
+    };
+
     return {
       t,
       boards,
@@ -229,6 +382,10 @@ export default {
       loadList,
       toggleStatus,
       move,
+      // 第 143 批：新建 / 编辑版块
+      iconOptions, formVisible, submitting, editing, form,
+      openCreate, openEdit, submitForm,
+      resetForm,   // 模板的 @closed 用到（第 71 批的接线测试会查这个）
     };
   },
 };
