@@ -89,17 +89,26 @@ ROLE_USER = 'USER'
 # ---------------------------------------------------------------------------
 # 内容模块（第 128 批）
 # ---------------------------------------------------------------------------
-MODULE_REVIEW = 'review'      # 内容审核
+MODULE_REVIEW = 'review'      # 内容审核（审核队列 / 举报处置 / 敏感词）
+# 第 151 批：把「论坛交流」从内容审核里**分出来**。
+# 动机：此前"能审核"就自动"能管论坛"，想开一个**只管论坛**的编辑员做不到 ——
+# 只能连审核队列、举报、敏感词一起给。现在可以只勾这一项。
+# ⚠️ 两处口径要一起看：
+#   · `is_moderator()`（views_forum）= review **或** forum **或** Moderators 组；
+#   · 论坛管理页/评论管理页 = review **或** forum。
+#   也就是 review 仍是**宽口径**（老账号不会因为这一批掉权限），forum 是更细的口径。
+MODULE_FORUM = 'forum'        # 论坛交流（帖子与评论的管理，含置顶加精与帖子审核）
 MODULE_NEWS = 'news'          # 新闻管理
 MODULE_PESTS = 'pests'        # 病害百科（含农事任务）
 MODULE_FEEDBACK = 'feedback'  # 意见反馈
 
 #: 全部内容模块（顺序即前端展示顺序，与 models.EditorModuleGrant.MODULE_CHOICES 一致）
-CONTENT_MODULES = (MODULE_REVIEW, MODULE_NEWS, MODULE_PESTS, MODULE_FEEDBACK)
+CONTENT_MODULES = (MODULE_REVIEW, MODULE_FORUM, MODULE_NEWS, MODULE_PESTS, MODULE_FEEDBACK)
 
 #: 模块 → 中文名（错误提示与日志用；前端有自己的 i18n 文案）
 MODULE_LABELS = {
     MODULE_REVIEW: '内容审核',
+    MODULE_FORUM: '论坛交流',
     MODULE_NEWS: '新闻管理',
     MODULE_PESTS: '病害百科',
     MODULE_FEEDBACK: '意见反馈',

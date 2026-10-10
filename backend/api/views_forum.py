@@ -53,7 +53,7 @@ from .permissions import (  # 导入自定义权限类
 # 第 124 批：能力判定统一收口；第 128 批：内容再分模块
 # （版块管理 = BROADCAST；审核/评论处置/置顶加精 = review 模块）
 from .capabilities import (
-    IsBroadcastManager, CAP_BROADCAST, MODULE_REVIEW,
+    IsBroadcastManager, CAP_BROADCAST, MODULE_FORUM, MODULE_REVIEW,
     has_capability, has_content_module, is_full_admin,
 )
 
@@ -86,8 +86,11 @@ def is_moderator(user):
     """
     if not user or not user.is_authenticated:
         return False
+    # 第 151 批：`forum`（论坛交流）也算 —— 这个模块存在的意义就是
+    # "只管论坛、不碰审核队列"，而置顶/加精/审帖/删评论都在这个判定之下。
     return bool(
         has_content_module(user, MODULE_REVIEW)
+        or has_content_module(user, MODULE_FORUM)
         or user.groups.filter(name='Moderators').exists()
     )
 

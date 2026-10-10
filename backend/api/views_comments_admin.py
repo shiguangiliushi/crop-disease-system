@@ -29,7 +29,9 @@ from rest_framework.views import APIView
 
 from .audit import log_admin_action
 from .bulk import parse_ids
-from .capabilities import MODULE_REVIEW, has_content_module, is_full_admin
+from .capabilities import (
+    MODULE_FORUM, MODULE_REVIEW, has_content_module, is_full_admin,
+)
 from .models_audit import AdminAuditLog  # noqa: F401  （choices 里有 comment.* 动作）
 from .models_forum import Comment, Post
 from .pagination import CustomPagination
@@ -41,9 +43,15 @@ ORDERING_WHITELIST = ('created_at', '-created_at', 'id', '-id', 'like_count', '-
 
 
 def _reject_non_moderator(request, action_label):
-    """审核类动作的统一门禁（review 模块 / Moderators 组）"""
+    """
+    评论类动作的统一门禁（review / **forum** 模块 / Moderators 组）
+
+    第 151 批起 `forum`（论坛交流）也算：评论管理正是"论坛交流"的一部分，
+    而 review 仍是宽口径 —— 两处都留，老账号不会掉权限。
+    """
     user = request.user
     if (has_content_module(user, MODULE_REVIEW)
+            or has_content_module(user, MODULE_FORUM)
             or user.groups.filter(name='Moderators').exists()):
         return None
     return Response({'detail': f'只有内容维护者可以{action_label}'},

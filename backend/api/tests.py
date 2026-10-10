@@ -8109,11 +8109,16 @@ class CapabilityMatrixTests(APITestCase):
             username='zz_cap_editor', password='pw12345678', role='EDITOR',
         )
         # 第 128 批：编辑员现在还要**按模块授权**。这一组测试验的是"编辑员这个角色
-        # 能做哪些内容工作、不能碰哪些账号/发声接口"，所以给他**四个模块全勾**；
+        # 能做哪些内容工作、不能碰哪些账号/发声接口"，所以给他**所有模块全勾**；
         # "只勾一块时互不干扰"由 ContentModuleScopeTests 单独盯。
+        #
+        # 第 151 批：改成从 `capabilities.CONTENT_MODULES` 派生 —— 上一版把四个模块写死，
+        # 新增「论坛交流」时这条 fixture 就悄悄少勾了一块（测试仍然绿，但覆盖面变了）。
+        from .capabilities import CONTENT_MODULES
+
         EditorModuleGrant.objects.bulk_create([
             EditorModuleGrant(user=self.editor, module=module, granted_by=self.admin)
-            for module in ('review', 'news', 'pests', 'feedback')
+            for module in CONTENT_MODULES
         ])
         self.plain = User.objects.create_user(
             username='zz_cap_plain', password='pw12345678', role='USER',
@@ -8707,8 +8712,10 @@ class ContentModuleScopeTests(APITestCase):
         self.assertEqual(check.data['data']['content_modules'], ['news'])
 
         admin = self._client(self.superuser).get('/api/check-auth/')
-        self.assertEqual(admin.data['data']['content_modules'],
-                         ['review', 'news', 'pests', 'feedback'])
+        # 第 151 批：从 capabilities 派生，别再把清单写死（新增模块时它会自动跟上）
+        from .capabilities import CONTENT_MODULES
+
+        self.assertEqual(list(admin.data['data']['content_modules']), list(CONTENT_MODULES))
         self.assertEqual(admin.data['data']['capabilities'], ['CONTENT', 'USER_ADMIN', 'BROADCAST'])
 
     # ---------- 全权管理员不受模块表影响 ----------
@@ -10648,3 +10655,191 @@ class MoreAuditActionsTests(APITestCase):
         for row in response.data:
             self.assertTrue(row['label'], f'{row["value"]} 缺少中文名')
             self.assertNotEqual(row['label'], row['value'])
+
+
+class ForumOnlyEditorTests(APITestCase):
+    """
+    只勾「论坛交流」（forum）的信息编辑员（第 151 批）
+
+    动机：此前"能审核"就自动"能管论坛" —— 想开一个**只管论坛**的编辑员做不到，
+    只能连审核队列、举报、敏感词一起给。这一批把 forum 从 review 里分出来。
+
+    口径（有意设计成"review 仍是宽口径"）：
+      · `is_moderator()` = review **或** forum **或** Moderators 组；
+      · 论坛管理页 / 评论管理页 = review **或** forum；
+      · 审核队列（帖子待审列表用接口/举报/敏感词）仍然只认 review / BROADCAST。
+    这样老账号不会因为这一批掉权限，而新账号可以只开论坛。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_foe_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.forum_editor = User.objects.create_user(
+            username='zz_foe_forum', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.forum_editor, module='forum',
+                                         granted_by=self.superuser)
+        self.review_editor = User.objects.create_user(
+            username='zz_foe_review', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.review_editor, module='review',
+                                         granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_foe_author', password='pw12345678', role='USER',
+        )
+        self.board = ForumBoard.objects.create(name='zz论坛交流版块', order=995)
+        self.pending = Post.objects.create(title='zz论坛交流待审', content='<p>x</p>',
+                                           author=self.author, board=self.board,
+                                           status='pending')
+        self.published = Post.objects.create(title='zz论坛交流已发布', content='<p>x</p>',
+                                             author=self.author, board=self.board,
+                                             status='published')
+        self.hidden = Post.objects.create(title='zz论坛交流已隐藏', content='<p>x</p>',
+                                          author=self.author, board=self.board,
+                                          status='hidden')
+        self.comment = Comment.objects.create(post=self.published, author=self.author,
+                                              content='zz论坛交流评论')
+
+        self.client_forum = APIClient()
+        self.client_forum.force_authenticate(user=self.forum_editor)
+        self.client_review = APIClient()
+        self.client_review.force_authenticate(user=self.review_editor)
+
+    # ---------- 模块口径本身 ----------
+    def test_module_is_registered(self):
+        from .capabilities import CONTENT_MODULES, MODULE_FORUM, MODULE_LABELS
+        self.assertIn(MODULE_FORUM, CONTENT_MODULES)
+        self.assertEqual(MODULE_LABELS[MODULE_FORUM], '论坛交流')
+
+    def test_login_payload_carries_forum_module(self):
+        response = self.client.post('/api/login/', {
+            'username': 'zz_foe_forum', 'password': 'pw12345678',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        user = response.data['data']['user']
+        self.assertEqual(user['content_modules'], ['forum'])
+        self.assertIn('CONTENT', user['capabilities'],
+                      '论坛交流属于内容生产，应当带 CONTENT 能力（否则进不去后台）')
+
+    def test_role_change_accepts_forum_module(self):
+        """用户管理里能勾到「论坛交流」——后端必须接受这个取值"""
+        response = self.client_forum  # 占位避免 lint 误报未使用
+        self.assertIsNotNone(response)
+        client = APIClient()
+        client.force_authenticate(user=self.superuser)
+        res = client.post(f'/api/admin/users/{self.author.id}/role/', {
+            'role': 'EDITOR', 'modules': ['forum'],
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        from .capabilities import content_modules_of
+        self.author.refresh_from_db()
+        self.assertEqual(content_modules_of(self.author), ['forum'])
+
+    # ---------- 能做的：审帖 / 置顶加精 / 看全部状态 / 评论管理 ----------
+    def test_can_see_every_post_status(self):
+        rows = self.client_forum.get(f'/api/forums/posts/?board={self.board.id}').data
+        rows = rows.get('results', rows) if isinstance(rows, dict) else rows
+        titles = [row['title'] for row in rows]
+        for title in ('zz论坛交流待审', 'zz论坛交流已发布', 'zz论坛交流已隐藏'):
+            self.assertIn(title, titles, f'论坛编辑员应当看得到 {title}')
+
+    def test_can_approve_and_reject_posts(self):
+        res = self.client_forum.post(f'/api/forums/posts/{self.pending.id}/approve/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.pending.refresh_from_db()
+        self.assertEqual(self.pending.status, 'published')
+
+        res = self.client_forum.post(f'/api/forums/posts/{self.published.id}/reject/',
+                                     {'reason': 'zz测试驳回'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.published.refresh_from_db()
+        self.assertEqual(self.published.status, 'hidden')
+
+    def test_can_pin_and_feature_others_posts(self):
+        pinned = self.client_forum.post(
+            f'/api/forums/posts/{self.published.id}/set_pinned/', {'is_pinned': True},
+            format='json')
+        self.assertEqual(pinned.status_code, status.HTTP_200_OK, pinned.data)
+        essence = self.client_forum.post(
+            f'/api/forums/posts/{self.published.id}/set_essence/', {'is_essence': True},
+            format='json')
+        self.assertEqual(essence.status_code, status.HTTP_200_OK, essence.data)
+
+    def test_can_bulk_review_posts(self):
+        res = self.client_forum.post('/api/forums/posts/bulk-review/',
+                                     {'ids': [self.pending.id], 'action': 'approve'},
+                                     format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertEqual(res.data['succeeded'], 1)
+
+    def test_can_manage_comments(self):
+        listing = self.client_forum.get('/api/admin/comments/')
+        self.assertEqual(listing.status_code, status.HTTP_200_OK, listing.data)
+        deleted = self.client_forum.post(
+            f'/api/admin/comments/{self.comment.id}/soft-delete/')
+        self.assertEqual(deleted.status_code, status.HTTP_200_OK, deleted.data)
+        self.comment.refresh_from_db()
+        self.assertTrue(self.comment.is_deleted)
+
+    # ---------- 不能做的：审核队列/举报/敏感词/用户管理/审计 ----------
+    def test_cannot_touch_review_queue_side(self):
+        """
+        论坛编辑员**不**自动获得审核侧的其他东西（这正是这一批拆分的目的）
+
+        ⚠️ 关于举报：`GET /api/reports/` 对**任何登录用户**都返回 200，这是**设计如此**
+        —— `_can_handle_reports()` 为假时只返回"自己提交的举报"（第 41 批的口径），
+        所以不能拿状态码当权限断言。真正的门禁在**处置**动作（`is_full_admin`）
+        与"能不能看到别人的举报"上，这里就断言这两条。
+        """
+        from .models_report import Report
+
+        other = get_user_model().objects.create_user(
+            username='zz_foe_other', password='pw12345678', role='USER')
+        Report.objects.create(reporter=other, target_type='post', post=self.published,
+                              reason='other', detail='zz别人的举报')
+        listed = self.client_forum.get('/api/reports/')
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        self.assertEqual(listed.data['count'], 0, '论坛编辑员看不到别人提交的举报')
+        self.assertEqual(listed.data['pending'], 0, '也拿不到"待处理"计数')
+        report = Report.objects.get(detail='zz别人的举报')
+        handled = self.client_forum.post(f'/api/reports/{report.id}/handle/',
+                                        {'status': 'handled'}, format='json')
+        self.assertEqual(handled.status_code, status.HTTP_403_FORBIDDEN,
+                         '举报处置仍只属于全权管理员（第 41 批口径）')
+
+        # 敏感词（BROADCAST）
+        self.assertEqual(self.client_forum.get('/api/sensitive-words/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        # 用户管理（USER_ADMIN）
+        self.assertEqual(self.client_forum.get('/api/admin/users/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        # 操作日志（仅全权管理员）
+        self.assertEqual(self.client_forum.get('/api/admin/audit-logs/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+
+    def test_review_editor_keeps_forum_access(self):
+        """review 仍是**宽口径**：老的信息编辑员不会因为这一批掉权限"""
+        rows = self.client_review.get(f'/api/forums/posts/?board={self.board.id}').data
+        rows = rows.get('results', rows) if isinstance(rows, dict) else rows
+        self.assertIn('zz论坛交流待审', [row['title'] for row in rows])
+        self.assertEqual(self.client_review.get('/api/admin/comments/').status_code,
+                         status.HTTP_200_OK)
+        pinned = self.client_review.post(
+            f'/api/forums/posts/{self.published.id}/set_pinned/', {'is_pinned': True},
+            format='json')
+        self.assertEqual(pinned.status_code, status.HTTP_200_OK, pinned.data)
+
+    def test_plain_user_still_cannot_moderate(self):
+        client = APIClient()
+        client.force_authenticate(user=self.author)
+        self.assertEqual(
+            client.post(f'/api/forums/posts/{self.published.id}/set_pinned/',
+                        {'is_pinned': True}, format='json').status_code,
+            status.HTTP_403_FORBIDDEN)
+        self.assertEqual(client.get('/api/admin/comments/').status_code,
+                         status.HTTP_403_FORBIDDEN)
