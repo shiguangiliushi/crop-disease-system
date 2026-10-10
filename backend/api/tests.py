@@ -9700,3 +9700,109 @@ class DisabledAccountLoginTests(APITestCase):
         response = self._login()
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND, response.data)
         self.assertEqual(response.data['code'], 'user_not_found')
+
+
+class ForumBoardCrudTests(APITestCase):
+    """
+    版块的新建 / 编辑（第 143 批）
+
+    接口本来就有（`POST /forums/boards/`、`PATCH /forums/boards/<id>/`，
+    权限 `IsBroadcastManager | IsModeratorOrReadOnly`），但控制台一直没有入口 ——
+    在此之前**建版块只能进 Django admin**。本批补上页面后，这里把接口行为钉住。
+
+    重点：
+      · 中英字段都要能写（英文界面读 `name_en`/`description_en`，留空回落中文名）；
+      · **PATCH 不能把只读统计字段冲掉**（`post_count`/`today_posts` 是只读，
+        但如果哪天改成 PUT 全量提交，它们会被写成 0 —— 这条测试就是防这个的）；
+      · 权限：只有 BROADCAST（或版主）能建/改，普通用户与信息编辑员都 403。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.broadcast_admin = User.objects.create_user(
+            username='zz_bc_admin', password='pw12345678', is_staff=True, role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_bc_editor', password='pw12345678', role='EDITOR',
+        )
+        self.plain = User.objects.create_user(
+            username='zz_bc_plain', password='pw12345678', role='USER',
+        )
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.broadcast_admin)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    def test_create_board_with_bilingual_fields(self):
+        response = self.client_admin.post('/api/forums/boards/', {
+            'name': 'zz新版块',
+            'name_en': 'zz New Board',
+            'description': '简介',
+            'description_en': 'Intro',
+            'icon': 'seedling',
+            'order': 7,
+            'is_active': True,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        board = ForumBoard.objects.get(name='zz新版块')
+        self.assertEqual(board.name_en, 'zz New Board')
+        self.assertEqual(board.description_en, 'Intro')
+        self.assertEqual(board.icon, 'seedling')
+        self.assertEqual(board.order, 7)
+        self.assertTrue(board.is_active)
+
+    def test_edit_keeps_statistics(self):
+        """PATCH 改名字不能把统计字段冲掉（post_count/today_posts 是只读）"""
+        board = ForumBoard.objects.create(name='zz待改版块', order=1,
+                                          post_count=12, today_posts=3)
+        response = self.client_admin.patch(f'/api/forums/boards/{board.id}/', {
+            'name': 'zz改名后',
+            'name_en': 'zz Renamed',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        board.refresh_from_db()
+        self.assertEqual(board.name, 'zz改名后')
+        self.assertEqual(board.name_en, 'zz Renamed')
+        self.assertEqual(board.post_count, 12, '统计字段不该被编辑接口冲掉')
+        self.assertEqual(board.today_posts, 3)
+
+    def test_created_board_is_visible_to_growers(self):
+        """新建且启用 → 农户端（普通用户）立刻能看到"""
+        self.client_admin.post('/api/forums/boards/', {
+            'name': 'zz可见版块', 'order': 3, 'is_active': True,
+        }, format='json')
+        names = [b['name'] for b in self.client_plain.get('/api/forums/boards/').data
+                 if isinstance(b, dict)]
+        self.assertIn('zz可见版块', names)
+
+    def test_created_but_disabled_board_is_hidden_from_growers(self):
+        """新建但**不启用** → 农户端看不到（先把版块建好、内容备齐再开放）"""
+        self.client_admin.post('/api/forums/boards/', {
+            'name': 'zz隐藏版块', 'order': 4, 'is_active': False,
+        }, format='json')
+        public_names = [b['name'] for b in self.client_plain.get('/api/forums/boards/').data
+                        if isinstance(b, dict)]
+        self.assertNotIn('zz隐藏版块', public_names)
+        admin_names = [b['name'] for b in self.client_admin.get('/api/forums/boards/').data
+                       if isinstance(b, dict)]
+        self.assertIn('zz隐藏版块', admin_names)
+
+    def test_name_is_required(self):
+        response = self.client_admin.post('/api/forums/boards/', {'name': ''}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+
+    def test_only_broadcast_can_create_or_edit(self):
+        for client, label in ((self.client_plain, '普通用户'), (self.client_editor, '信息编辑员')):
+            created = client.post('/api/forums/boards/', {'name': f'zz越权{label}'},
+                                  format='json')
+            self.assertEqual(created.status_code, status.HTTP_403_FORBIDDEN,
+                             f'{label}不该能建版块：{created.data}')
+        board = ForumBoard.objects.create(name='zz只读版块', order=9)
+        edited = self.client_editor.patch(f'/api/forums/boards/{board.id}/',
+                                          {'name': 'zz被改了'}, format='json')
+        self.assertEqual(edited.status_code, status.HTTP_403_FORBIDDEN, edited.data)
+        board.refresh_from_db()
+        self.assertEqual(board.name, 'zz只读版块')
