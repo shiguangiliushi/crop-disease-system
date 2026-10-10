@@ -69,7 +69,8 @@ from .pagination import CustomPagination  # 导入自定义分页类
 User = get_user_model()  # 第 38 批：给版主发通知时需要
 
 logger = logging.getLogger(__name__)
-from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志  # 日志记录器（配置见 settings.LOGGING 的 api 记录器）
+from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志
+from .bulk import parse_ids  # noqa: E402  第 147 批：批量接口的公共校验  # 日志记录器（配置见 settings.LOGGING 的 api 记录器）
 
 
 def is_moderator(user):
@@ -658,6 +659,63 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         )
         return Response({
             'action': action_name,
+            'requested': len(ids),
+            'succeeded': ok_count,
+            'failed': len(ids) - ok_count,
+            'results': results,
+        })
+
+    @action(detail=False, methods=['post'], url_path='bulk-delete')
+    def bulk_delete(self, request):
+        """
+        批量删除帖子（第 147 批，**仅全权管理员**）
+
+            POST /api/forums/posts/bulk-delete/   {"ids": [1, 2, 3]}
+
+        为什么需要：控制台的「论坛管理」页要能一次清掉一批垃圾帖 / 广告帖。
+        单条删除要一条条点确认框，20 条就是 20 轮。
+
+        权限刻意比单条删除**更严一档**（与反馈那边一致）：
+          · 单条 `destroy`：作者本人或版主/管理员都能删（`CanDeletePost`）；
+          · 批量删除：**只给全权管理员** —— 批量是不可逆的破坏性操作，
+            "能审核"不等于"能一次抹掉一批"。列表页里版主看到的本来就是全部帖子，
+            开放给他等于把"作者才能删自己的帖子"这条边界从后门绕过去。
+
+        与反馈的批量删除同口径：逐条处理不整体失败（响应里给每条成败）、
+        复用 `parse_ids` 的那套校验（数组/转 int/去重/上限 200）、
+        走 `post.soft_delete()`（**软删除**：评论与点赞留在库里，不做级联真删）。
+        """
+        if not is_full_admin(request.user):
+            return Response({'detail': '只有管理员可以批量删除帖子'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        ids, error = parse_ids(request.data.get('ids'), label='帖子')
+        if error:
+            return error
+
+        # 只删**能看得到**的帖子：`Post.active` 已排除软删除的，重复点不会重复计数
+        posts = {p.id: p for p in Post.active.filter(id__in=ids).select_related('board')}
+
+        results = []
+        ok_count = 0
+        for post_id in ids:
+            post = posts.get(post_id)
+            if post is None:
+                results.append({'id': post_id, 'ok': False, 'detail': '帖子不存在或已被删除'})
+                continue
+            title = post.title
+            post.soft_delete()
+            ok_count += 1
+            results.append({'id': post_id, 'ok': True, 'detail': title[:50]})
+
+        log_admin_action(
+            request.user, 'post.bulk_delete', target_type='post',
+            target_id=','.join(str(i) for i in ids[:20]),
+            detail=f'批量删除帖子 {ok_count}/{len(ids)} 条（软删除，评论与点赞保留）',
+            request=request,
+        )
+        logger.info('批量删除帖子 by=%s 成功=%s/%s', request.user.id, ok_count, len(ids))
+        return Response({
             'requested': len(ids),
             'succeeded': ok_count,
             'failed': len(ids) - ok_count,

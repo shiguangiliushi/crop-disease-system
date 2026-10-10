@@ -10110,3 +10110,189 @@ class AdminAuditLogTests(APITestCase):
         self.assertIn('board.create', values)
         self.assertEqual(self.client_editor.get('/api/admin/audit-logs/actions/').status_code,
                          status.HTTP_403_FORBIDDEN)
+
+
+# ============================================================================
+# 第 147 批：论坛管理（控制台）
+# ============================================================================
+# 这一批把论坛帖子的管理搬进控制台，为此补了一个后端能力：**批量删除帖子**
+# （审核、置顶/加精、软删除单条都早就有）。另外把 ids 校验抽到 `api/bulk.py`，
+# 让反馈与帖子两条批量接口**共用同一套**（"批量接口各写一套更松的校验"是漏洞常见形态）。
+# ============================================================================
+class PostBulkDeleteTests(APITestCase):
+    """帖子批量删除（第 147 批，仅全权管理员）"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_pb_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_pb_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review',
+                                         granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_pb_author', password='pw12345678', role='USER',
+        )
+        self.board = ForumBoard.objects.create(name='zz帖子管理版块', order=960)
+        self.posts = [
+            Post.objects.create(title=f'zz待删帖子{i}', content='<p>正文</p>',
+                                author=self.author, board=self.board, status='published')
+            for i in range(3)
+        ]
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+
+    def test_bulk_delete_soft_deletes_and_keeps_comments(self):
+        """软删除：帖子从列表消失，但**评论与点赞留在库里**（不做级联真删）"""
+        comment = Comment.objects.create(post=self.posts[0], author=self.author, content='zz评论')
+        ids = [p.id for p in self.posts]
+        response = self.client_super.post('/api/forums/posts/bulk-delete/', {'ids': ids},
+                                          format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['succeeded'], 3)
+        self.assertEqual(response.data['failed'], 0)
+
+        for post in self.posts:
+            post.refresh_from_db()
+            self.assertTrue(post.is_deleted)
+        self.assertTrue(Comment.objects.filter(id=comment.id).exists(),
+                        '软删除不该把评论级联删掉')
+
+        # 普通列表里看不到；版主用 ?only_deleted=true 仍可审计
+        visible = self.client_super.get(f'/api/forums/posts/?board={self.board.id}').data
+        visible = visible.get('results', visible) if isinstance(visible, dict) else visible
+        self.assertEqual([row for row in visible if row['id'] in ids], [])
+        deleted = self.client_super.get(
+            f'/api/forums/posts/?board={self.board.id}&only_deleted=true').data
+        deleted = deleted.get('results', deleted) if isinstance(deleted, dict) else deleted
+        self.assertEqual(len([row for row in deleted if row['id'] in ids]), 3)
+
+    def test_editor_with_review_module_cannot_bulk_delete(self):
+        """有 review 模块的编辑员能审核、能置顶加精，但**不能批量删帖**（不可逆操作只给全权管理员）"""
+        response = self.client_editor.post('/api/forums/posts/bulk-delete/',
+                                          {'ids': [p.id for p in self.posts]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        self.assertEqual(Post.active.filter(board=self.board, is_deleted=True).count(), 0)
+
+    def test_bulk_delete_input_validation(self):
+        """与反馈共用同一套 ids 校验：数组、去重、上限 200"""
+        for payload, note in (
+            ({'ids': 'abc'}, 'ids 不是数组'),
+            ({'ids': []}, '空 ids'),
+            ({'ids': list(range(1, 202))}, '超过 200 条'),
+        ):
+            response = self.client_super.post('/api/forums/posts/bulk-delete/', payload,
+                                              format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST,
+                             f'{note} 应当被拒：{response.data}')
+
+    def test_bulk_delete_reports_missing_rows(self):
+        response = self.client_super.post('/api/forums/posts/bulk-delete/',
+                                          {'ids': [self.posts[0].id, 999999]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['succeeded'], 1)
+        self.assertEqual(response.data['failed'], 1)
+
+    def test_bulk_delete_is_logged(self):
+        """第 146 批的审计日志要覆盖到这条新接口"""
+        self.client_super.post('/api/forums/posts/bulk-delete/',
+                               {'ids': [self.posts[0].id]}, format='json')
+        log = AdminAuditLog.objects.get(action='post.bulk_delete')
+        self.assertEqual(log.target_type, 'post')
+        self.assertIn('1/1', log.detail)
+
+
+class ForumAdminListingTests(APITestCase):
+    """
+    控制台「论坛管理」页依赖的列表能力（第 147 批）
+
+    页面本身是前端，但它能不能工作取决于后端这几条：
+    版主能看**全部状态**的帖子（含草稿/待审/隐藏/已删除），普通用户只能看已发布。
+    这里把它们钉住 —— 哪天有人收紧了 queryset，控制台的论坛管理会"看起来是空的"。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.editor = User.objects.create_user(
+            username='zz_fl_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review')
+        self.plain = User.objects.create_user(
+            username='zz_fl_plain', password='pw12345678', role='USER',
+        )
+        self.other = User.objects.create_user(
+            username='zz_fl_other', password='pw12345678', role='USER',
+        )
+        self.board = ForumBoard.objects.create(name='zz列表测试版块', order=961)
+        self.published = Post.objects.create(title='zz已发布', content='<p>x</p>',
+                                             author=self.other, board=self.board,
+                                             status='published')
+        self.pending = Post.objects.create(title='zz待审核', content='<p>x</p>',
+                                           author=self.other, board=self.board,
+                                           status='pending')
+        self.hidden = Post.objects.create(title='zz已隐藏', content='<p>x</p>',
+                                          author=self.other, board=self.board,
+                                          status='hidden')
+        self.draft = Post.objects.create(title='zz草稿', content='<p>x</p>',
+                                         author=self.other, board=self.board,
+                                         status='draft')
+        self.removed = Post.objects.create(title='zz已删除', content='<p>x</p>',
+                                           author=self.other, board=self.board,
+                                           status='published')
+        self.removed.soft_delete()
+
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    def _titles(self, response):
+        rows = response.data.get('results', response.data) if isinstance(response.data, dict) \
+            else response.data
+        return [row['title'] for row in rows]
+
+    def test_moderator_sees_every_status(self):
+        titles = self._titles(self.client_editor.get(f'/api/forums/posts/?board={self.board.id}'))
+        for title in ('zz已发布', 'zz待审核', 'zz已隐藏', 'zz草稿'):
+            self.assertIn(title, titles, f'版主应当看得到 {title}')
+        self.assertNotIn('zz已删除', titles, '软删除的帖子默认不出现（审计用 only_deleted）')
+
+    def test_moderator_can_filter_by_status(self):
+        for status_value, expected in (('pending', 'zz待审核'),
+                                       ('hidden', 'zz已隐藏'),
+                                       ('draft', 'zz草稿'),
+                                       ('published', 'zz已发布')):
+            titles = self._titles(self.client_editor.get(
+                f'/api/forums/posts/?board={self.board.id}&status={status_value}'))
+            self.assertIn(expected, titles)
+
+    def test_moderator_can_search_and_filter_pinned(self):
+        self.published.is_pinned = True
+        self.published.save(update_fields=['is_pinned'])
+        titles = self._titles(self.client_editor.get(
+            f'/api/forums/posts/?board={self.board.id}&search=zz已发布'))
+        self.assertEqual(titles, ['zz已发布'])
+
+        essence = self._titles(self.client_editor.get(
+            f'/api/forums/posts/?board={self.board.id}&is_essence=true'))
+        self.assertEqual(essence, [])
+
+    def test_plain_user_only_sees_published(self):
+        titles = self._titles(self.client_plain.get(f'/api/forums/posts/?board={self.board.id}'))
+        self.assertEqual(titles, ['zz已发布'])
+
+    def test_plain_user_cannot_list_deleted(self):
+        """`only_deleted` 只对版主生效（否则任何人都能翻出被删的帖子）"""
+        titles = self._titles(self.client_plain.get(
+            f'/api/forums/posts/?board={self.board.id}&only_deleted=true'))
+        self.assertEqual(titles, ['zz已发布'])

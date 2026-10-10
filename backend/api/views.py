@@ -97,6 +97,7 @@ from .xlsx import build_workbook
 # 配置日志记录器
 logger = logging.getLogger(__name__)
 from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志
+from .bulk import parse_ids  # noqa: E402  第 147 批：批量接口的公共校验
 
 from .ai_service import get_ai_service
 from .models import (
@@ -1132,33 +1133,14 @@ def _parse_bulk_ids(request):
     """
     解析批量操作里的 `ids`（第 138 批抽出：批量改状态与批量删除**共用**）
 
-    为什么要抽出来：两个批量动作必然长得像，而"批量接口各自写一套更松的校验"
-    正是漏洞的常见形态（单条校验很全、批量图快自己写一套）。共用一个函数就不会有两套。
+    第 147 批：实现挪到了 `api/bulk.py`（帖子那边的批量删除要用**同一套**校验），
+    这里保留成薄壳 —— 调用点与既有测试都不用改。
+    "批量接口各自写一套更松的校验"是这类漏洞最常见的形态，所以只留一份。
 
     返回 `(ids, error_response)`：成功时 error_response 为 None；失败时 ids 为 None。
-
-    校验（三条都必要）：
-      · 必须是数组 —— 否则 `for value in raw_ids` 会把字符串逐字符拆开；
-      · 逐项转 int、丢掉转不了的（前端传 "3" / 3 都收，传 "abc" 直接忽略）；
-      · 去重 + 上限 200 —— 上限是为了让"一次误点全选几千条"变成一次 400 而不是一次长事务。
     """
-    raw_ids = request.data.get('ids') or []
-    if not isinstance(raw_ids, (list, tuple)):
-        return None, Response({'ids': ['ids 必须是数组']}, status=status.HTTP_400_BAD_REQUEST)
-    ids = []
-    for value in raw_ids:
-        try:
-            ids.append(int(value))
-        except (TypeError, ValueError):
-            continue
-    seen = set()
-    ids = [i for i in ids if not (i in seen or seen.add(i))]
-    if not ids:
-        return None, Response({'ids': ['没有选中任何反馈']}, status=status.HTTP_400_BAD_REQUEST)
-    if len(ids) > 200:
-        return None, Response({'ids': ['一次最多处理 200 条']},
-                              status=status.HTTP_400_BAD_REQUEST)
-    return ids, None
+    ids, error = parse_ids(request.data.get('ids'), label='反馈')
+    return (None, error) if error else (ids, None)
 
 
 class FeedbackView(viewsets.ModelViewSet):
