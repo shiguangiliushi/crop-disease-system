@@ -29,6 +29,9 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase, TransactionTestCase, override_settings  # 第 102 批：备份测试要改连接
+from django.core.management import call_command  # 第 154 批：备份恢复演练命令的测试
+from django.core.management.base import CommandError  # 第 154 批
+from io import StringIO  # 第 154 批：捕获管理命令输出（原来只在个别函数里局部导入过）
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -11030,3 +11033,61 @@ class CommentRestoreTests(APITestCase):
         self.assertEqual(
             self.client_super.post(f'/api/admin/comments/{self.comment.id}/restore/').status_code,
             status.HTTP_404_NOT_FOUND)
+
+
+class BackupDrillCommandTests(TestCase):
+    """
+    备份恢复演练命令（第 154 批）
+
+    这个命令会**改写数据库**（删数据再用备份恢复回来），所以它的门禁比功能更重要：
+      · 没有 `--yes` 时只打印计划、什么都不做；
+      · `DEBUG=False` 时拒绝执行（演练会把这几秒内别人的写入一起回滚）；
+      · 库里没有用户 / 没有版块时给出**可执行**的提示，而不是抛 NOT NULL。
+
+    真正的"备份能不能恢复"由**实跑一次**证明（《系统完善记录》第 154 批：7/7 项通过），
+    这里只钉住"不该跑的时候一定不跑"。
+    """
+
+    def test_requires_yes(self):
+        """没有 --yes：只打印计划，不造任何数据"""
+        out = StringIO()
+        call_command('backup_drill', stdout=out)
+        text = out.getvalue()
+        self.assertIn('演练', text)
+        self.assertIn('--yes', text)
+        self.assertNotIn('标记帖 #', text, '没有 --yes 不该真的造数据')
+
+    def test_refuses_when_not_debug(self):
+        with override_settings(DEBUG=False):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('backup_drill', yes=True, stdout=StringIO())
+        self.assertIn('DEBUG=False', str(ctx.exception))
+        self.assertIn('--force', str(ctx.exception))
+
+    def test_requires_a_user(self):
+        # ⚠️ Django 测试里 DEBUG=False，所以要先 force 过掉那一道门，才能验到这一条
+        get_user_model().objects.all().delete()
+        with self.assertRaises(CommandError) as ctx:
+            call_command('backup_drill', yes=True, force=True, stdout=StringIO())
+        self.assertIn('用户', str(ctx.exception))
+
+    def test_requires_a_board(self):
+        """没版块时提前拦住，并给出可直接执行的命令"""
+        ForumBoard.objects.all().delete()
+        get_user_model().objects.create_superuser(
+            username='zz_drill_super', password='pw12345678', email='', role='ADMIN')
+        with self.assertRaises(CommandError) as ctx:
+            call_command('backup_drill', yes=True, force=True, stdout=StringIO())
+        message = str(ctx.exception)
+        self.assertIn('版块', message)
+        self.assertIn('init_forum_boards', message,
+                      '提示要给出可直接执行的命令，而不是"请先创建版块"')
+
+    def test_marker_post_needs_a_board(self):
+        """
+        回归：第一版真跑时栽在 `Post.board` 必填上
+        （`NOT NULL constraint failed: api_post.board_id`）。
+        上面那条护栏之所以存在，就是为了让它**跑到一半才报错**变成"一开始就拦住"。
+        """
+        field = Post._meta.get_field('board')
+        self.assertFalse(field.null, 'board 变成可空的话，上面那条护栏要跟着改')

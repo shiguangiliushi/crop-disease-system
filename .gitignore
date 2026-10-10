@@ -13,6 +13,14 @@
 *.sqlite3
 *.sqlite3-journal
 db.sqlite3
+# 第 154 批补：`backend_restore` 在替换数据库前会把旧库另存为 `*.pre-restore`
+# （`backend_restore.py` 的"安全网 4"）—— 那是**含真实用户表与口令哈希的整库副本**，
+# 而 `db.sqlite3` 的忽略规则**匹配不到它**（后缀不同）。
+# 第 154 批跑备份恢复演练时就留下了一个 2MB 的 `db.sqlite3.pre-restore`，
+# 那一刻它出现在 `git status` 的未跟踪列表里 —— 谁用 `git add .` 谁就可能把它推上公开仓库。
+*.pre-restore
+db.sqlite3.pre-restore
+*.sqlite3.bak
 logs/
 *.log
 *.log.*
