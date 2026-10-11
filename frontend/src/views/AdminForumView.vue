@@ -61,7 +61,8 @@
       </el-select>
       <el-select v-model="filters.status" :placeholder="t('forumAdmin.statusFilter')" clearable
                  style="width: 150px" @change="applyFilter" @clear="applyFilter">
-        <el-option :label="t('forumAdmin.statusAll')" value="" />
+        <!-- 第 166 批：显式传 all —— 公开论坛列表默认不含草稿，控制台「全部」要能看到全部状态 -->
+          <el-option :label="t('forumAdmin.statusAll')" value="all" />
         <el-option :label="t('forumAdmin.statusPending')" value="pending" />
         <el-option :label="t('forumAdmin.statusPublished')" value="published" />
         <el-option :label="t('forumAdmin.statusDraft')" value="draft" />
@@ -292,7 +293,9 @@ export default {
     const page = ref(1);
     const pageSize = ref(10);
     const boards = ref([]);
-    const filters = ref({ board: '', status: '', mark: '', search: '' });
+    // 第 166 批：默认就是 'all'（不是空串）—— 公开论坛列表默认不含草稿，
+      // 而控制台一进来就该看到全部状态（第 147 批的设计），所以默认显式要 all。
+      const filters = ref({ board: '', status: 'all', mark: '', search: '' });
     const stats = ref({ total: 0, pending: 0, published: 0, hidden: 0 });
 
     const acting = ref('');
@@ -405,7 +408,9 @@ export default {
       filters.value.board || filters.value.status || filters.value.mark || filters.value.search.trim(),
     ));
     const resetFilters = () => {
-      filters.value = { board: '', status: '', mark: '', search: '' };
+      // 第 166 批：重置回 'all'（= 不过滤状态，含草稿）而不是空串 ——
+      // 空串会让控制台落到"默认排除草稿"的公开列表口径上，与「全部状态」的语义不符。
+      filters.value = { board: '', status: 'all', mark: '', search: '' };
       applyFilter();
     };
 
@@ -417,7 +422,10 @@ export default {
         board: { ref: { get value() { return filters.value.board; },
                        set value(v) { filters.value.board = v ?? ''; } }, type: 'string', default: '' },
         status: { ref: { get value() { return filters.value.status; },
-                        set value(v) { filters.value.status = v ?? ''; } }, type: 'string', default: '' },
+                        // 第 166 批：URL 里没有 status 时，恢复成 'all'（= 不做状态过滤）而不是空串。
+                        // 空串在公开列表口径里意味着"默认排除草稿"，而控制台的「全部」
+                        // 是要看全部状态（第 147 批的设计，有测试盯着）。
+                        set value(v) { filters.value.status = v ?? 'all'; } }, type: 'string', default: 'all' },
         mark: { ref: { get value() { return filters.value.mark; },
                       set value(v) { filters.value.mark = v ?? ''; } }, type: 'string', default: '' },
         search: { ref: { get value() { return filters.value.search; },

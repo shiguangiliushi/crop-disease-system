@@ -163,6 +163,7 @@ export const zhCN = {
     'new-post': '发表新帖',
     'post-detail': '帖子详情',
     'edit-post': '编辑帖子',
+    'my-drafts': '我的草稿',
     'user-profile': '用户资料',
     'detection-history': '识别记录管理',
     'news-management': '新闻管理',
@@ -485,6 +486,27 @@ export const zhCN = {
   // 现在 `/pests` 是纯阅读页，管理动作都在这里，所以文案也拆开了：
   // 通用动作（新增/编辑/删除/批量导入）继续用 `wiki.*`，本页独有的放这里。
   // ==========================================================================
+  // 第 166 批：我的草稿（自动保存存到服务端的草稿，此前没有入口能看到）
+  drafts: {
+    entry: '我的草稿',
+    title: '我的草稿',
+    subtitle: '自动保存的没写完的帖子都在这里 —— 继续写、或者丢掉。',
+    newPost: '写新帖',
+    empty: '还没有草稿。写帖子时每 30 秒会自动保存一次。',
+    emptyAction: '去写一篇',
+    untitled: '（无标题草稿）',
+    noContent: '（还没写正文）',
+    updatedAt: '{time} 更新',
+    lengthHint: '{count} 字',
+    continue: '继续编辑',
+    discard: '丢弃',
+    discardTitle: '丢弃这篇草稿？',
+    discardConfirm: '「{title}」将被删除，且无法恢复。',
+    discarded: '已丢弃该草稿',
+    discardFailed: '丢弃失败，请稍后重试',
+    loadFailed: '加载草稿失败',
+  },
+
   editor: {
     uploadOk: '图片已上传',
     uploadFailed: '图片上传失败：{detail}',
@@ -2095,6 +2117,9 @@ export const zhCN = {
     resultBadge: '识别结果',
     downloadReport: '下载报告',
     retry: '重新识别',
+    // 第 167 批：一键发帖求助（把病名/识别图片/症状带进发帖页）
+    askForum: '发帖求助',
+    askForumHint: '带着这次的病名和识别图片，去论坛问问大家怎么治',
     originalImage: '原始图片',
     imageLoading: '图片加载中...',
     detectionResult: '检测结果',
@@ -2245,6 +2270,11 @@ export const zhCN = {
     htmlImage: '<img src="图片URL" alt="图片描述" />',
     contentFormatHint: '正文支持 HTML（例如 &lt;p&gt;段落&lt;/p&gt;、&lt;b&gt;加粗&lt;/b&gt;）；下方预览与发布后的效果一致。',
     contentFormatHintRich: '正文就像写微信一样：选中文字可以加粗，点「图片」直接插照片，写清作物与症状，大家才好帮你判断。',
+    // 第 167 批：识别结果「发帖求助」的预填模板
+    askTitle: '【求助】{disease}怎么治？',
+    askIntro: '我用系统的病害识别拍了叶片，识别结果是「{disease}」。',
+    askSymptoms: '系统给的主要症状：{symptoms}',
+    askQuestion: '我该怎么处理？用什么药、多久喷一次？先谢谢各位！',
     contentPlaceholder: '请输入内容（支持 Markdown 语法）',
     preview: '预览：',
     updatePost: '更新帖子',
@@ -3012,6 +3042,7 @@ export const en = {
     'new-post': 'New post',
     'post-detail': 'Post',
     'edit-post': 'Edit post',
+    'my-drafts': 'My drafts',
     'user-profile': 'Profile',
     'detection-history': 'Diagnosis record management',
     'news-management': 'News management',
@@ -3293,6 +3324,27 @@ export const en = {
     footerNote: 'Administrator actions are logged. Do not stay signed in on shared devices.',
   },
   // Disease-wiki maintenance (admin console /admin/pests, batch 122)
+  // Batch 166: my drafts (autosaved server-side drafts had no entry point before)
+  drafts: {
+    entry: 'My drafts',
+    title: 'My drafts',
+    subtitle: 'Unfinished posts are autosaved here — keep writing, or discard them.',
+    newPost: 'New post',
+    empty: 'No drafts yet. Posts are autosaved every 30 seconds while you write.',
+    emptyAction: 'Write one',
+    untitled: '(untitled draft)',
+    noContent: '(no body yet)',
+    updatedAt: 'updated {time}',
+    lengthHint: '{count} characters',
+    continue: 'Continue editing',
+    discard: 'Discard',
+    discardTitle: 'Discard this draft?',
+    discardConfirm: '"{title}" will be deleted and cannot be recovered.',
+    discarded: 'Draft discarded',
+    discardFailed: 'Could not discard the draft — please try again',
+    loadFailed: 'Could not load drafts',
+  },
+
   editor: {
     uploadOk: 'Image uploaded',
     // Batch 164: the toolbar is down to what a farmer actually uses (bold / image / list / divider)
@@ -4884,6 +4936,9 @@ export const en = {
     guideStep4Link: 'View history',
     resultBadge: 'Result',
     downloadReport: 'Download report',
+    // Batch 167: ask the forum in one click (carries the disease name, image and symptoms)
+    askForum: 'Ask the forum',
+    askForumHint: 'Take this disease name and photo to the forum and ask how to treat it',
     retry: 'Diagnose again',
     originalImage: 'Original image',
     imageLoading: 'Loading image...',
@@ -5033,6 +5088,11 @@ export const en = {
     htmlImage: '<img src="image URL" alt="description" />',
     contentFormatHint: 'The body accepts HTML (e.g. &lt;p&gt;paragraph&lt;/p&gt;, &lt;b&gt;bold&lt;/b&gt;); the preview below matches what readers will see.',
     contentFormatHintRich: 'Writing works like a chat message: select text to bold it, use “Image” to add a photo. Mention the crop and the symptoms so others can help.',
+    // Batch 167: prefill template for the detection page's "ask the forum" button
+    askTitle: '[Help] How do I treat {disease}?',
+    askIntro: 'I photographed a leaf with the disease detector and it identified “{disease}”.',
+    askSymptoms: 'Main symptoms the system listed: {symptoms}',
+    askQuestion: 'How should I treat it — which product, and how often? Thanks in advance!',
     contentPlaceholder: 'Content (Markdown supported)',
     preview: 'Preview:',
     updatePost: 'Update post',

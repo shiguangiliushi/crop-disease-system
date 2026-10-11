@@ -363,6 +363,19 @@ const router = createRouter({
       }
     },
     {
+      // 第 166 批：「我的草稿」—— 编辑页每 30 秒会把草稿自动存到**服务端**
+      // （is_draft → status='draft'），但此前前端**没有任何入口**能看到它们：
+      // 农户写到一半关掉页面，那条半成品就永远躺在库里（评审意见点名）。
+      path: '/forum/drafts',
+      name: 'my-drafts',
+      component: () => import('@/views/MyDraftsView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: '我的草稿',
+        breadcrumb: ['论坛', '我的草稿']
+      }
+    },
+    {
       path: '/forum/post/new',
       name: 'new-post',
       component: NewPostView,

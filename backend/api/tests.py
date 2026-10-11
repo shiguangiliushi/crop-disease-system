@@ -10282,10 +10282,22 @@ class ForumAdminListingTests(APITestCase):
         return [row['title'] for row in rows]
 
     def test_moderator_sees_every_status(self):
-        titles = self._titles(self.client_editor.get(f'/api/forums/posts/?board={self.board.id}'))
+        """
+        第 166 批起：「全部状态」要**显式**传 `?status=all`。
+
+        原因：公开的论坛列表默认不再混入别人的草稿（草稿是没写完的东西），
+        而控制台「论坛管理」页的「全部」选项需要看到所有状态 —— 两者原来都传"没有 status"，
+        区分不出来，所以给控制台加了 `status=all` 这个哨兵值。
+        """
+        titles = self._titles(self.client_editor.get(
+            f'/api/forums/posts/?board={self.board.id}&status=all'))
         for title in ('zz已发布', 'zz待审核', 'zz已隐藏', 'zz草稿'):
             self.assertIn(title, titles, f'版主应当看得到 {title}')
         self.assertNotIn('zz已删除', titles, '软删除的帖子默认不出现（审计用 only_deleted）')
+
+        # 第 166 批：**不传 status 时**（公开论坛列表走的就是这条），别人的草稿不该出现
+        plain_titles = self._titles(self.client_editor.get(f'/api/forums/posts/?board={self.board.id}'))
+        self.assertNotIn('zz草稿', plain_titles, '默认列表不含草稿')
 
     def test_moderator_can_filter_by_status(self):
         for status_value, expected in (('pending', 'zz待审核'),
@@ -11483,3 +11495,129 @@ class ChineseLabelTests(TestCase):
         """结构不对（没有 boxes / 没有 names）时不能抛异常 —— 识别结果比标签重要"""
         for broken in (object(), self._FakeResult(None, []), self._FakeResult({}, [])):
             self.assertEqual(_prepare_chinese_labels(broken), 'Arial')
+
+
+class PostDraftVisibilityTests(APITestCase):
+    """
+    帖子草稿的可见性（第 166 批）
+
+    背景：编辑页每 30 秒自动把草稿存到服务端（`is_draft=true` → `status='draft'`）。
+    第 166 批给前端补了「我的草稿」页 —— 而**能不能看到、谁能看到**完全由后端决定，
+    所以这里把口径钉死：
+
+      · 作者本人：列表里能看到自己的草稿（第 24 批的设计，否则"保存草稿"等于丢失）；
+      · 别人（普通用户）：看不到我的草稿（既不在列表，也不在详情）；
+      · **版主/管理员：默认列表也不混入草稿** —— 草稿是别人没写完的东西；
+        但显式 `?status=draft` 仍然能查到（管理端论坛页的"草稿"筛选就靠它）；
+      · 删除草稿走的是软删除，作者自己之后也看不到。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.author = User.objects.create_user(
+            username='zz_draft_author', password='pw12345678', role='USER')
+        self.other = User.objects.create_user(
+            username='zz_draft_other', password='pw12345678', role='USER')
+        self.admin = User.objects.create_superuser(
+            username='zz_draft_admin', password='pw12345678', email='', role='ADMIN')
+        self.board = ForumBoard.objects.create(name='zz草稿测试版块', order=901)
+
+        self.draft = Post.objects.create(
+            title='zz草稿：写了一半的求助', content='<p>叶片上出现…（还没写完）</p>',
+            author=self.author, board=self.board, status='draft')
+        self.published = Post.objects.create(
+            title='zz已发布：写完了', content='<p>已经发出来了</p>',
+            author=self.author, board=self.board, status='published')
+
+        self.client_author = APIClient(); self.client_author.force_authenticate(user=self.author)
+        self.client_other = APIClient(); self.client_other.force_authenticate(user=self.other)
+        self.client_admin = APIClient(); self.client_admin.force_authenticate(user=self.admin)
+
+    def tearDown(self):
+        Post.objects.filter(title__startswith='zz').delete()
+        ForumBoard.objects.filter(name__startswith='zz草稿测试版块').delete()
+
+    @staticmethod
+    def _ids(response):
+        data = response.data
+        rows = data.get('results') if isinstance(data, dict) else data
+        return [row['id'] for row in (rows or [])]
+
+    def test_author_sees_own_draft_in_list(self):
+        """作者自己的草稿要能看到（否则"保存草稿"之后它就再也找不到了）"""
+        ids = self._ids(self.client_author.get('/api/forums/posts/'))
+        self.assertIn(self.draft.id, ids)
+        self.assertIn(self.published.id, ids)
+
+    def test_author_can_filter_only_drafts(self):
+        """「我的草稿」页用的就是这个口径：?status=draft&author=<自己>"""
+        response = self.client_author.get(
+            f'/api/forums/posts/?status=draft&author={self.author.id}')
+        self.assertEqual(self._ids(response), [self.draft.id])
+
+    def test_other_user_cannot_see_my_draft(self):
+        ids = self._ids(self.client_other.get('/api/forums/posts/'))
+        self.assertNotIn(self.draft.id, ids)
+        # 详情也拿不到
+        self.assertEqual(self.client_other.get(f'/api/forums/posts/{self.draft.id}/').status_code,
+                         status.HTTP_404_NOT_FOUND)
+
+    def test_moderator_default_list_excludes_drafts(self):
+        """
+        第 166 批的核心修正：版主/管理员走的是"不做可见性过滤"分支，
+        原来于是**别人的草稿会混进正常列表**（版块页还会给它打上「草稿」标签）。
+        """
+        ids = self._ids(self.client_admin.get('/api/forums/posts/'))
+        self.assertNotIn(self.draft.id, ids, '默认列表不该混入别人的草稿')
+        self.assertIn(self.published.id, ids)
+
+    def test_moderator_can_still_filter_drafts(self):
+        """管理端论坛页的「草稿」筛选是显式传 status=draft 的，必须还能用"""
+        response = self.client_admin.get('/api/forums/posts/?status=draft')
+        self.assertIn(self.draft.id, self._ids(response))
+
+    def test_author_detail_still_works_for_draft(self):
+        """编辑页要靠详情接口把草稿读出来 —— 列表排除草稿不能连详情一起挡掉"""
+        response = self.client_author.get(f'/api/forums/posts/{self.draft.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'draft')
+
+
+    def test_moderator_can_open_own_draft_detail(self):
+        """
+        第 166 批的回归：排除草稿**只能作用在列表上**。
+
+        第一版写成"版主分支无条件排除草稿"，结果版主/管理员**连自己的草稿都打不开**
+        —— `GET /api/forums/posts/<id>/` 返回 404，「继续编辑」点进去是空白页。
+        我最初那条 `test_author_detail_still_works_for_draft` 用的是**普通用户**作者的草稿，
+        正好绕过了版主这条路径，所以没拦住。这里把它钉住。
+        """
+        own_draft = Post.objects.create(
+            title='zz草稿：管理员自己写了一半', content='<p>管理员也有草稿</p>',
+            author=self.admin, board=self.board, status='draft')
+
+        response = self.client_admin.get(f'/api/forums/posts/{own_draft.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK,
+                         '版主/管理员必须能打开自己的草稿详情（否则"继续编辑"进不去）')
+        self.assertEqual(response.data['status'], 'draft')
+
+        # 同时确认列表口径没被放宽：自己的草稿也不该出现在默认列表里
+        ids = self._ids(self.client_admin.get('/api/forums/posts/'))
+        self.assertNotIn(own_draft.id, ids)
+        # 显式筛选时仍然能看到
+        self.assertIn(own_draft.id, self._ids(
+            self.client_admin.get(f'/api/forums/posts/?status=draft&author={self.admin.id}')))
+
+        own_draft.delete()
+
+    def test_publishing_a_draft_removes_it_from_drafts(self):
+        """发布之后不该再出现在草稿列表里"""
+        self.client_author.patch(
+            f'/api/forums/posts/{self.draft.id}/',
+            {'is_draft': False}, format='json')
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.status, 'published')
+        response = self.client_author.get(
+            f'/api/forums/posts/?status=draft&author={self.author.id}')
+        self.assertNotIn(self.draft.id, self._ids(response))

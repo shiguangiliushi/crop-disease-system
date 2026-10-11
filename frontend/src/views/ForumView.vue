@@ -16,6 +16,12 @@
         <el-button v-if="authStore.isAuthenticated" plain @click="goToMyPosts">
           <i class="fas fa-file-lines"></i> {{ t('forum.myPosts') }}
         </el-button>
+        <!-- 第 166 批：草稿入口。编辑页每 30 秒自动把草稿存到服务端，
+             此前**没有任何入口**能看到它们（农户写到一半关掉页面就再也找不回来）。 -->
+        <el-button v-if="authStore.isAuthenticated" plain @click="goMyDrafts">
+          <i class="fas fa-file-pen"></i> {{ t('drafts.entry') }}
+          <span v-if="draftCount" class="drafts-badge">{{ draftCount }}</span>
+        </el-button>
         <el-button class="btn-on-brand" @click="goToNewPost">
           <i class="fas fa-pen"></i> {{ t('forum.newPost') }}
         </el-button>
@@ -508,6 +514,10 @@ export default {
     };
 
     onMounted(() => {
+      fetchDraftCount();   // 第 166 批：草稿角标
+    });
+
+    onMounted(() => {
       initData();
       // 定时刷新热门帖子与统计，例如每 5 分钟
       timer = setInterval(() => {
@@ -613,6 +623,25 @@ export default {
       router.push({ name: 'user-profile', params: { id: userId } });
     };
 
+    // 「我的草稿」入口与数量（第 166 批）
+    //
+    // 为什么要有：编辑页每 30 秒自动把草稿存到**服务端**（status='draft'），
+    // 但在这一批之前前端**没有任何入口**能看到它们 —— 农户写到一半关掉页面，
+    // 那条半成品就永远躺在库里（评审意见点名的就是这个）。
+    // 数量用分页的 count 拿，一次轻量请求（page_size=1）。
+    const draftCount = ref(0);
+    const goMyDrafts = () => router.push({ name: 'my-drafts' });
+    const fetchDraftCount = async () => {
+      try {
+        const userId = authStore.user?.id;
+        if (!userId) return;
+        const response = await getPosts({ status: 'draft', author: userId, page_size: 1 });
+        draftCount.value = response?.count ?? (Array.isArray(response) ? response.length : 0);
+      } catch (error) {
+        console.warn('[forum] 草稿数量获取失败:', error?.message || error);
+      }
+    };
+
     return {
       boards,
       hotPosts,
@@ -647,12 +676,26 @@ export default {
       goToNewPost,
       goToFavorites,
       goToMyPosts,
+      goMyDrafts,
+      draftCount,
     };
   },
 };
 </script>
 
 <style scoped>
+/* 第 166 批：草稿数量角标（有草稿才显示） */
+.drafts-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--el-color-warning, #e6a23c);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .forum-container {
   /* 第 32 批：`.main-content` 是 `display:flex; align-items:center`，
      只写 max-width 的话弹性子项会**按内容收缩**（实测只有 918px 而不是 1240px），

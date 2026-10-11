@@ -329,21 +329,42 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         # 连管理员都取不到（`get_object()` 直接 404），审核动作 approve/reject 根本无法执行；
         # 管理端的"待审核"列表也需要它。
         user = self.request.user
+
+        # 第 38 批：按状态筛选（管理端"待审核"列表用 ?status=pending，论坛页的"草稿"筛选用 ?status=draft）
+        #
+        # 第 166 批：把这段**挪到可见性判断之前**，并用 `?status=all` 表示"明确不做状态过滤"。
+        # 为什么需要这个哨兵值：控制台「论坛管理」页的「全部」选项要能看到**所有**状态
+        # （含草稿 —— 第 147 批的设计，那里有测试盯着），而公开的论坛列表**不该**混入别人的草稿。
+        # 两者都传"没有 status 参数"是区分不出来的，所以让控制台显式传 `status=all`。
+        status_param = (self.request.query_params.get('status') or '').strip()
+        explicit_all = status_param.lower() == 'all'
+        if explicit_all:
+            status_param = ''
+        elif status_param:
+            valid_status = {choice[0] for choice in Post.STATUS_CHOICES}
+            if status_param not in valid_status:
+                logger.warning('忽略无效的帖子状态筛选: %r', status_param)
+                status_param = ''
+
         if is_moderator(user):
-            pass  # 版主/管理员：不做可见性过滤
+            # 版主/管理员：不做可见性过滤（待审核帖子也要能取到，否则 approve/reject 无从执行）。
+            #
+            # 第 166 批补一条：**列表**默认不混入草稿 —— 草稿是别人没写完的东西，
+            # 版主浏览论坛时不该看到（版块页还会给它打「草稿」标签）。
+            # 想连草稿一起看有两个办法：显式 `?status=draft`，或者控制台那样传 `?status=all`。
+            #
+            # ⚠️ 只在 `list` 上排除，**绝不能连详情一起排**：
+            # 第一版写成无条件排除，结果版主/管理员**连自己的草稿都打不开**
+            # （`GET /api/forums/posts/<id>/` 直接 404，"继续编辑"点进去是空白页）。
+            if self.action == 'list' and not status_param and not explicit_all:
+                queryset = queryset.exclude(status='draft')
         elif user.is_authenticated:
             queryset = queryset.filter(Q(status='published') | Q(author=user))
         else:
             queryset = queryset.filter(status='published')
 
-        # 第 38 批：按状态筛选（管理端"待审核"列表用 ?status=pending）
-        status_param = (self.request.query_params.get('status') or '').strip()
         if status_param:
-            valid_status = {choice[0] for choice in Post.STATUS_CHOICES}
-            if status_param in valid_status:
-                queryset = queryset.filter(status=status_param)
-            else:
-                logger.warning('忽略无效的帖子状态筛选: %r', status_param)
+            queryset = queryset.filter(status=status_param)
 
         # 收藏筛选（第 24 批）：?favorited=true → 只看当前用户收藏过的帖子（「我的收藏」）
         favorited = (self.request.query_params.get('favorited') or '').strip().lower()
