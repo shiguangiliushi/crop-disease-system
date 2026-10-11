@@ -655,6 +655,12 @@ const updateProgress = (value, message, detail = '') => {
 // clearInterval(undefined) 也清不掉任何东西，相关提示文案从未出现过。
 const UPLOAD_PROGRESS_MAX = 90;
 const ANALYSIS_PROGRESS_MAX = 99;
+
+// 识别请求的超时（第 159 批）：
+// 服务端要跑一次模型推理，CPU 上实测 9~45 秒 —— 旧实例默认 30 秒不够，
+// 于是"服务端算完了、前端已经放弃"，用户还被告知是网络问题。
+// 这里给到 3 分钟（真正断网时不会等这么久：浏览器会立刻报错）。
+const DETECT_TIMEOUT_MS = 180000;
 let progressTimer = null;
 
 const stopProgressTimer = () => {
@@ -742,10 +748,17 @@ const detectDisease = async () => {
     }
 
     // 发送识别请求
+    //
+    // ⚠️ 第 159 批：这里必须**单独放宽超时**。
+    // `@/utils/axios`（本页仍在用的旧实例）默认 30 秒，而识别要在服务端跑模型：
+    // 在 CPU 上实测 9~45 秒不等（取决于机器与那台服务器加载的权重）——
+    // 一旦超过 30 秒，前端会先放弃，用户看到的是"网络错误/已存入离线队列"，
+    // 而**服务端其实算完了**（白白浪费一次推理，用户还得再点一次）。
     const response = await api({
       method: 'post',
       url: '/detect/',
       data: formData,
+      timeout: DETECT_TIMEOUT_MS,
       headers: {
         'Content-Type': 'multipart/form-data',
         'X-CSRFToken': getCookie('csrftoken')
@@ -873,6 +886,16 @@ const detectDisease = async () => {
 
   } catch (error) {
     console.error('识别失败:', error);
+
+    // 第 159 批：**超时**要单独拎出来。
+    // axios 的超时（`ECONNABORTED`）没有 `response`，于是原来落进了下面的"网络类失败"分支 →
+    // 图片被悄悄塞进离线队列，用户看到"已存到离线队列，联网后自动识别"——
+    // 可他明明连着网，只是服务端还在跑模型。这里改成明确提示，并且**不入队**。
+    if (error?.code === 'ECONNABORTED') {
+      console.warn('[detect] 识别请求超时（服务端仍在计算，结果不会返回给本次请求）');
+      $toast.error(t('detect.timeout'));
+      return;
+    }
 
     // 第 50 批：网络类失败（拿不到 response，或明确是断网）→ 进离线队列，
     // 而不是让用户"白拍一张"。业务错误（400/413/500 等有 response 的）仍按普通错误提示。
