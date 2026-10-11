@@ -574,6 +574,49 @@ def print_markdown(reports: list[FileReport], args) -> int:
         print(f'| {len(report.undocumented)} | `{report.path}` |')
     print()
     print('> 完整成员清单：`python tools/audit_comments.py --members`')
+    print()
+
+    # ④ 缺"契约说明"的大成员（第 156 批补）—— 体量越大越该有一句总述
+    #    `undocumented` 里的字符串形如 `def AIService.predict() (第 132 行, 253 行)`，
+    #    这里解析出 span（解析不到就按 0 排在最后，不会给出错数字）。
+    sized = []
+    span_pattern = re.compile(r'\(第 \d+ 行, (\d+) 行\)$')
+    for report in reports:
+        for item in report.undocumented:
+            found = span_pattern.search(item)
+            sized.append((int(found.group(1)) if found else 0, report.path, item))
+    sized.sort(key=lambda row: -row[0])
+    print(f'### 缺"契约说明"的大成员（按体量排，前 15 / 共 {len(sized)} 个）')
+    print()
+    print('| 体量 | 文件 | 成员 |')
+    print('|---:|---|---|')
+    for span, path, item in sized[:15]:
+        print(f'| {span} 行 | `{path}` | {item} |')
+    print()
+
+    # ⑤ 魔法数字（第 156 批补）
+    magic_total = sum(len(r.magic_numbers) for r in reports)
+    print(f'### 无人解释的硬编码值（全项目 {magic_total} 处；下表是按文件的前 15）')
+    print()
+    print('| 处数 | 文件 |')
+    print('|---:|---|')
+    for report in sorted(reports, key=lambda r: -len(r.magic_numbers))[:15]:
+        if report.magic_numbers:
+            print(f'| {len(report.magic_numbers)} | `{report.path}` |')
+    print()
+
+    # ⑥ 前端 / 移动端逐文件密度（第 156 批补）—— 只列 ≥200 行的，避免长尾噪声
+    web = [r for r in reports
+           if (r.path.startswith('frontend/') or r.path.startswith('mobile/'))
+           and r.lines >= 200]
+    web.sort(key=lambda r: r.density)
+    print(f'### 前端 / 移动端逐文件密度（≥200 行的 {len(web)} 个文件，最差的排前面）')
+    print()
+    print('| 密度 | 行数 | 注释行 | 文件 |')
+    print('|---:|---:|---:|---|')
+    for report in web[:30]:
+        print(f'| {report.density:.1%} | {report.lines} | {report.comment_lines} | `{report.path}` |')
+    print()
     return 0
 
 

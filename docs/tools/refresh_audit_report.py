@@ -72,23 +72,29 @@ def summary_table():
 
 
 def markdown_sections():
-    """从 `--markdown` 输出里取出三张表"""
+    """从 `--markdown` 输出里取出各段落（第 156 批扩到六段）"""
+    #: 输出里的三级标题 → 文档标记名
+    HEADS = {
+        '### 文件顶部没有模块说明': 'noheader',
+        '### 长函数内部 0 条注释': 'longfn',
+        '### 缺文档字符串最多': 'undoc',
+        '### 缺"契约说明"的大成员': 'contract',
+        '### 无人解释的硬编码值': 'magic',
+        '### 前端 / 移动端逐文件密度': 'web',
+    }
     out = run_tool('--markdown')
-    blocks = {'longfn': [], 'noheader': []}
+    blocks = {name: [] for name in HEADS.values()}
     mode = None
     for line in out.splitlines():
-        if line.startswith('### 文件顶部没有模块说明'):
-            mode = 'noheader'
+        matched = next((name for head, name in HEADS.items() if line.startswith(head)), None)
+        if matched:
+            mode = matched
             continue
-        if line.startswith('### 长函数内部 0 条注释'):
-            mode = 'longfn'
-            continue
-        if line.startswith('### 缺文档字符串最多'):
+        if line.startswith('### ') or line.startswith('> 完整成员清单'):
             mode = None
             continue
-        if mode and (line.startswith('|') or line.strip() == ''):
-            if line.startswith('|'):
-                blocks[mode].append(line)
+        if mode and line.startswith('|'):
+            blocks[mode].append(line)
     return {key: '\n'.join(value) for key, value in blocks.items()}
 
 
@@ -101,6 +107,10 @@ def replace_region(text, name, body):
     return pattern.sub(f'{begin}\n{body}\n{end}', text)
 
 
+#: 文档里需要刷新的标记（顺序即处理顺序）
+REGIONS = ('SUMMARY', 'UNDOC', 'LONGFN', 'NOHEADER', 'CONTRACT', 'MAGIC', 'WEB')
+
+
 def main():
     parser = argparse.ArgumentParser(description='刷新注释覆盖审计报告里由脚本生成的部分')
     parser.add_argument('--check', action='store_true', help='只检查是否需要刷新（不改文件）')
@@ -108,12 +118,21 @@ def main():
 
     original = REPORT.read_text(encoding='utf-8')
     sections = markdown_sections()
-    updated = replace_region(original, 'SUMMARY', summary_table())
-    updated = replace_region(updated, 'LONGFN', sections['longfn'] or '（无）')
-    updated = replace_region(updated, 'NOHEADER', sections['noheader'] or '（无）')
+    bodies = {
+        'SUMMARY': summary_table(),
+        'UNDOC': sections['undoc'],
+        'LONGFN': sections['longfn'],
+        'NOHEADER': sections['noheader'],
+        'CONTRACT': sections['contract'],
+        'MAGIC': sections['magic'],
+        'WEB': sections['web'],
+    }
+    updated = original
+    for name in REGIONS:
+        updated = replace_region(updated, name, bodies[name] or '（无）')
 
     if updated == original:
-        print('✅ 报告已是最新（三处标记内的内容与脚本输出一致）')
+        print(f'✅ 报告已是最新（{len(REGIONS)} 处标记内的内容与脚本输出一致）')
         return 0
 
     if args.check:
@@ -121,7 +140,7 @@ def main():
         return 1
 
     REPORT.write_text(updated, encoding='utf-8', newline='\n')   # 显式 LF（第 152 批的教训）
-    print('✅ 已刷新 docs/注释覆盖审计报告.md 的三处生成段落')
+    print(f'✅ 已刷新 docs/注释覆盖审计报告.md 的 {len(REGIONS)} 处生成段落')
     print('   （标记外的解读文字未改动；如需保留旧数字做对比，请写在标记外面）')
     return 0
 
