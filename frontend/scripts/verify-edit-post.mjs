@@ -40,6 +40,9 @@ const seedOutput = runDjango([
   "board = ForumBoard.objects.order_by('order', 'id').first()",
   "Post.objects.filter(title__startswith='zz编辑页验证').delete()",
   "post = Post.objects.create(title='zz编辑页验证：高架基质栽培的几个问题', content='<p>第一段：品种与基质配比。</p><p>第二段：水肥与温湿度管理。</p>', author=admin, board=board, status='published')",
+  // 第 163 批：再建一篇"老正文" —— 图片是 Markdown 语法（第 161 批之前的工具栏就是这么插的）
+  "legacy = Post.objects.create(title='zz编辑页验证：老正文图片（markdown 语法）', content='<p>老帖子里插的图：</p><p>![苹果黑星病](/media/uploads/zz-legacy.jpg)</p>', author=admin, board=board, status='published')",
+  "print('ZZ_LEGACY=' + str(legacy.id))",
   'token, _ = Token.objects.get_or_create(user=admin)',
   "print('ZZ_ID=' + str(post.id))",
   "print('ZZ_BOARD=' + str(board.name))",
@@ -47,6 +50,7 @@ const seedOutput = runDjango([
   "print('ZZ_USER=' + json.dumps(CustomUserSerializer(admin).data, ensure_ascii=False))",
 ]);
 const postId = /ZZ_ID=(\d+)/.exec(seedOutput)?.[1];
+const legacyId = /ZZ_LEGACY=(\d+)/.exec(seedOutput)?.[1];
 const boardName = /ZZ_BOARD=(.+)/.exec(seedOutput)?.[1]?.trim();
 const token = /ZZ_TOKEN=(\S+)/.exec(seedOutput)?.[1];
 const userJson = /ZZ_USER=(.+)/.exec(seedOutput)?.[1];
@@ -154,6 +158,20 @@ await page.waitForTimeout(1500);
 const detailHtml = await page.locator('.post-content').innerHTML();
 check('详情页渲染了正文段落', /<p>/i.test(detailHtml), detailHtml.slice(0, 60));
 check('详情页能看到刚插入的加粗内容', /<b>/i.test(detailHtml), '');
+
+// ---------------------------------------------------------------------------
+// ⑥ 第 163 批：老正文里的 **Markdown 图片**也要能显示出来
+//     （渲染口径是 HTML；不兼容存量数据的话，那些图会"凭空消失"）
+//     ⚠️ 这一段必须放在"保存"之后 —— 它会导航到另一篇帖子，
+//        放在前面会让后面的保存按钮点不到（第一版就是这么挂的）。
+// ---------------------------------------------------------------------------
+await page.goto(`${UI}/forum/post/${legacyId}`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('.post-content', { timeout: 30_000 });
+await page.waitForTimeout(1200);
+const legacyHtml = await page.locator('.post-content').innerHTML();
+check('老正文里的 Markdown 图片被渲染成了 <img>', /<img[^>]+zz-legacy\.jpg/.test(legacyHtml),
+  legacyHtml.slice(0, 90));
+check('老正文里没有残留的 markdown 图片语法', !/!\[[^\]]*\]\(/.test(legacyHtml), '');
 
 check('全程无 JS 报错', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 

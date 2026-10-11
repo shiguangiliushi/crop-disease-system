@@ -56,14 +56,80 @@ if (DOMPurify.isSupported && typeof DOMPurify.addHook === 'function') {
 }
 
 /**
+ * 把正文里**遗留的 Markdown 图片/链接**转成 HTML（第 163 批）
+ *
+ * ## 为什么需要它
+ *
+ * 帖子正文的口径是 **HTML**（详情页、审核预览、本文件的 sanitizeRichText 都按 HTML 渲染），
+ * 但历史上插入图片有**三条路径**，其中两条插的是 Markdown：
+ *   · 工具栏「上传图片」→ HTML `<img>` ✓（第 161 批修正后）
+ *   · `handleImageUpload`（走 el-upload）→ `![名字](url)` ✗
+ *   · `processBase64Images`（把粘贴进来的 base64 图片传上去）→ `![名字](url)` ✗
+ * 于是老帖子正文里存着一批 `![…](…)`，而渲染按 HTML 走 ——
+ * **那些图片在新版界面里根本显示不出来**（用户会以为图片丢了）。
+ *
+ * 统一口径只能管住"以后"，**存量数据必须在渲染时兼容**，所以这里做一次转换：
+ * 渲染前把 Markdown 图片/链接改写成 `<img>` / `<a>`，再交给 DOMPurify 净化。
+ *
+ * ## 两条约束
+ *
+ * 1. **只认"看起来像 URL"的目标**（`http(s)://` 或 `/media/…`）——
+ *    正文里写 `[见附件](稍后补)` 这种不该被当成链接改写；
+ * 2. **`<pre>` / `<code>` 里不动** —— 有人在代码块里贴 markdown 语法做示例，
+ *    改写它等于把示例改坏。
+ */
+const MARKDOWN_IMAGE = /!\[([^\]]*)\]\(((?:https?:\/\/|\/media\/)[^\s)]+)\)/g;
+const MARKDOWN_LINK = /\[([^\]<]+)\]\(((?:https?:\/\/|\/media\/)[^\s)]+)\)/g;
+
+/** 把字符串按 `<pre>/<code>` 切段，标记哪些段落要跳过转换 */
+function splitProtected(html) {
+  const parts = [];
+  const pattern = /<(pre|code)\b[\s\S]*?<\/\1>/gi;
+  let lastIndex = 0;
+  let match = pattern.exec(html);
+  while (match) {
+    if (match.index > lastIndex) parts.push({ text: html.slice(lastIndex, match.index), protect: false });
+    parts.push({ text: match[0], protect: true });
+    lastIndex = match.index + match[0].length;
+    match = pattern.exec(html);
+  }
+  if (lastIndex < html.length) parts.push({ text: html.slice(lastIndex), protect: false });
+  return parts;
+}
+
+/** 导出给单测：把一段 HTML 里的 Markdown 图片/链接改写成 HTML */
+export function normalizeLegacyMarkdown(html) {
+  if (typeof html !== 'string' || html === '') return '';
+  if (!html.includes('](')) return html;   // 快速短路：没有 markdown 链接语法
+
+  return splitProtected(html)
+    .map((part) => {
+      if (part.protect) return part.text;
+      return part.text
+        // 先处理图片：`![alt](url)`
+        .replace(MARKDOWN_IMAGE, (_all, alt, url) => {
+          const safeAlt = String(alt || '').replace(/"/g, '&quot;');
+          return `<img src="${url}" alt="${safeAlt}" />`;
+        })
+        // 再处理链接：`[文字](url)`（此时图片已变成 <img>，不会被误伤）
+        .replace(MARKDOWN_LINK, (_all, text, url) => `<a href="${url}">${text}</a>`);
+    })
+    .join('');
+}
+
+/**
  * 净化一段富文本 HTML，供 `v-html` 使用。
+ *
+ * 第 163 批起：**先**把遗留的 Markdown 图片/链接改写成 HTML，**再**净化。
+ * 这样"老帖子里用 markdown 插的图"与"新帖子里的 <img>"在界面上表现一致，
+ * 而且转换结果同样要过一遍白名单（不会因为转换绕过 XSS 防护）。
  *
  * @param {unknown} html 原始 HTML（非字符串或空值时返回 ''，不会渲染出 "null" 字样）
  * @returns {string} 净化后的 HTML
  */
 export function sanitizeRichText(html) {
   if (typeof html !== 'string' || html === '') return '';
-  return DOMPurify.sanitize(html, RICH_TEXT_CONFIG);
+  return DOMPurify.sanitize(normalizeLegacyMarkdown(html), RICH_TEXT_CONFIG);
 }
 
 export default sanitizeRichText;

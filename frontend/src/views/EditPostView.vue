@@ -600,9 +600,10 @@ export default {
           throw new Error(t('post.uploadFailed'));
         }
         
-        // 插入Markdown图片语法
-        const markdown = `![${file.name || t('post.imageFallback')}](${response.url})`;
-        insertText(`\n${markdown}\n`);
+        // 第 163 批：插入 HTML 图片标签。
+        // 原来这里插的是 Markdown `![名字](url)` —— 正文口径是 HTML，
+        // 插 markdown 的后果是"插了图，预览和详情页都看不到"（用户会以为图片丢了）。
+        insertText(`<img src="${response.url}" alt="${file.name || t('post.imageFallback')}" />`);
         
         ElMessage.success(t('post.uploadImageOk'));
         return response.url;
@@ -661,29 +662,41 @@ export default {
     // 处理内容中的Base64图片
     const processBase64Images = async (content) => {
       if (!content) return content;
-      
-      // 使用正则表达式查找所有的Base64图片
-      const base64Regex = /!\[.*?\]\(data:image\/(jpeg|jpg|png|gif|webp);base64,[^)]+\)/g;
+
+      // 第 163 批：**base64 图片有两种写法**，两种都要认，否则会出现
+      // "我明明插了图，提交后图却留在 base64 里（或干脆丢了）"：
+      //   · Markdown：`![alt](data:image/png;base64,…)`  ← 老正文/老工具栏
+      //   · HTML    ：`<img src="data:image/png;base64,…">` ← 现在的工具栏与粘贴
+      // 旧版正则只认 Markdown 那一种，于是 HTML 路径插进来的图**根本抓不到**。
+      const base64Regex = new RegExp(
+        [
+          /!\[([^\]]*)\]\((data:image\/(?:jpeg|jpg|png|gif|webp);base64,[^)]+)\)/.source,
+          /<img\b[^>]*src="(data:image\/(?:jpeg|jpg|png|gif|webp);base64,[^"]+)"[^>]*>/i.source,
+        ].join('|'),
+        'g',
+      );
       const matches = content.match(base64Regex) || [];
-      
+
       if (matches.length === 0) return content;
-      
+
       const loadingInstance = ElLoading.service({
         lock: true,
         text: t('msg.uploadingImage'),
         background: 'rgba(0, 0, 0, 0.7)'
       });
-      
+
       try {
         let processedContent = content;
-        
+
         for (const match of matches) {
           try {
-            // 提取Base64数据
-            const base64Match = match.match(/!\[(.*?)\]\((data:image\/\w+;base64,[^)]+)\)/);
-            if (!base64Match) continue;
-            
-            const [fullMatch, altText, base64Data] = base64Match;
+            // 兼容两种写法：先试 Markdown 的 `![alt](data:…)`，再试 HTML 的 `<img src="data:…">`
+            const markdownMatch = match.match(/!\[(.*?)\]\((data:image\/\w+;base64,[^)]+)\)/);
+            const htmlMatch = match.match(/src="(data:image\/[^"]+)"/);
+            const altText = markdownMatch ? markdownMatch[1] : '';
+            const base64Data = markdownMatch ? markdownMatch[2] : (htmlMatch ? htmlMatch[1] : '');
+            if (!base64Data) continue;
+
             const imageData = extractBase64Data(base64Data);
             if (!imageData) continue;
             
@@ -701,9 +714,11 @@ export default {
             const response = await uploadImage(formData);
             
             if (response && response.url) {
-              // 替换Base64图片为服务器URL
-              const newImageMarkdown = `![${altText || t('post.imageFallback')}](${response.url})`;
-              processedContent = processedContent.replace(match, newImageMarkdown);
+              // 第 163 批：统一替换成 **HTML** 图片标签（正文口径是 HTML）
+              const safeAlt = String(altText || t('post.imageFallback')).replace(/"/g, '&quot;');
+              processedContent = processedContent.replace(
+                match, `<img src="${response.url}" alt="${safeAlt}" />`,
+              );
             }
           } catch (error) {
             console.error('上传Base64图片失败:', error);
