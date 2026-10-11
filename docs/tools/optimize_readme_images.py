@@ -15,7 +15,8 @@
 其中两张**反而更大**了（PNG 对"照片 + 界面"这种内容本来就压不动）。
 换 WebP（quality 88）后同样清晰、体积降到约三分之一，GitHub 的 Markdown 也支持。
 
-农户端那几张由 `frontend/scripts/capture-readme-shots.mjs` 直接生成到同一目录
+农户端那几张由 `frontend/scripts/capture-docs-shots.mjs` 生成（第 160 批起；
+它用**真实管理员账号 admin** 一次截全 8 张，旧的 capture-readme-shots.mjs 已被它取代）
 （它们原本不存在 —— 33 张截图里全是管理端与登录页）。
 
 用法：
@@ -42,7 +43,7 @@ ADMIN_SHOTS = {
     'admin-comment-restore.png': 'admin-comment-restore',
 }
 
-#: 农户端（由 capture-readme-shots.mjs 生成，这里只负责缩放与转码）
+#: 农户端（由 capture-docs-shots.mjs 生成，这里只负责缩放与转码）
 FARMER_SHOTS = (
     'farmer-home',
     'farmer-detect-result',
@@ -81,6 +82,7 @@ def main():
     # ⚠️ 清理旧格式必须放在**转码之后**：第一版放在最前面，于是把农户端那几张 PNG
     #    （它们正是本次的输入）当成"旧格式"删掉了，脚本接着报"文件不存在"。
     written = set()
+    written_stems = set()      # 本次真正重新生成过的文件名（不含扩展名）
 
     missing = []
     for source_name, target_stem in ADMIN_SHOTS.items():
@@ -91,12 +93,21 @@ def main():
         target = OUT / f'{target_stem}.{args.format}'
         before, after = save_as(source, target, args.max_width, args.format)
         written.add(target)
+        written_stems.add(target.stem)
         print(f'  · {target.name}：{before:.0f} KB → {after:.0f} KB')
 
     for stem in FARMER_SHOTS:
-        source = OUT / f'{stem}.png'          # 采集脚本产出的是 PNG
-        if not source.exists():
-            missing.append(str(source.relative_to(ROOT)))
+        # ⚠️ 源文件在两个地方都找一遍：第 153 批那版采集脚本直接写进 docs/images/，
+        #    第 160 批的 capture-docs-shots.mjs 写在 frontend/dsh-shots/。
+        #    只认一个目录的话，另一边跑完就会被当成"源文件不存在"，接着在清理阶段
+        #    把已经入库的 WebP 删掉 —— 第 160 批就这么误删过 4 张 README 图。
+        source = next(
+            (candidate for candidate in (SHOTS / f'{stem}.png', OUT / f'{stem}.png')
+             if candidate.exists()),
+            None,
+        )
+        if source is None:
+            missing.append(f'{stem}.png（frontend/dsh-shots/ 与 docs/images/ 下都没有）')
             continue
         if args.format == 'png':
             before, after = save_as(source, source, args.max_width, 'png')
@@ -105,21 +116,31 @@ def main():
             target = OUT / f'{stem}.{args.format}'
             before, after = save_as(source, target, args.max_width, args.format)
         written.add(target)
+        written_stems.add(target.stem)
         print(f'  · {target.name}：{before:.0f} KB → {after:.0f} KB')
 
-    # 转码完成后再清理：把上一次留下的其它格式（例如换成 WebP 后残留的 PNG）删掉
+    # 转码完成后再清理：把上一次留下的其它格式（例如换成 WebP 后残留的 PNG）删掉。
+    #
+    # ⚠️⚠️ 只删"本次确实重新生成过同名文件"的旧格式。
+    # 第一版是"凡是本目录里其它图片格式一律删" —— 于是只要某个源文件缺失，
+    # 它对应的那张**已经入库的图**就会被顺手删掉（README 立刻变成断链）。
+    # 删除是不可逆的，宁可留下一个多余文件，也不要删掉一张还有用的图。
     for stale in OUT.glob('*'):
         if stale in written or not stale.is_file():
             continue
-        if stale.suffix.lstrip('.').lower() in FORMAT_ARGS:
-            stale.unlink()
-            print(f'  · 清理旧格式：{stale.name}')
+        if stale.suffix.lstrip('.').lower() not in FORMAT_ARGS:
+            continue
+        if stale.stem not in written_stems:
+            print(f'  · 保留（本次没有重新生成同名文件）：{stale.name}')
+            continue
+        stale.unlink()
+        print(f'  · 清理旧格式：{stale.name}')
 
     total = sum(f.stat().st_size for f in OUT.glob('*') if f.is_file()) / 1024
     print(f'\ndocs/images/ 现在有 {len(list(OUT.glob("*")))} 个文件，合计 {total:.0f} KB')
 
     if missing:
-        print('\n⚠️ 下列文件不存在（先跑 frontend/scripts/capture-readme-shots.mjs，或检查截图名）：')
+        print('\n⚠️ 下列文件不存在（先跑 frontend/scripts/capture-docs-shots.mjs，或检查截图名）：')
         for item in missing:
             print('   ·', item)
         return 1

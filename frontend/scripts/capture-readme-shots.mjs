@@ -9,6 +9,10 @@
  *   ② 截图后按宽度 1200 缩放，输出到 `docs/images/`（**入库**目录）供 README 引用。
  *
  * 用法：node scripts/capture-readme-shots.mjs
+ *
+ * ⚠️ 第 160 批起**已被 `capture-docs-shots.mjs` 取代**：那个脚本用**真实管理员账号 admin**
+ * 一次截全 8 张（农户端 + 管理端），截图里不会出现 `zze2e_demo_xxx` 这类临时账号名。
+ * 这个脚本保留作历史参考，不要再用它生成 README 配图。
  */
 import fs from 'node:fs';
 import path from 'node:path';
