@@ -60,6 +60,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue';
+import { goBackOr } from '@/utils/navigation';  // 第 165 批：返回兜底
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '@/api';
@@ -129,7 +130,8 @@ const formatContent = (content) => {
 // 返回上一页
 const goBack = () => {
   if (window.history.length > 1) {
-    router.go(-1);
+    // 第 165 批：没有上一页时兜底回新闻列表
+      goBackOr('/news');
   } else {
     router.push('/news');
   }

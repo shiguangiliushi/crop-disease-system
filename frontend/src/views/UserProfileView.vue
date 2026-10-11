@@ -508,6 +508,7 @@
 //   · 头像上传是 2MB + 白名单类型，比新闻/论坛的 5MB 更严；
 //   · 看别人的资料时第 2、3 块只读，第 5 块整块不渲染（判断在 isSelf）。
 import { ref, onMounted, computed, watch } from 'vue';
+import { goBackOr } from '@/utils/navigation';  // 第 165 批：返回兜底
 import { useI18n } from '@/i18n';
 import { useLocalized } from '@/utils/localized';  // 第 64 批：多语言（第 72 批起也用于版块名等内容数据）
 import { useRoute, useRouter } from 'vue-router';
@@ -883,7 +884,8 @@ export default {
     };
     
     const goBack = () => {
-      router.go(-1);
+      // 第 165 批：没有上一页时兜底回首页
+      goBackOr('/');
     };
     
     const goToPost = (postId) => {

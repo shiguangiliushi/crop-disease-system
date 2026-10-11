@@ -24,6 +24,7 @@
  * 第 87 批新增（用户反馈"点进用户协议/隐私政策/帮助中心/意见反馈都没有返回按钮"）。
  */
 import { useRouter } from 'vue-router';
+import { goBackOr } from '@/utils/navigation';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -39,7 +40,7 @@ const { t } = useI18n();
 const goBack = () => {
   const hasInAppHistory = Boolean(router.options.history.state && router.options.history.state.back);
   if (hasInAppHistory) {
-    router.back();
+    goBackOr(props.fallback || '/');   // 第 165 批：没有上一页时回兜底地址
   } else {
     router.push(props.fallback);
   }

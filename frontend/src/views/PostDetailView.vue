@@ -499,6 +499,7 @@
 
 <script>
 import { ref, onMounted, computed, watch, nextTick, getCurrentInstance, onBeforeUnmount } from 'vue';
+import { goBackOr } from '@/utils/navigation';  // 第 165 批：返回兜底
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { 
@@ -1475,7 +1476,8 @@ export default {
 
     // 返回上一页
     const goBack = () => {
-      router.go(-1);
+      // 第 165 批：没有上一页时兜底回论坛列表，而不是什么都不做
+      goBackOr({ name: 'forum' });
     };
 
     // 滚动到评论区域

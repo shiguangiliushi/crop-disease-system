@@ -82,6 +82,8 @@ import '@vueup/vue-quill/dist/vue-quill.snow.css'
 // 第 141 批：两条上传通道（都是现成接口，这里只是把它们接上）
 import { uploadNewsImage } from '@/api/news'
 import { uploadImage as uploadGenericImage } from '@/api/forum'
+// 第 165 批：上传前压缩 —— 农户拍的照片常 3~8MB，直传会撞 5MB 上限被拒
+import { compressImage } from '@/utils/imageCompress'
 
 /**
  * 第 164 批：给 Quill 注册一个「分隔线」格式。
@@ -264,12 +266,14 @@ export default {
     async uploadAndInsert(file, isDrop = false) {
       const quill = this.getQuill()
       if (!quill) return null
+      // 第 165 批：先压缩（失败或压完更大时自动用原图，见 utils/imageCompress）
+      const prepared = await compressImage(file)
       // 拖拽时先记住落点，上传完插回原处
       const range = quill.getSelection(true)
       const index = isDrop && range ? range.index : undefined
       this.uploading = true
       try {
-        const response = await this.uploadFile(file)
+        const response = await this.uploadFile(prepared)
         const url = response?.url || response?.image_url
         if (!url) throw new Error(this.$t('editor.uploadNoUrl'))
         const at = index === undefined ? quill.getSelection(true)?.index ?? quill.getLength() : index

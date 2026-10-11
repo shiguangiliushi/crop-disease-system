@@ -192,6 +192,30 @@ check('老正文里的 Markdown 图片被渲染成了 <img>', /<img[^>]+zz-legac
   legacyHtml.slice(0, 90));
 check('老正文里没有残留的 markdown 图片语法', !/!\[[^\]]*\]\(/.test(legacyHtml), '');
 
+// ---------------------------------------------------------------------------
+// ⑦ 第 165 批：英文区块默认收起 + 快捷键标注 + 删除确认写清后果
+// ---------------------------------------------------------------------------
+await page.goto(`${UI}/forum/post/${postId}/edit`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('.ql-editor', { timeout: 30_000 });
+await page.waitForTimeout(2000);
+const englishVisible = await page.locator('.en-fields').first().isVisible().catch(() => false);
+check('英文区块默认收起（农户不会被英文框吓到）', englishVisible === false, englishVisible ? '仍然展开' : '已收起');
+
+const pageText = await page.locator('.edit-post').innerText();
+check('按钮上标注了快捷键', /Ctrl\+Enter/.test(pageText) && /Ctrl\+S/.test(pageText),
+  (pageText.match(/Ctrl\+\w+/g) || []).join(' / '));
+
+await page.getByRole('button', { name: /删除帖子/ }).first().click();
+// ⚠️ 删除确认是页内的 el-dialog（不是 ElMessageBox.confirm）—— 第一版按 MessageBox 找，超时了
+await page.waitForSelector('.el-dialog', { timeout: 10_000 });
+await page.waitForTimeout(600);
+const confirmText = await page.locator('.el-dialog').innerText();
+check('删除确认写清了后果（评论/配图一起删）',
+  /评论/.test(confirmText) && /无法恢复|不能恢复/.test(confirmText),
+  confirmText.replace(/\s+/g, ' ').slice(0, 90));
+await page.locator('.el-dialog__footer button').filter({ hasText: /取消/ }).first().click();
+await page.waitForTimeout(500);
+
 check('全程无 JS 报错', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 
 await browser.close();

@@ -330,6 +330,7 @@ import { useAuthStore } from '@/stores/auth';
 // 第 31 批：页面底部"识别流程与拍摄建议"补充信息区
 import PageExtras from '@/components/PageExtras.vue';
 // 第 50 批：离线识别（断网时图片入本地队列，联网后自动补传）
+import { compressImage } from '@/utils/imageCompress';  // 第 165 批：与论坛/新闻共用同一份压缩
 import { enqueueOfflineImage, isBrowserOnline } from '@/utils/offlineSync';
 import { getOfflineQueue } from '@/utils/offlineStorage';
 import { useI18n } from '@/i18n';  // 第 58 批：多语言
@@ -484,59 +485,13 @@ const onCameraCaptured = (file) => {
   handleFile(file);
 };
 
-/** 组件内点「改用系统相机 / 相册」 */
-const onCameraFallback = () => {
-  cameraVisible.value = false;
-  cameraInput.value?.click();
-};
-
-/* ----------------------------------------------------------------------------
- * 第 74 批：上传前压缩
- * ----------------------------------------------------------------------------
- * 农户在田里用手机拍照，一张 3~8MB。弱网下直传原图：上传慢、耗流量，
- * 还经常撞到 5MB 上限被拒（用户只看到"图片大小不能超过5MB"，不知道怎么办）。
- * 这里在本地把长边压到 1600px、JPEG 质量 0.85 再提交 ——
- * 对识别精度没有实际影响（模型输入远小于此），但体积通常降到 1/5 以下。
- * 压缩失败时回落到原文件，绝不让用户因为压缩问题而传不了。
- * -------------------------------------------------------------------------- */
-const COMPRESS_MAX_EDGE = 1600;
-const COMPRESS_QUALITY = 0.85;
+/*
+ * 第 165 批：压缩逻辑已提取到 `@/utils/imageCompress`（论坛配图、新闻配图、编辑器插图也用它）。
+ * 原来这段是本页私有的，于是别的上传入口**没有压缩** —— 农户拍一张 6MB 的照片发帖，
+ * 只会得到"图片太大了（上限 5 MB）"。
+ * UPLOAD_LIMIT 仍在本页用（选图时的即时校验）。
+ */
 const UPLOAD_LIMIT = 5 * 1024 * 1024;
-
-const compressImage = async (file) => {
-  // GIF（可能是动图）与体积本就很小的文件没必要处理
-  if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.size < 300 * 1024) {
-    return file;
-  }
-
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, COMPRESS_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.round(bitmap.width * scale);
-    const height = Math.round(bitmap.height * scale);
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return file;
-    ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close?.();
-
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', COMPRESS_QUALITY),
-    );
-
-    // 压完反而更大（原图已是高度压缩的 JPEG）→ 用原图
-    if (!blob || blob.size >= file.size) return file;
-
-    const name = (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
-    return new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() });
-  } catch (error) {
-    console.warn('[detect] 图片压缩失败，改用原图:', error?.message || error);
-    return file;
-  }
-};
 
 // 处理文件选择
 const onFileSelected = (event) => {

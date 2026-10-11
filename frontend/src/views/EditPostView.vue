@@ -94,6 +94,10 @@
               <em>{{ t('post.englishOptional') }}</em>
               <button type="button" class="en-toggle" @click="showEnglish = !showEnglish">
                 {{ showEnglish ? t('post.englishHide') : t('post.englishFill') }}
+                <!-- 第 165 批：默认收起，但告诉作者"这里有现成的英文版"，需要的人点开即可 -->
+                <template v-if="!showEnglish && translationMeta.hasTranslation">
+                  （{{ t('post.englishExistsHint') }}）
+                </template>
               </button>
             </span>
           </template>
@@ -131,7 +135,7 @@
               :loading="submitting"
               :disabled="!isDirty"
             >
-              {{ currentRoute.params.id ? t('post.updatePost') : t('post.submit') }}
+              {{ currentRoute.params.id ? t('post.updatePost') : t('post.submit') }}<span class="shortcut-hint">{{ t('post.shortcutPublish') }}</span>
             </el-button>
             
             <el-button 
@@ -141,7 +145,7 @@
               :loading="isSaving"
               :disabled="!isDirty"
             >
-              {{ t('post.saveDraft') }}
+              {{ t('post.saveDraft') }}<span class="shortcut-hint">{{ t('post.shortcutDraft') }}</span>
             </el-button>
             
             <el-button @click="cancel">
@@ -177,6 +181,11 @@
       width="400px"
     >
       <p>{{ t('post.deleteConfirm') }}</p>
+            <!-- 第 165 批：把"后果"写清楚 —— 原来只问一句"确认删除？"，
+                 农户不知道帖子下面的评论和配图会不会一起没（评审意见点名）。 -->
+            <p class="delete-consequence">
+              {{ t('post.deleteConsequence', { comments: (post && post.comment_count) || 0 }) }}
+            </p>
       <template #footer>
         <el-button @click="showDeleteDialog = false">{{ t('common.cancel') }}</el-button>
         <el-button type="danger" @click="deletePost" :loading="deleting">
@@ -189,6 +198,8 @@
 
 <script>
 import { ref, onMounted, computed, nextTick, watch, onBeforeUnmount, getCurrentInstance } from 'vue';
+import { goBackOr } from '@/utils/navigation';  // 第 165 批：返回兜底
+import { pickReadableMessage } from '@/utils/readableError';  // 第 165 批：英文错误不弹给农户
 import { useRouter, useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
 import { getForumBoards, getPost, updatePost, createPost, deletePost, uploadImage } from '@/api/forum';
@@ -441,9 +452,10 @@ export default {
             source: response.translation_source || ''
           };
           enTouched.value = false;
-          showEnglish.value = Boolean(
-            (response.title_en || '').trim() || (response.content_en || '').trim()
-          );
+          // 第 165 批：**不再自动展开**。原来只要库里已有译文就把这个英文框展开，
+          // 农户一进编辑页就看到一个 6 行的英文输入框，完全不知道是干嘛的（评审意见点名）。
+          // 现在默认收起；已有译文时按钮上会写明"已有英文版本"，需要的人点一下就能看到。
+          showEnglish.value = false;
           
           // 保存原始数据用于比较
           originalForm.value = JSON.parse(JSON.stringify(form.value));
@@ -796,9 +808,11 @@ export default {
             // 这里一直显示成"帖子已删除"。现改用独立的 `post.postNotFound`。
             errorMessage = t('post.postNotFound');
           } else if (data && data.detail) {
-            errorMessage = data.detail;
+            // 第 165 批：后端的 detail 可能是**英文技术错误**（DRF 默认文案），
+          // 直接弹给农户等于没说。只在中文字面可用时才用，否则落到友好文案。
+          errorMessage = pickReadableMessage(data.detail, errorMessage);
           } else if (data && data.message) {
-            errorMessage = data.message;
+            errorMessage = pickReadableMessage(data.message, errorMessage);
           }
         } else if (error.request) {
           errorMessage = t('msg.networkError');
@@ -865,7 +879,8 @@ export default {
     };
     
     const cancel = () => {
-      router.go(-1);
+      // 第 165 批：从分享链接直接打开时历史里没有上一页 → 兜底回帖子详情
+      goBackOr(route.params.id ? { name: 'post-detail', params: { id: route.params.id } } : { name: 'forum' });
     };
     
     // 设置键盘快捷键
@@ -1013,6 +1028,19 @@ h2 {
   margin-bottom: 24px;
   padding-bottom: 12px;
   border-bottom: 1px solid #ebeef5;
+}
+
+.shortcut-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.delete-consequence {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--el-color-danger, #f56c6c);
+  line-height: 1.6;
 }
 
 .debug-info {

@@ -143,8 +143,18 @@ const eng = flatten(en);
 // ---------------------------------------------------------------------------
 // A. 两侧一字不差
 // ---------------------------------------------------------------------------
-/** 本来就该两边一样的：语言名（每种语言用自己的文字显示自己） */
-const IDENTICAL_ALLOWLIST = new Set(['language.zh', 'language.en']);
+/**
+ * 本来就该两边一样的：
+ *   · 语言名（每种语言用自己的文字显示自己）；
+ *   · **快捷键文本**（`Ctrl+Enter` / `Ctrl+S` 在各种语言里都是这么写，
+ *     第 165 批给按钮加提示时加进来的 —— 翻译它反而会误导用户按错键）。
+ */
+const IDENTICAL_ALLOWLIST = new Set([
+  'language.zh',
+  'language.en',
+  'post.shortcutPublish',
+  'post.shortcutDraft',
+]);
 
 /** 技术性取值：路由、图标类名、纯标识符 —— 这些与语言无关 */
 const isLanguageNeutral = (value) => {
