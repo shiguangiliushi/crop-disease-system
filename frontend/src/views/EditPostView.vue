@@ -3,13 +3,20 @@
     <div class="post-form-container">
       <h2>{{ currentRoute.params.id ? t('post.titleEdit') : t('post.titleNew') }}</h2>
       
-      <!-- 调试信息，开发完成后可以移除或隐藏 -->
-      <div v-if="isDev" class="debug-info">
+      <!--
+        开发信息（第 161 批：改成**默认折叠**，并说明只在开发模式出现）
+        ----------------------------------------------------------------
+        这块是当年排查"编辑页整体不可用"时留下的：它把加载状态、帖子 ID、内容长度、
+        草稿保存状态摊在页面最上方，占掉一整屏 —— 截个图、给用户看都显得没做完。
+        信息本身有用（自测时一眼看出加载到没有），所以保留，但收进 <details> 里。
+      -->
+      <details v-if="isDev" class="debug-info">
+        <summary>{{ t('post.debugSummary') }}</summary>
         <p>{{ t('post.debugStatus') }}: {{ loading ? t('post.loadingState') : t('post.loadedState') }}</p>
         <p>{{ t('post.debugPostId') }}: {{ currentRoute.params.id || t('post.newPost') }}</p>
         <p>{{ t('post.debugContentLength') }}: {{ form.content?.length || 0 }} {{ t('post.lengthUnit') }}</p>
         <p>{{ t('post.debugSaveStatus') }}: {{ saveStatus || t('post.savedState') }}</p>
-      </div>
+      </details>
       
       <el-form 
         ref="postForm" 
@@ -33,7 +40,10 @@
               :value="board.id"
             >
               <div style="display: flex; align-items: center">
-                <i :class="`el-icon-${board.icon}`" style="margin-right: 8px"></i>
+                <!-- 第 161 批：版块图标在库里存的是 fa-* 名字（`fa-comments` 之类），
+                     原来拼成 `el-icon-xxx` → Element Plus 2 没有图标字体，一片空白。
+                     NewPostView 早就按 fa-* 渲染了，这里对齐。 -->
+                <i :class="`fas ${board.icon || 'fa-comments'}`" style="margin-right: 8px"></i>
                 <span>{{ localizedField(board, 'name') }}</span>
               </div>
             </el-option>
@@ -50,25 +60,33 @@
         </el-form-item>
 
         <el-form-item :label="t('post.contentLabel')" prop="content">
+          <!--
+            第 161 批：工具栏三处一起修
+            · 图标：el-icon-* 是 Element UI v2 的写法，Element Plus 2 没有图标字体 →
+              界面上一排**空方块**（NewPostView 里早就注释过这个坑，这里漏改了）；
+            · 插入内容：原来插的是 markdown 片段（**粗体**），而库里正文存的是 **HTML**
+              （详情页用 sanitizeRichText 渲染）—— 两边口径不一致，插进去的东西预览里也不对；
+              现在统一插 HTML 片段。
+          -->
           <div class="editor-toolbar">
             <el-button-group>
-              <el-button size="small" @click="insertText(t('post.mdBold'))" :title="t('post.bold')">
-                <i class="el-icon-bold"></i>
+              <el-button size="small" @click="insertText(t('post.htmlBold'))" :title="t('post.bold')">
+                <i class="fas fa-bold"></i>
               </el-button>
-              <el-button size="small" @click="insertText(t('post.mdItalic'))" :title="t('post.italic')">
-                <i class="el-icon-italic"></i>
+              <el-button size="small" @click="insertText(t('post.htmlItalic'))" :title="t('post.italic')">
+                <i class="fas fa-italic"></i>
               </el-button>
-              <el-button size="small" @click="insertText(t('post.mdInlineCode'))" :title="t('post.inlineCode')">
-                <i class="el-icon-document-copy"></i>
+              <el-button size="small" @click="insertText(t('post.htmlInlineCode'))" :title="t('post.inlineCode')">
+                <i class="fas fa-code"></i>
               </el-button>
-              <el-button size="small" @click="insertText(t('post.mdCodeBlock'))" :title="t('post.codeBlock')">
-                <i class="el-icon-document"></i>
+              <el-button size="small" @click="insertText(t('post.htmlCodeBlock'))" :title="t('post.codeBlock')">
+                <i class="fas fa-file-code"></i>
               </el-button>
-              <el-button size="small" @click="insertText(t('post.mdLink'))" :title="t('post.link')">
-                <i class="el-icon-link"></i>
+              <el-button size="small" @click="insertText(t('post.htmlLink'))" :title="t('post.link')">
+                <i class="fas fa-link"></i>
               </el-button>
-              <el-button size="small" @click="insertText(t('post.mdImage'))" :title="t('post.image')">
-                <i class="el-icon-picture"></i>
+              <el-button size="small" @click="insertText(t('post.htmlImage'))" :title="t('post.image')">
+                <i class="fas fa-image"></i>
               </el-button>
               <el-upload
                 class="upload-demo"
@@ -80,7 +98,7 @@
                 :before-upload="beforeImageUpload"
               >
                 <el-button size="small" type="primary" :title="t('post.uploadImage')">
-                  <i class="el-icon-upload"></i> {{ t('post.uploadImage') }}
+                  <i class="fas fa-upload"></i> {{ t('post.uploadImage') }}
                 </el-button>
               </el-upload>
             </el-button-group>
@@ -94,6 +112,7 @@
             resize="none"
             ref="editor"
           ></el-input>
+          <p class="field-hint">{{ t('post.contentFormatHint') }}</p>
           <div class="preview" v-if="form.content">
             <h4>{{ t('post.preview') }}</h4>
             <div class="markdown-body" v-html="compiledMarkdown"></div>
@@ -169,7 +188,9 @@
             </el-button>
             
             <span v-if="saveStatus" class="save-status">
-              <i class="el-icon-loading" v-if="isSaving"></i>
+              <!-- 第 161 批：`el-icon-loading` 在 Element Plus 2 里没有对应字体图标，
+                   会显示成一个空方块；换成 Font Awesome 的转圈图标。 -->
+              <i class="fas fa-spinner fa-spin" v-if="isSaving"></i>
               {{ saveStatus }}
             </span>
           </div>
@@ -181,7 +202,7 @@
               @click="showDeleteDialog = true"
               :disabled="deleting"
             >
-              <i class="el-icon-delete"></i> {{ t('post.deletePost') }}
+              <i class="fas fa-trash"></i> {{ t('post.deletePost') }}
             </el-button>
           </div>
         </el-form-item>
@@ -211,8 +232,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
 import { getForumBoards, getPost, updatePost, createPost, deletePost, uploadImage } from '@/api/forum';
 import { useUserStore } from '@/stores/user';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
+import { sanitizeRichText } from '@/utils/richText';  // 第 161 批：预览与详情页同一口径
 import { debounce } from 'lodash-es';
 // 身份读写统一走适配器（sessionStorage 优先）
 import { getToken } from '@/utils/authStorage';
@@ -221,11 +241,8 @@ import { useI18n } from '@/i18n';
 import { useLocalized } from '@/utils/localized';  // 第 55 批：多语言（第 72 批起也用于版块名等内容数据）
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges';  // 第 97 批：离开前提醒（含站内导航）
 
-// 配置 marked
-marked.setOptions({
-  breaks: true,
-  gfm: true
-});
+// 第 161 批：原来这里有一段 `marked.setOptions({...})` —— 预览已改用 sanitizeRichText
+// （与详情页同一口径），marked 不再参与渲染，这段配置随之删除。
 
 // 辅助函数：检查字符串是否是Base64图片
 const isBase64Image = (str) => {
@@ -315,7 +332,9 @@ export default {
     const lastSaved = ref(null);
     const isDirty = ref(false);
     const isSaving = ref(false);
-    const saveStatus = ref('saved');
+    // 第 161 批：初值原来是裸的英文 'saved' —— 中文界面里会看到「保存状态: saved」。
+    // 改成空串（未保存过时不显示状态），后续都由 t(...) 赋值。
+    const saveStatus = ref('');
     const showPreview = ref(false);
     // 第 24 批：新建帖子时，第一次自动保存会真的创建一条草稿 —— 记住它的 id，
     // 否则每 30 秒的自动保存都会再新建一条，论坛里会堆满半成品帖子。
@@ -327,10 +346,10 @@ export default {
     };
     
     // 计算预览内容
-    const previewContent = computed(() => {
-      if (!form.value.content) return '';
-      return marked(form.value.content || '');
-    });
+    // 第 161 批：预览改用 sanitizeRichText —— 与详情页 / 内容审核页**同一口径**。
+    // 原来这里用 marked 把正文当 markdown 渲染，而库里存的是 HTML（<p>…</p>），
+    // 于是预览里是一堆转义后的标签，和发布之后看到的样子**不一致**。
+    const previewContent = computed(() => sanitizeRichText(form.value.content || ''));
     
     const { proxy } = getCurrentInstance();
     
@@ -383,10 +402,9 @@ export default {
     // 图片上传成功处理
     const handleImageUploadSuccess = (response, file) => {
       proxy.$message.success(t('post.uploadImageOk'));
-      // 插入Markdown图片语法到内容中
+      // 第 161 批：插入 HTML 图片标签（正文是 HTML；原来插的 markdown 语法不会被渲染）
       if (response && response.url) {
-        const imageMarkdown = `![${file.name}](${response.url})\n`; // 添加换行符，使图片后自动换行
-        insertText(imageMarkdown);
+        insertText(`<img src="${response.url}" alt="${file.name}" />`);
       }
     };
     
@@ -441,10 +459,8 @@ export default {
       return userStore.user?.is_staff || false;
     });
     
-    const compiledMarkdown = computed(() => {
-      const content = form.value.content || '';
-      return DOMPurify.sanitize(marked(content));
-    });
+    // 第 161 批：与 previewContent 同一个口径（详情页怎么渲染，预览就怎么渲染）
+    const compiledMarkdown = computed(() => sanitizeRichText(form.value.content || ''));
     
     const rules = {
       // 第 83 批：校验文案接入 i18n
@@ -1027,6 +1043,21 @@ export default {
       // 设置键盘快捷键
       const cleanupShortcuts = setupKeyboardShortcuts();
 
+      // 第 161 批：**先加载版块列表**。
+      //
+      // 原来 `getForumBoards` 只 import、从来没调用 → `boards` 一直是空数组 →
+      // 下拉框没有任何选项，只能把 `form.board` 的原始值显示出来
+      //（界面上就是孤零零一个「1」）；顺带版块图标（`board.icon`）也就无从显示。
+      // 放在 fetchPost 之前，让选择框有选项可用；失败也不挡编辑（只提示一下）。
+      try {
+        const boardResponse = await getForumBoards();
+        boards.value = Array.isArray(boardResponse)
+          ? boardResponse
+          : (boardResponse?.results || boardResponse?.data || []);
+      } catch (error) {
+        console.warn('[edit-post] 版块列表加载失败（版块下拉将为空）:', error?.message || error);
+      }
+
       // 加载帖子或草稿
       if (route.params.id) {
         await fetchPost();
@@ -1136,6 +1167,17 @@ h2 {
   font-size: 13px;
   color: #606266;
   border-left: 4px solid var(--brand-400, #5fb088);
+}
+
+/* 第 161 批：折叠后只占一行，点开才展开明细 */
+.debug-info summary {
+  cursor: pointer;
+  color: var(--brand-600, #2f7a55);
+  outline: none;
+}
+
+.debug-info p {
+  margin: 6px 0 0;
 }
 
 .debug-info p {
@@ -1266,9 +1308,8 @@ h2 {
   color: #67c23a;
 }
 
-.save-status .el-icon-loading {
-  margin-right: 5px;
-}
+/* 第 161 批：`.save-status .el-icon-loading` 已删 —— 那个图标类在 Element Plus 2 里
+   不存在（显示成空方块），现在用 Font Awesome 的 `fa-spinner fa-spin`。 */
 
 .upload-area {
   margin-top: 10px;
