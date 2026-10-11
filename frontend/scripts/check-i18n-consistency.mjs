@@ -23,8 +23,101 @@
  *   node scripts/check-i18n-consistency.mjs --quiet    # 不打印 C 的清单
  */
 import { en, zhCN } from '../src/i18n/messages.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const quiet = process.argv.includes('--quiet');
+
+// ---------------------------------------------------------------------------
+// 0. 语言包里**重复的键**（第 158 批补）
+//
+// 为什么必须单独查：JS 对象里同名的后一个键**静默覆盖**前一个 ——
+// 也就是说重复键不会报错、不会崩，只会让其中一份文案**永远不生效**。
+// 第 157 批我用脚本往 messages.js 插"系统健康"的文案时算错了行号，
+// 结果 zhCN 里多出一个英文的 `health: {…}` 块：页面看着完全正常（后一个中文块胜出），
+// `npm run check` 也全绿（英文块在英文对象里查，中文对象里的英文块没人看）。
+// 直到第 158 批给英文补趋势文案，才发现"英文键 24 / 中文键 29"。
+//
+// 做法：**基于文本**扫（不能靠 import —— import 之后重复键已经被覆盖掉了），
+// 用缩进跟踪"当前在哪个块里"，同一层级出现同名键就报出来。
+// ---------------------------------------------------------------------------
+function findDuplicateKeys(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const lines = source.split('\n');
+  const stack = [];        // [{ indent, key, seen: Map }]
+  const problems = [];
+
+  // ⚠️ 第一版只匹配"块"键（`key: {`），于是**字符串键的重复完全抓不到** ——
+  //    我造了个 `title: '重复的标题'` 去试，它一声不吭。
+  //    现在两种都登记：块键与普通键（要求行尾是 `,` 或 `{`，
+  //    这样多行字符串里的散文行不会被误当成键）。
+  const KEY = /^(\s*)(?:'([^']+)'|([A-Za-z_$][\w$]*))\s*:\s*(.*)$/;
+  // ⚠️ 第二版又误报了 30 处：`faqGroups: [ { key:..., title:... }, { key:..., title:... } ]`
+  //    这种**多行数组元素**里，每个元素都有自己的 key/title，是合法的 ——
+  //    但我的扫描器把它们算成了外层命名空间的键，于是"重复"满天飞。
+  //    所以：单独一行的 `{` / `[` 要开一个**匿名作用域**，里面的键不与外层混。
+  const BARE_OPEN = /^(\s*)[{[]\s*$/;
+  const CLOSE = /^(\s*[}\]]+[,;]?\s*)$/;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    if (/^\s*(\/\/|\*|\/\*)/.test(raw)) continue;      // 注释行
+
+    const closing = CLOSE.exec(raw);
+    if (closing) {
+      const indent = raw.length - raw.trimStart().length;
+      while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+      continue;
+    }
+
+    const bare = BARE_OPEN.exec(raw);
+    if (bare) {
+      const indent = bare[1].length;
+      while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+      // 匿名作用域：只用来隔离数组元素里的键，不参与"重复"统计
+      stack.push({ indent, key: '(数组元素)', seen: new Map(), anonymous: true });
+      continue;
+    }
+
+    const match = KEY.exec(raw);
+    if (!match) continue;
+    const rest = match[4].trim();
+    const isBlock = rest.startsWith('{');
+    const isScalar = /,$/.test(rest) || /^[^,{[]*,\s*$/.test(rest) || rest === '';
+    if (!isBlock && !isScalar) continue;               // 既不是块、也不像"键: 值,"的整行
+
+    const indent = match[1].length;
+    const key = match[2] || match[3];
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    const parent = stack[stack.length - 1];
+    if (parent && !parent.anonymous) {
+      if (parent.seen.has(key)) {
+        problems.push(`第 ${index + 1} 行：${parent.key} 里重复定义了 \`${key}\`（第一次在第 ${parent.seen.get(key)} 行）`);
+      } else {
+        parent.seen.set(key, index + 1);
+      }
+    }
+    if (isBlock) stack.push({ indent, key, seen: new Map() });
+  }
+  return problems;
+}
+
+// ⚠️ 用 fileURLToPath：第一版用 `pathToFileURL(...).pathname` 手动拼，
+//    在 Windows 上会得到 `/D:/%E6%96%B0...` 这种 URL 编码路径，readFileSync 直接 ENOENT。
+const messagesFile = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../src/i18n/messages.js',
+);
+const duplicateProblems = findDuplicateKeys(messagesFile);
+
+if (duplicateProblems.length) {
+  console.error(`\n❌ 语言包里出现重复的键 ${duplicateProblems.length} 处（后一个会**静默覆盖**前一个）：`);
+  duplicateProblems.forEach((item) => console.error(`   · ${item}`));
+  process.exitCode = 1;
+} else if (!quiet) {
+  console.log('✅ 0. 语言包里没有重复的键（重复键会让一份文案永远不生效）');
+}
 
 /** 拍平成 `a.b[0].c` → 值 */
 function flatten(object, prefix = '', out = {}) {

@@ -539,33 +539,6 @@ export const zhCN = {
   },
 
   health: {
-    title: 'System health',
-    subtitle: 'Environment self-check, data overview and runtime info — the same checks as the check_env command',
-    overallOk: 'All good',
-    overallWarn: 'Running, but there are things to watch',
-    overallFail: 'There are problems that must be fixed',
-    problemCount: '{count} problems',
-    warningCount: '{count} warnings',
-    statUsers: 'Users ({active} active)',
-    statPosts: 'Posts ({comments} comments)',
-    statDetections: 'Detections',
-    statFeedback: 'Feedback ({pending} open)',
-    statMedia: 'Media files ({files})',
-    sectionCount: '{ok}/{total} ok',
-    runtimeTitle: 'Runtime and paths',
-    runtimeDebug: 'Debug mode',
-    debugOn: 'on (must be off in production)',
-    debugOff: 'off',
-    runtimeVersions: 'Versions',
-    runtimeDatabase: 'Database',
-    runtimeCache: 'Cache backend',
-    runtimeMedia: 'Media root',
-    runtimeBackup: 'Backup root',
-    runtimeHint: 'When something breaks, copy these paths and versions into the report — it saves a round trip.',
-    loadFailed: 'Could not load system health',
-  },
-
-  health: {
     title: '系统健康',
     subtitle: '环境自检、数据量概览与运行时信息 —— 与命令行 check_env 是同一套检查',
     overallOk: '一切正常',
@@ -590,6 +563,11 @@ export const zhCN = {
     runtimeBackup: '备份目录',
     runtimeHint: '出问题时把这几个路径与版本号一并抄给对方，能省一轮来回。',
     loadFailed: '加载系统健康失败',
+    trendTitle: '最近 {days} 天健康趋势',
+    trendRecorded: '{recorded}/{days} 天有快照',
+    trendHint: '每天记一条快照（manage.py health_snapshot）才有连续趋势；灰色的那天说明定时任务没跑 —— 这本身就是信息。',
+    trendMissing: '{date}：没有快照（定时任务可能没跑）',
+    trendCell: '{date}：问题 {problems} / 提示 {warnings}',
   },
 
   auditLog: {
@@ -2169,7 +2147,10 @@ export const zhCN = {
     publishFailed: '发布失败',
     serverError: '服务器返回异常',
     noPermission: '您没有权限执行此操作',
-    postDeleted: '帖子不存在或已被删除',
+    // 第 158 批：这里原来也叫 `postDeleted`，与下面那条（成功提示「帖子已删除」）**重名** ——
+    // JS 对象里后一个静默覆盖前一个，于是 EditPostView 的**错误提示**一直显示"帖子已删除"。
+    // 重命名区分开：本键用于"帖子不存在/已被删"的失败路径。
+    postNotFound: '帖子不存在或已被删除',
     retryConfirm: '{message}，是否重试？',
     leaveConfirm: '您有未保存的更改，确定要离开吗？',
     imageUploading: '图片上传中...',
@@ -2499,7 +2480,6 @@ export const zhCN = {
     openUserFailed: '无法打开用户主页',
     userNotFound: '找不到指定的用户页面',
     noPreview: '（暂无内容预览）',
-    unknownUser: '未知用户',
     // 第 83 批：发帖/编辑帖表单的校验文案（Element Plus 规则里写死中文）
     boardRequired: '请选择版块',
     titleRequired: '请输入标题',
@@ -3351,6 +3331,11 @@ export const en = {
     runtimeBackup: 'Backup root',
     runtimeHint: 'When something breaks, copy these paths and versions into the report — it saves a round trip.',
     loadFailed: 'Could not load system health',
+    trendTitle: 'Health trend, last {days} days',
+    trendRecorded: '{recorded}/{days} days recorded',
+    trendHint: 'A daily snapshot (manage.py health_snapshot) gives a continuous trend; a grey day means the scheduled job did not run — that is information too.',
+    trendMissing: '{date}: no snapshot (the scheduled job may not be running)',
+    trendCell: '{date}: {problems} problems / {warnings} warnings',
   },
 
   auditLog: {
@@ -4909,7 +4894,8 @@ export const en = {
     publishFailed: 'Could not publish',
     serverError: 'the server returned an unexpected response',
     noPermission: 'You do not have permission to do this',
-    postDeleted: 'The post does not exist or has been deleted',
+    // 第 158 批：与下面的成功提示重名，重命名区分（见中文侧同处的说明）
+    postNotFound: 'The post does not exist or has been deleted',
     retryConfirm: '{message} — try again?',
     leaveConfirm: 'You have unsaved changes. Leave anyway?',
     imageUploading: 'Uploading the image...',
@@ -5240,7 +5226,7 @@ export const en = {
     openUserFailed: 'Could not open the profile',
     userNotFound: 'That user page does not exist',
     noPreview: '(No preview available)',
-    unknownUser: 'Unknown user',
+    // 第 158 批：这里原有一份重复的 `unknownUser`（与下方同名同值，后者静默胜出），已去重
     // 第 83 批
     boardRequired: 'Please choose a board',
     titleRequired: 'Please enter a title',

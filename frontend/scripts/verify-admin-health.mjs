@@ -187,6 +187,38 @@ console.log(`  （参考：CLI 检查项 ${cliSections} 条；页面 ${uiItems} 
   '两者解释器不同时，依赖版本类结果可能不同 —— 见脚本注释）');
 
 // ---------------------------------------------------------------------------
+// ⑤b 健康趋势（第 158 批）
+//     环境类故障是"安静"的，所以每天记一条快照；缺的那天要显式画成灰格子。
+// ---------------------------------------------------------------------------
+// 先造两条快照（今天 + 昨天），再看趋势区
+clearThrottle();
+runDjango([
+  'from django.core.management import call_command',
+  'from api.models_health import HealthSnapshot',
+  'from django.utils import timezone',
+  'from datetime import timedelta',
+  'import io',
+  'HealthSnapshot.objects.all().delete()',
+  'call_command("health_snapshot", stdout=io.StringIO())',
+  'HealthSnapshot.objects.create(snapshot_date=timezone.localdate() - timedelta(days=1),'
+    + ' level="fail", problem_count=2, warning_count=0, counts={"users": 1}, notes="zz 测试要点")',
+  'print("SNAPSHOTS", HealthSnapshot.objects.count())',
+]);
+
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(2500);
+
+const trendCells = await page.locator('.trend-cell').count();
+check('趋势区显示 14 个格子', trendCells === 14, `${trendCells} 个`);
+const trendText = await page.locator('.panel-card').filter({ hasText: '健康趋势' }).innerText();
+check('趋势区标题带天数', trendText.includes('14'), trendText.replace(/\s+/g, ' ').slice(0, 60));
+check('显示"2/14 天有快照"', trendText.includes('2/14'), trendText.replace(/\s+/g, ' ').slice(0, 70));
+const trendAfter = await page.locator('.trend-cell--fail, .trend-cell--warn, .trend-cell--ok').count();
+check('记了快照的那两天有状态色', trendAfter >= 2, `${trendAfter} 个有状态`);
+const missingCells = await page.locator('.trend-cell--missing').count();
+check('没记的那几天画成灰格子（本身就说明任务没跑）',
+  missingCells === 14 - 2, `${missingCells} 个灰格子`);
+// ---------------------------------------------------------------------------
 // ⑥ 编辑员：看不到、进不去
 // ---------------------------------------------------------------------------
 const editorCtx = await browser.newContext({ viewport: { width: 1700, height: 1100 }, locale: 'zh-CN' });

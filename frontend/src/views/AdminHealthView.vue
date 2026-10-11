@@ -79,6 +79,35 @@
       </div>
     </div>
 
+    <!--
+      最近 14 天的健康快照（第 158 批）
+      ----------------------------------------------------------------
+      环境类故障是**安静**的：定时任务挂了、备份没跑成，没人会来报错。
+      所以每天记一条快照 —— "最新备份是 3 天前"和"这 14 天一直在跑"
+      是两种完全不同的安心程度。缺的那天也会画成灰色（那本身就是信息：任务没跑）。
+    -->
+    <section v-if="data && data.history" class="panel-card">
+      <h3 class="panel-title">
+        {{ t('health.trendTitle', { days: data.history.window }) }}
+        <span class="panel-count">
+          {{ t('health.trendRecorded', { recorded: data.history.recorded_days, days: data.history.window }) }}
+        </span>
+      </h3>
+      <div class="trend">
+        <div
+          v-for="day in data.history.days"
+          :key="day.date"
+          class="trend-cell"
+          :class="dayClass(day)"
+          :title="trendTitle(day)"
+        >
+          <span class="trend-dot"></span>
+          <span class="trend-day">{{ day.date.slice(5) }}</span>
+        </div>
+      </div>
+      <p class="field-hint">{{ t('health.trendHint') }}</p>
+    </section>
+
     <!-- 分节检查结果（就是 check_env 的输出） -->
     <section v-for="section in sections" :key="section.title" class="panel-card">
       <h3 class="panel-title">
@@ -185,6 +214,23 @@ export default {
       return t('health.overallOk');
     });
 
+    /** 快照格子的状态：没记录 = 灰（说明那天定时任务没跑） */
+    const dayClass = (day) => {
+      if (!day.recorded) return 'trend-cell--missing';
+      if (day.level === 'fail') return 'trend-cell--fail';
+      if (day.level === 'warn') return 'trend-cell--warn';
+      return 'trend-cell--ok';
+    };
+
+    /** 悬停提示：日期 + 等级 + 问题/提示数（有要点就附上） */
+    const trendTitle = (day) => {
+      if (!day.recorded) return t('health.trendMissing', { date: day.date });
+      const base = t('health.trendCell', {
+        date: day.date, problems: day.problem_count, warnings: day.warning_count,
+      });
+      return day.notes ? `${base}\n${day.notes}` : base;
+    };
+
     const iconOf = (level) => ({
       ok: 'fas fa-circle-check',
       warn: 'fas fa-triangle-exclamation',
@@ -197,6 +243,7 @@ export default {
 
     return {
       t, loading, data, sections, alertType, overallTitle, iconOf, countOf, load,
+      dayClass, trendTitle,
     };
   },
 };
@@ -284,6 +331,41 @@ export default {
 .check-item--fail {
   color: var(--el-color-danger);
 }
+
+.trend {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.trend-cell {
+  flex: 1 1 46px;
+  min-width: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 2px;
+  border-radius: 8px;
+  background: var(--ink-50);
+}
+
+.trend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink-300, #c9d5cd);
+}
+
+.trend-day {
+  font-size: 11px;
+  color: var(--ink-400, #9dada5);
+}
+
+.trend-cell--ok .trend-dot { background: var(--el-color-success); }
+.trend-cell--warn .trend-dot { background: var(--el-color-warning); }
+.trend-cell--fail .trend-dot { background: var(--el-color-danger); }
+.trend-cell--missing { background: repeating-linear-gradient(45deg, #f6f8f6, #f6f8f6 4px, #eef2ef 4px, #eef2ef 8px); }
 
 .field-hint {
   margin: 10px 0 0;

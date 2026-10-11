@@ -912,7 +912,10 @@ export default {
           if (status === 403) {
             errorMessage = t('post.noPermission');
           } else if (status === 404) {
-            errorMessage = t('post.postDeleted');
+            // 第 158 批：原来用的是 `post.postDeleted`，而那个键**被定义了两次**
+            // （这条 404 文案 + 保存成功的「帖子已删除」），后者静默覆盖前者 →
+            // 这里一直显示成"帖子已删除"。现改用独立的 `post.postNotFound`。
+            errorMessage = t('post.postNotFound');
           } else if (data && data.detail) {
             errorMessage = data.detail;
           } else if (data && data.message) {
