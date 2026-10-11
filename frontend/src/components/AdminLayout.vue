@@ -56,6 +56,9 @@ const navItems = [
   { to: '/admin/comments', icon: 'fas fa-comment-dots', labelKey: 'manage.comments',
     capability: authStore.CAP_CONTENT,
     modules: [authStore.MODULE_REVIEW, authStore.MODULE_FORUM] },
+  // 第 157 批：系统健康（**仅全权管理员** —— 会暴露服务器路径与部署细节）
+  { to: '/admin/health', icon: 'fas fa-heart-pulse', labelKey: 'manage.health',
+    capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },
   // 第 148 批：操作日志（**仅全权管理员** —— 显示"谁对谁做了什么"，编辑员不该看到）
   { to: '/admin/audit-logs', icon: 'fas fa-clipboard-list', labelKey: 'manage.auditLogs',
     capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },

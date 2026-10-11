@@ -454,6 +454,24 @@ const router = createRouter({
       }
     },
     {
+      // 第 157 批：管理端「系统健康」
+      // 把 manage.py check_env 的检查搬到界面上（依赖/迁移/模型文件/目录可写/
+      // 注销到期任务/备份新鲜度/生产开关），外加数据量概览。**仅全权管理员**：
+      // 它会暴露服务器路径与部署细节。
+      path: '/admin/health',
+      name: 'admin-health',
+      component: () => import('@/views/AdminHealthView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        fullAdminOnly: true,   // 与操作日志同档
+        adminArea: true,
+        title: '系统健康',
+        breadcrumb: ['管理', '系统健康']
+      }
+    },
+
+    {
       // 第 149 批：管理端「评论管理」
       // 帖子有「论坛管理」页，评论却一直没有控制台入口 —— 一波广告刷在十几条帖子的
       // 评论区里，只能一条条帖子点进去删。农户端的评论列表还挂在帖子下，没法跨帖子看。
