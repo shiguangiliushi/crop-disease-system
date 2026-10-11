@@ -92,6 +92,19 @@
       <div class="post-content" v-html="displayPostContent"></div>
 
       <div class="post-footer">
+        <!-- 第 168 批：病害标签（点进词条页看症状与防治建议；也可用于按病害聚合讨论） -->
+        <div v-if="post.pests && post.pests.length" class="pest-tags">
+          <router-link
+            v-for="tag in post.pests"
+            :key="tag.id"
+            class="pest-tag"
+            :to="`/pests/${tag.english_identifier}`"
+            :title="t('pestTag.openEntry')"
+          >
+            <i class="fas fa-virus"></i>{{ localizedField(tag, 'name') }}
+          </router-link>
+        </div>
+
         <div class="post-tags">
           <el-tag v-if="post.board" size="small" type="info" effect="plain">
             {{ localizedField(post.board, 'name') }}
@@ -1739,6 +1752,31 @@ export default {
 </script>
 
 <style scoped>
+/* 第 168 批：病害标签胶囊 */
+.pest-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.pest-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #eef7f2;
+  border: 1px solid var(--brand-300, #a9d6bf);
+  color: var(--brand-700, #276b4a);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.pest-tag:hover {
+  background: var(--brand-100, #dcefe5);
+}
+
 .load-more-comments {
   text-align: center;
   margin: 20px 0;

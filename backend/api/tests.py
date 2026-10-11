@@ -11621,3 +11621,124 @@ class PostDraftVisibilityTests(APITestCase):
         response = self.client_author.get(
             f'/api/forums/posts/?status=draft&author={self.author.id}')
         self.assertNotIn(self.draft.id, self._ids(response))
+
+
+class PostPestTagTests(APITestCase):
+    """
+    帖子的病害标签（第 168 批）
+
+    评审意见："不能给帖子打『苹果黑星病』这种标签，后期没法按病害聚合讨论"。
+    标签是 Post ↔ PestInfo 的 M2M，这里把读写两侧与筛选口径钉住：
+
+      · 建帖时带 pest_ids → 落库、并在读接口回出标签（含英文名与 english_identifier）；
+      · 改帖时可以增删标签（只发 pest_ids 就等于整体替换）；
+      · 不发 pest_ids 时**不动**已有标签（PATCH 改标题不该把标签清空）；
+      · 失效的词条 id（词条已被删）要被悄悄忽略，而不是 400 把用户卡住；
+      · ?pest=<id> 只回带这个标签的帖子 —— 这就是"按病害聚合讨论"。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.author = User.objects.create_user(
+            username='zz_tag_author', password='pw12345678', role='USER')
+        self.board = ForumBoard.objects.create(name='zz标签测试版块', order=951)
+        self.pest = PestInfo.objects.create(
+            name='苹果黑星病', name_en='Apple scab', crop_type='苹果', crop_type_en='Apple',
+            english_identifier='Apple___Apple_scab', symptoms='绒状霉层')
+        self.other_pest = PestInfo.objects.create(
+            name='番茄早疫病', name_en='Tomato early blight', crop_type='番茄', crop_type_en='Tomato',
+            english_identifier='Tomato___Early_blight', symptoms='同心轮纹')
+        self.client_author = APIClient()
+        self.client_author.force_authenticate(user=self.author)
+
+    def tearDown(self):
+        Post.objects.filter(title__startswith='zz标签').delete()
+        PestInfo.objects.filter(english_identifier__contains='zz').delete()
+        ForumBoard.objects.filter(name__startswith='zz标签测试版块').delete()
+
+    def _create(self, **extra):
+        payload = {
+            'board_id': self.board.id,
+            'title': 'zz标签：叶片上有黑斑',
+            'content': '<p>求解</p>',
+        }
+        payload.update(extra)
+        return self.client_author.post('/api/forums/posts/', payload, format='json')
+
+    def test_create_with_pest_ids(self):
+        """建帖带标签：落库 + 读接口回出标签信息"""
+        response = self._create(title='zz标签：苹果黑星病求助', pest_ids=[self.pest.id])
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        post = Post.objects.get(id=response.data['id'])
+        self.assertEqual(list(post.pests.values_list('id', flat=True)), [self.pest.id])
+
+        tags = response.data['pests']
+        self.assertEqual(len(tags), 1)
+        self.assertEqual(tags[0]['name'], '苹果黑星病')
+        self.assertEqual(tags[0]['name_en'], 'Apple scab')
+        self.assertEqual(tags[0]['english_identifier'], 'Apple___Apple_scab')
+
+    def test_multiple_tags(self):
+        """一个帖子可以挂多个病害（一株作物可能同时有几种问题）"""
+        response = self._create(title='zz标签：两种病一起', pest_ids=[self.pest.id, self.other_pest.id])
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        ids = {t['id'] for t in response.data['pests']}
+        self.assertEqual(ids, {self.pest.id, self.other_pest.id})
+
+    def test_update_replaces_tags(self):
+        """改帖时只发 pest_ids 就是整体替换（增删都靠它）"""
+        post_id = self._create(title='zz标签：先挂一个', pest_ids=[self.pest.id]).data['id']
+        response = self.client_author.patch(
+            f'/api/forums/posts/{post_id}/', {'pest_ids': [self.other_pest.id]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual({t['id'] for t in response.data['pests']}, {self.other_pest.id})
+
+        # 发空列表 = 清空标签
+        response = self.client_author.patch(
+            f'/api/forums/posts/{post_id}/', {'pest_ids': []}, format='json')
+        self.assertEqual(response.data['pests'], [])
+
+    def test_update_without_pest_ids_keeps_tags(self):
+        """
+        不发 pest_ids 时**不动**已有标签。
+
+        这条容易写崩：如果实现里把"没传"当成"清空"，
+        那么用户改一下标题就会把病害标签弄丢（而且没有任何提示）。
+        """
+        post_id = self._create(title='zz标签：保留标签', pest_ids=[self.pest.id]).data['id']
+        response = self.client_author.patch(
+            f'/api/forums/posts/{post_id}/', {'title': 'zz标签：只改标题'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual({t['id'] for t in response.data['pests']}, {self.pest.id})
+
+    def test_unknown_pest_id_is_ignored(self):
+        """失效的词条 id 要忽略，而不是 400 把用户卡住（词条被删后老编辑页还会带着它）"""
+        response = self._create(title='zz标签：失效 id', pest_ids=[self.pest.id, 99999999])
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual({t['id'] for t in response.data['pests']}, {self.pest.id})
+
+    def test_filter_by_pest(self):
+        """?pest=<id>：按病害聚合讨论，只回带该标签的帖子"""
+        tagged = self._create(title='zz标签：黑星病讨论', pest_ids=[self.pest.id]).data['id']
+        untagged = self._create(title='zz标签：没打标签').data['id']
+        other = self._create(title='zz标签：早疫病讨论', pest_ids=[self.other_pest.id]).data['id']
+
+        response = self.client_author.get(f'/api/forums/posts/?pest={self.pest.id}&page_size=50')
+        ids = [row['id'] for row in response.data['results']]
+        self.assertIn(tagged, ids)
+        self.assertNotIn(untagged, ids)
+        self.assertNotIn(other, ids)
+
+        # 无效参数不该 500，也不该过滤成空
+        response = self.client_author.get('/api/forums/posts/?pest=abc&page_size=50')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn(tagged, [row['id'] for row in response.data['results']])
+
+    def test_list_includes_tags(self):
+        """列表页也要带标签（版块页要显示小胶囊，不该逐帖再查一次）"""
+        self._create(title='zz标签：列表带标签', pest_ids=[self.pest.id])
+        response = self.client_author.get('/api/forums/posts/?page_size=50')
+        rows = [row for row in response.data['results'] if row['title'].startswith('zz标签：列表带标签')]
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]['pests'][0]['name'], '苹果黑星病')

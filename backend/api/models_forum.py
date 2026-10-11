@@ -98,6 +98,23 @@ class Post(TranslatableContentMixin):
     objects = models.Manager()  # 默认管理器：**含**已删除（后台/备份/清理等场景需要）
     active = ActivePostManager()  # 业务口径：只含未删除
 
+    # 第 168 批：病害标签（评审意见："不能给帖子打『苹果黑星病』这种标签，
+    # 后期没法按病害聚合讨论"）。
+    #
+    # 为什么指向 PestInfo 而不是存一串名字：
+    #   · 病害名有中英两份（`name` / `name_en`），存名字就得决定存哪个，
+    #     而且改名/翻译更新之后老帖子就"对不上"了；
+    #   · 指向词条才能做聚合（"这个病大家都遇到过什么"），也才能让词条页反向列出相关讨论。
+    # 用字符串引用模型：Post 在 models_forum.py，PestInfo 在 models.py，
+    # 直接 import 会绕成环形依赖（models.py 里也有引用论坛模型的地方）。
+    pests = models.ManyToManyField(
+        'api.PestInfo',
+        blank=True,
+        related_name='forum_posts',
+        verbose_name='相关病害',
+        help_text='这篇帖子讨论的病害（可多选，用于按病害聚合讨论）',
+    )
+
     class Meta:
         verbose_name = '帖子'  # 单数名称
         verbose_name_plural = verbose_name  # 复数名称（与单数相同）

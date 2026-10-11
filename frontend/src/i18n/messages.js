@@ -487,6 +487,16 @@ export const zhCN = {
   // 通用动作（新增/编辑/删除/批量导入）继续用 `wiki.*`，本页独有的放这里。
   // ==========================================================================
   // 第 166 批：我的草稿（自动保存存到服务端的草稿，此前没有入口能看到）
+  // 第 168 批：帖子病害标签（打了标签才能按病害聚合讨论）
+  pestTag: {
+    label: '相关病害（可选）',
+    placeholder: '搜索病害名，例如「苹果黑星病」',
+    hint: '选上病害，别人遇到同样的问题就能搜到你的帖子；标签也是病害百科里的同一个词条。',
+    empty: '没找到这个病害，可以直接发帖，症状写清楚即可。',
+    remove: '移除这个标签',
+    openEntry: '查看这个病害的症状与防治建议',
+  },
+
   drafts: {
     entry: '我的草稿',
     title: '我的草稿',
@@ -3325,6 +3335,16 @@ export const en = {
   },
   // Disease-wiki maintenance (admin console /admin/pests, batch 122)
   // Batch 166: my drafts (autosaved server-side drafts had no entry point before)
+  // Batch 168: pest tags on a post (tags are what makes discussion findable by disease)
+  pestTag: {
+    label: 'Related disease (optional)',
+    placeholder: 'Search a disease, e.g. “Apple scab”',
+    hint: 'Tagging the disease helps others with the same problem find your post — the tag is the same entry as in the disease encyclopedia.',
+    empty: 'No matching disease. You can still post — just describe the symptoms clearly.',
+    remove: 'Remove this tag',
+    openEntry: 'See symptoms and treatment for this disease',
+  },
+
   drafts: {
     entry: 'My drafts',
     title: 'My drafts',

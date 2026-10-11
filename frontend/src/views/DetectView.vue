@@ -524,10 +524,14 @@ const askInForum = (disease) => {
   const imageUrl = detectionResult.value?.annotatedImage
     || detectionResult.value?.originalImage
     || '';
+  // 第 168 批：把病害词条 id 也带过去 —— 发帖页据此预选成标签，
+  // "识别 → 求助"发出来的帖子天然归到该病害的讨论里（可按病害聚合）。
+  const pestId = disease.id || disease.pest_id || disease.pestId || '';
   router.push({
     name: 'new-post',
     query: {
       ask: name,
+      pest: pestId,
       image: imageUrl,
       symptoms: String(localizedField(disease, 'symptoms') || '').slice(0, 200),
     },

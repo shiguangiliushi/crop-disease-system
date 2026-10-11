@@ -80,6 +80,10 @@
           <p class="field-hint">{{ t('post.contentFormatHintRich') }}</p>
         </el-form-item>
 
+        <!-- 第 168 批：病害标签（打了标签才能按病害聚合讨论，评审意见） -->
+        <el-form-item :label="t('pestTag.label')">
+          <PestTagPicker v-model="form.pest_ids" :initial-tags="existingPestTags" />
+        </el-form-item>
         <!--
           第 86 批：英文版本（可选）
           ------------------------------------------------------------------
@@ -204,6 +208,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
 import { getForumBoards, getPost, updatePost, createPost, deletePost, uploadImage } from '@/api/forum';
 import { useUserStore } from '@/stores/user';
+import PestTagPicker from '@/components/PestTagPicker.vue';  // 第 168 批：病害标签选择器
 import RichTextEditor from '@/components/RichTextEditor.vue';  // 第 164 批：与发帖页共用同一个富文本编辑器
 import { sanitizeRichText } from '@/utils/richText';  // 提交前净化（纵深防御）
 import { debounce } from 'lodash-es';
@@ -236,7 +241,7 @@ const extractBase64Data = (base64) => {
 
 export default {
   name: 'EditPostView',
-  components: { RichTextEditor },
+  components: { RichTextEditor, PestTagPicker },
   setup() {
     const { t } = useI18n();  // 第 55 批：多语言
     const { localizedField } = useLocalized();
@@ -301,6 +306,8 @@ export default {
     const showDeleteDialog = ref(false);
     const deleting = ref(false);
     const postForm = ref(null);
+    /** 第 168 批：从帖子详情读到的病害标签（含名字，直接给选择器渲染胶囊） */
+    const existingPestTags = ref([]);
 
     /**
      * 表单校验规则（第 83 批接入 i18n）
@@ -443,8 +450,13 @@ export default {
             title_en: response.title_en || '',
             content_en: response.content_en || '',
             is_essence: response.is_essence || false,
-            is_pinned: response.is_pinned || false
+            is_pinned: response.is_pinned || false,
+            // 第 168 批：病害标签（读接口回的是 [{id, name, name_en, english_identifier, ...}]）
+            pest_ids: Array.isArray(response.pests) ? response.pests.map((tag) => tag.id) : []
           };
+
+          // 第 168 批：标签的原始数据（含名字）留着给选择器渲染胶囊，省一次词条查询
+          existingPestTags.value = Array.isArray(response.pests) ? response.pests : [];
 
           translationMeta.value = {
             hasTranslation: Boolean((response.title_en || '').trim() || (response.content_en || '').trim()),
@@ -647,6 +659,10 @@ export default {
         let response;
         // 编辑已有帖子 → 更新；新建帖子 → 第一次创建后记住 id，后续都走更新
         const existingId = route.params.id || draftPostId.value;
+        // 第 168 批：病害标签一起提交（空数组表示取消全部标签）
+        // ⚠️ 这一行原来被脚本插到了 updatePost(...) 的参数中间，虽然语法上还能跑，
+        //    但"给哪个对象赋值"完全看不出来 —— 挪到调用之前，一行一个意思。
+        postData.pest_ids = Array.isArray(form.value.pest_ids) ? form.value.pest_ids : [];
         if (existingId) {
           response = await updatePost(existingId, postData);
         } else {
@@ -992,6 +1008,7 @@ export default {
       // beforeImageUpload / uploadUrl / uploadHeaders / editor / previewContent / compiledMarkdown）——
       // 正文换成共用的 RichTextEditor 之后它们都被删了，留着会在运行时抛 ReferenceError。
       postForm,
+      existingPestTags,
       isModerator,
       previewPost,
       submitForm,

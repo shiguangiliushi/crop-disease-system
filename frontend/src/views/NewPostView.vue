@@ -61,6 +61,11 @@
               </p>
             </el-form-item>
 
+        <!-- 第 168 批：病害标签。打了标签才能按病害聚合讨论（评审意见） -->
+        <el-form-item :label="t('pestTag.label')">
+          <PestTagPicker v-model="form.pest_ids" />
+        </el-form-item>
+
             <el-form-item :label="t('post.titleLabel')" prop="title">
               <el-input
                 v-model="form.title"
@@ -223,6 +228,7 @@
  */
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import PestTagPicker from '@/components/PestTagPicker.vue';  // 第 168 批：病害标签选择器
 import { useAuthStore } from '@/stores/auth';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { getForumBoards, createPost } from '@/api/forum';
@@ -236,7 +242,7 @@ const DRAFT_KEY = 'post_draft_new';
 
 export default {
   name: 'NewPostView',
-  components: { RichTextEditor },
+  components: { RichTextEditor, PestTagPicker },
   setup() {
     const { t } = useI18n();  // 第 55 批：多语言
     const { localizedField } = useLocalized();
@@ -254,6 +260,8 @@ export default {
       content_en: '',
       is_essence: false,
       is_pinned: false,
+      // 第 168 批：病害标签（词条 id 数组；选择器组件见 PestTagPicker）
+      pest_ids: [],
     });
 
     /** 英文区块默认折叠（绝大多数人不需要填），点一下展开 */
@@ -466,6 +474,9 @@ export default {
           postData.is_pinned = !!form.value.is_pinned;
         }
 
+        // 第 168 批：病害标签（空数组也发 —— 编辑时「取消全部标签」要能生效）
+        postData.pest_ids = Array.isArray(form.value.pest_ids) ? form.value.pest_ids : [];
+
         const response = await createPost(postData);
         clearDraft();
         // 第 97 批：提交成功 → 清掉"脏"标记，否则紧接着的 router.push 会被
@@ -539,6 +550,9 @@ export default {
       if (form.value.title || form.value.content) return;
 
       const image = String(route.query.image || '').trim();
+      // 第 168 批：识别结果带过来的病害词条 id → 直接预选成标签
+      const pestId = Number.parseInt(route.query.pest, 10);
+      if (Number.isFinite(pestId) && pestId > 0) form.value.pest_ids = [pestId];
       const symptoms = String(route.query.symptoms || '').trim();
       form.value.title = t('post.askTitle', { disease: ask });
       form.value.content = [

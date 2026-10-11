@@ -264,7 +264,7 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         # 第 91 批：默认口径是**未删除**的帖子（Post.active）。
         # 删帖已改为软删除，若这里仍从 Post.objects 起手，删掉的帖子会继续出现在
         # 列表/详情里（只是标题变成"[已删除]"）—— 那等于"删了个寂寞"。
-        queryset = Post.active.select_related('author', 'board')  # 获取帖子并关联作者和版块
+        queryset = Post.active.select_related('author', 'board').prefetch_related('pests')  # 获取帖子并关联作者和版块（第 168 批：一并取出病害标签，避免逐帖再查）
 
         # 第 91 批：管理员/版主可用 ?only_deleted=true 审计"被删掉的帖子"。
         # 其余人即使传这个参数也拿不到（下面 user 分支里会被继续按可见性过滤掉）。
@@ -321,6 +321,18 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
                    or self.request.query_params.get('essence') or '').strip().lower()
         if essence in ('true', '1', 'yes'):
             queryset = queryset.filter(is_essence=True)
+
+        # 病害标签筛选（第 168 批）：?pest=<词条 id>
+        #
+        # 帖子能打「苹果黑星病」这样的标签之后，"按病害聚合讨论"就是一次普通筛选：
+        # 词条页/聚合入口拿 pest 参数一查，就是这个病的所有讨论。
+        # 标签是 M2M，这里按单个 id 过滤（每个帖子最多命中一次，不会出现重复行）。
+        pest_id = (self.request.query_params.get('pest') or '').strip()
+        if pest_id:
+            try:
+                queryset = queryset.filter(pests__id=int(pest_id))
+            except (TypeError, ValueError):
+                logger.warning('忽略无效的病害标签 id: %r', pest_id)
 
         # 可见性（第 24 批）：已发布对所有人可见；**作者本人**还能看到自己的草稿/隐藏帖，
         # 否则"保存草稿"之后这条帖子就再也找不到了（列表、详情都是 404）。

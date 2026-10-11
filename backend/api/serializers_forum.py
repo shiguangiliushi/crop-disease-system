@@ -1,7 +1,10 @@
 from rest_framework import serializers  # 导入DRF序列化器模块
 from django.contrib.auth import get_user_model  # 导入获取用户模型的函数
 from .models_forum import ForumBoard, Post, Comment, Like, Favorite  # 导入论坛相关模型
-from .models import CustomUser  # 导入自定义用户模型
+from .models import CustomUser, PestInfo  # 导入自定义用户模型 + 第 168 批：病害标签
+import logging
+
+logger = logging.getLogger(__name__)  # 第 168 批：失效标签 id 留一条 warning
 # 头像绝对地址的统一实现（第 23 批加的 CustomUser.avatar，这里复用以避免重复逻辑）
 from .serializers import _user_avatar_url
 
@@ -49,6 +52,20 @@ class ForumBoardSerializer(serializers.ModelSerializer):  # 定义版块序列�
         read_only_fields = ['created_at', 'post_count', 'today_posts', 'last_updated_date']  # 只读字段
 
 
+class PestTagSerializer(serializers.ModelSerializer):
+    """
+    帖子上的病害标签（只读，第 168 批）
+
+    只回渲染标签需要的字段：中文名 / 英文名 / 英文标识（用来链接到
+    `/pests/<english_identifier>` 词条页）。症状、防治建议整篇不进帖子接口 ——
+    标签就是一排小胶囊，点进去才看词条。
+    """
+
+    class Meta:
+        model = PestInfo
+        fields = ['id', 'name', 'name_en', 'english_identifier', 'crop_type', 'crop_type_en']
+
+
 class CommentSerializer(serializers.ModelSerializer):  # 定义评论序列化器
     """评论序列化器
 
@@ -80,7 +97,7 @@ class CommentSerializer(serializers.ModelSerializer):  # 定义评论序列化�
             'id', 'content', 'content_en', 'author', 'like_count', 'is_liked',
             'created_at', 'updated_at', 'is_deleted',
             'parent', 'reply_to', 'reply_count',
-            'translation_stale', 'translation_source'
+            'translation_stale', 'translation_source',
         ]
         read_only_fields = [  # 只读字段
             'author', 'like_count', 'created_at', 'updated_at', 'is_deleted',
@@ -149,6 +166,14 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
     is_liked = serializers.SerializerMethodField()  # 是否点赞字段为方法字段
     is_favorited = serializers.SerializerMethodField()  # 是否收藏字段为方法字段
     is_draft = serializers.BooleanField(write_only=True, required=False)  # 只写：草稿开关
+    # 第 168 批：病害标签（评审意见：帖子不能打「苹果黑星病」这种标签，就没法按病害聚合讨论）
+    #   · pest_ids（只写）：前端提交 [12, 34] 这样的词条 id；
+    #   · pests（只读）：回 [{id, name, name_en, english_identifier, ...}] 供渲染标签。
+    # 两个字段分开是刻意的：写只需要 id，读需要名字（否则前端还得再查一次）。
+    pest_ids = serializers.ListField(
+        child=serializers.IntegerField(), write_only=True, required=False,
+    )
+    pests = PestTagSerializer(many=True, read_only=True)
     # 第 85 批：译文状态（只读）—— 前端据此显示"未翻译 / 原文已更新"角标
     translation_stale = serializers.BooleanField(read_only=True)
     translation_source = serializers.CharField(read_only=True)
@@ -159,7 +184,8 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
             'id', 'title', 'title_en', 'content', 'content_en', 'author', 'board', 'board_id',
             'view_count', 'like_count', 'comment_count', 'is_liked', 'is_favorited',
             'is_pinned', 'is_essence', 'status', 'is_draft', 'created_at', 'updated_at',
-            'translation_stale', 'translation_source'
+            'translation_stale', 'translation_source',
+            'pests', 'pest_ids',   # 第 168 批：病害标签
         ]
         read_only_fields = [  # 只读字段
             'author', 'view_count', 'like_count', 'comment_count',
@@ -225,18 +251,57 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
         instance.mark_translated(instance.SOURCE_MANUAL)
         instance.save(update_fields=['translation_hash', 'translation_source', 'translated_at'])
 
+    def _pop_pest_ids(self, validated_data):
+        """
+        取出病害标签 id 列表（第 168 批）
+
+        `pest_ids` 是我们自己声明的 ListField，M2M 不能靠 ModelSerializer 自动落库，
+        所以在这里 pop 出来、保存实例后再 ``.set()``。
+
+        ⚠️ **只保留真实存在的词条 id**：词条被删掉后，老帖子的编辑页还会带着那个 id
+        提交上来 —— 直接 400 会把用户卡在"怎么改都保存不了"的死循环里，
+        悄悄丢掉失效标签更合理（同时留一条 warning 便于排查）。
+        """
+        ids = validated_data.pop('pest_ids', None)
+        if ids is None:
+            return None
+        cleaned = []
+        for raw in ids:
+            try:
+                cleaned.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        if not cleaned:
+            return []
+        existing = set(PestInfo.objects.filter(id__in=cleaned).values_list('id', flat=True))
+        missing = sorted(set(cleaned) - existing)
+        if missing:
+            logger.warning('帖子病害标签里有不存在的词条 id，已忽略: %s', missing)
+        ordered, seen = [], set()
+        for pid in cleaned:
+            if pid in existing and pid not in seen:
+                seen.add(pid)
+                ordered.append(pid)
+        return ordered
+
     def create(self, validated_data):
         self._apply_draft_flag(validated_data)
         self._strip_blank_english(validated_data)
+        pest_ids = self._pop_pest_ids(validated_data)
         instance = super().create(validated_data)
         self._mark_manual_translation(instance, validated_data)
+        if pest_ids is not None:
+            instance.pests.set(pest_ids)
         return instance
 
     def update(self, instance, validated_data):
         self._apply_draft_flag(validated_data)
         self._strip_blank_english(validated_data)
+        pest_ids = self._pop_pest_ids(validated_data)
         instance = super().update(instance, validated_data)
         self._mark_manual_translation(instance, validated_data)
+        if pest_ids is not None:
+            instance.pests.set(pest_ids)
         return instance
 
 
