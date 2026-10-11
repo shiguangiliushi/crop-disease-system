@@ -1,5 +1,35 @@
 <template>
   <div class="rich-text-editor">
+    <!--
+      第 164 批：工具栏从 Quill 的**满配**（代码块 / 字号 / 颜色 / 文字方向 / 视频 …）
+      收成农户真正用得上的四个：加粗、图片、列表、分隔线。
+      评审意见（用户转来）说得对：农户打开编辑器看到"行内代码""代码块"只会发懵。
+      这里用**自定义工具栏容器**（而不是默认的 snow 预设），按钮换成 Font Awesome 图标 + 中文标签。
+      ⚠️ 容器用 id 交给 Quill（`toolbar.container` 接受选择器）——
+      该 div 在模板里排在编辑器**之前**，Quill 初始化时它已经在 DOM 里了。
+    -->
+    <div :id="toolbarId" class="farmer-toolbar">
+      <!--
+        ⚠️ 第 164 批踩过的两个坑（都写在按钮的类名上了）：
+        1. **不要用 `ql-*` 类名**：Quill 的 snow 主题会接管这些按钮，
+           把里面的 Font Awesome 图标**替换成它自己的 svg**，中文标签也会被清掉
+           （第一版四个按钮里只剩"分隔线"有字，因为 Quill 不认识它）。
+        2. 按钮点击**自己处理**（调 Quill API），不依赖 toolbar 模块。
+      -->
+      <button type="button" class="rte-btn rte-btn-bold" :title="$t('editor.boldHint')" @click="formatBold">
+        <i class="fas fa-bold"></i><span>{{ $t('editor.bold') }}</span>
+      </button>
+      <button type="button" class="rte-btn rte-btn-image" :title="$t('editor.imageHint')" @click="pickImage">
+        <i class="fas fa-image"></i><span>{{ $t('editor.image') }}</span>
+      </button>
+      <button type="button" class="rte-btn rte-btn-list" :title="$t('editor.listHint')" @click="formatList">
+        <i class="fas fa-list-ul"></i><span>{{ $t('editor.list') }}</span>
+      </button>
+      <button type="button" class="rte-btn rte-btn-divider" :title="$t('editor.dividerHint')" @click="insertDivider">
+        <i class="fas fa-minus"></i><span>{{ $t('editor.divider') }}</span>
+      </button>
+    </div>
+
     <quill-editor
       ref="editor"
       v-model:content="content"
@@ -47,11 +77,28 @@
  *   · `'generic'` → `/api/upload/image/`（论坛发帖等通用场景）
  * 两者返回体一致（`{url, image_url, message}`），所以这里只按目标挑函数。
  */
-import { QuillEditor } from '@vueup/vue-quill'
+import { QuillEditor, Quill } from '@vueup/vue-quill'
 import '@vueup/vue-quill/dist/vue-quill.snow.css'
 // 第 141 批：两条上传通道（都是现成接口，这里只是把它们接上）
 import { uploadNewsImage } from '@/api/news'
 import { uploadImage as uploadGenericImage } from '@/api/forum'
+
+/**
+ * 第 164 批：给 Quill 注册一个「分隔线」格式。
+ *
+ * Quill 1.x 自带 bold / list / image，但**没有**分隔线 —— 而"分隔线"是农户最常用的排版手段
+ * （把一段话和另一段话隔开）。不注册的话，工具栏上点它插入的 `<hr>` 会被 Quill
+ * 在下一次解析内容时**当作未知标签丢掉**（用户会发现"分隔线过一会儿自己没了"）。
+ *
+ * ⚠️ 必须从 `@vueup/vue-quill` 取 `Quill`，**不能** `import Quill from 'quill'` ——
+ * 那个包用的是**自己打包的 Quill 实例**，在另一个实例上注册，编辑器会报
+ * `[Parchment] Unable to create divider blot`（第一版就是这样，分隔线插不进去）。
+ */
+const BlockEmbed = Quill.import('blots/block/embed')
+class DividerBlot extends BlockEmbed {}
+DividerBlot.blotName = 'divider'
+DividerBlot.tagName = 'hr'
+Quill.register(DividerBlot)
 
 export default {
   name: 'RichTextEditor',
@@ -73,33 +120,18 @@ export default {
     }
   },
   data() {
+    // 每个实例一个工具栏 id（同一页面可能挂多个编辑器）
+    const toolbarId = `rte-toolbar-${Math.random().toString(36).slice(2, 8)}`
     return {
+      toolbarId,
       content: this.modelValue,
       uploading: false,
       editorOptions: {
         modules: {
-          toolbar: {
-            container: [
-              ['bold', 'italic', 'underline', 'strike'],
-              ['blockquote', 'code-block'],
-              [{ 'header': 1 }, { 'header': 2 }],
-              [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-              [{ 'script': 'sub'}, { 'script': 'super' }],
-              [{ 'indent': '-1'}, { 'indent': '+1' }],
-              [{ 'direction': 'rtl' }],
-              [{ 'size': ['small', false, 'large', 'huge'] }],
-              [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
-              [{ 'color': [] }, { 'background': [] }],
-              [{ 'font': [] }],
-              [{ 'align': [] }],
-              ['clean'],
-              ['link', 'image', 'video']
-            ],
-            // 接管 image 按钮：默认行为会把图片转成 base64 塞进正文
-            handlers: {
-              image: () => this.pickImage()
-            }
-          }
+          // 第 164 批：**不要** Quill 自带的工具栏模块 ——
+          // 它会接管带 `ql-*` 类的按钮并替换里面的图标/文字（中文标签会被清空）。
+          // 工具栏是我们自己的 4 个按钮（见模板），点击直接调 Quill API。
+          toolbar: false
         },
         placeholder: this.$t('common.contentPlaceholder'),
         theme: 'snow'
@@ -159,6 +191,42 @@ export default {
 
     pickImage() {
       this.$refs.fileInput?.click()
+    },
+
+    /**
+     * 加粗选中的文字（第 164 批：自己调 Quill API，不再依赖 `ql-bold` 按钮绑定）
+     *
+     * 先 `focus()`：用户可能刚点过别处，选区已经不在编辑器里，
+     * 不聚焦的话 format 会作用到空位置（点了没反应）。
+     */
+    formatBold() {
+      const quill = this.getQuill()
+      if (!quill) return
+      quill.focus()
+      const current = quill.getFormat().bold
+      quill.format('bold', !current, 'user')
+      this.$emit('update:modelValue', quill.root.innerHTML)
+    },
+
+    /** 把选中的行变成项目符号列表（再点一次取消） */
+    formatList() {
+      const quill = this.getQuill()
+      if (!quill) return
+      quill.focus()
+      const current = quill.getFormat().list
+      quill.format('list', current === 'bullet' ? false : 'bullet', 'user')
+      this.$emit('update:modelValue', quill.root.innerHTML)
+    },
+
+    /** 在光标处插入一条分隔线（第 164 批；格式见文件顶部的 DividerBlot 注册） */
+    insertDivider() {
+      const quill = this.getQuill()
+      if (!quill) return
+      quill.focus()
+      const range = quill.getSelection(true) || { index: quill.getLength() }
+      quill.insertEmbed(range.index, 'divider', true, 'user')
+      quill.setSelection(range.index + 1, 0, 'silent')
+      this.$emit('update:modelValue', quill.root.innerHTML)
     },
 
     async onFilePicked(event) {
@@ -231,6 +299,14 @@ export default {
   background: #fff;
   border-radius: 4px;
   margin-bottom: 20px;
+  /*
+    第 164 批：占满整行。
+    父级 `.el-form-item__content` 在全局样式里是 **flex**，编辑器作为 flex 项
+    会被压成内容宽度（实测只有 340px，右边一大片空白）。
+    规则放在组件自己身上，三个使用方（编辑帖子 / 发帖 / 新闻管理）一起生效。
+  */
+  flex: 1 1 100%;
+  width: 100%;
 }
 
 /* 隐藏的文件选择器（由工具栏 image 按钮触发） */
@@ -241,6 +317,57 @@ export default {
 :deep(.ql-container) {
   min-height: 200px;
   font-size: 16px;
+}
+
+/* 第 164 批：自定义工具栏（农户四件套）——按钮带中文标签，不是一排看不懂的图标 */
+:deep(.farmer-toolbar) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid #dcdfe6;
+  border-bottom: none;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+  background: #fafcfb;
+}
+
+:deep(.farmer-toolbar .rte-btn) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink-700, #46564d);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+:deep(.farmer-toolbar .rte-btn:hover) {
+  border-color: var(--brand-400, #5fb088);
+  color: var(--brand-600, #2f7a55);
+}
+
+/* 选中态（Quill 会给激活的按钮加 .ql-active） */
+:deep(.farmer-toolbar .rte-btn.is-on) {
+  border-color: var(--brand-500, #3f9a6b);
+  background: #eef7f2;
+  color: var(--brand-600, #2f7a55);
+}
+
+/* 编辑器里的分隔线与图片 */
+:deep(.ql-editor hr) {
+  border: none;
+  border-top: 1px solid #dcdfe6;
+  margin: 14px 0;
+}
+
+:deep(.ql-editor img) {
+  max-width: 100%;
+  border-radius: 6px;
 }
 
 :deep(.ql-toolbar) {

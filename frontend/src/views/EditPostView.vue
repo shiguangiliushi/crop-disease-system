@@ -61,62 +61,23 @@
 
         <el-form-item :label="t('post.contentLabel')" prop="content">
           <!--
-            第 161 批：工具栏三处一起修
-            · 图标：el-icon-* 是 Element UI v2 的写法，Element Plus 2 没有图标字体 →
-              界面上一排**空方块**（NewPostView 里早就注释过这个坑，这里漏改了）；
-            · 插入内容：原来插的是 markdown 片段（**粗体**），而库里正文存的是 **HTML**
-              （详情页用 sanitizeRichText 渲染）—— 两边口径不一致，插进去的东西预览里也不对；
-              现在统一插 HTML 片段。
+            第 164 批：正文改用**共用**的富文本编辑器（RichTextEditor，基于 Quill）。
+            原来这里是 `el-input type=textarea` + 一排插 HTML 片段的按钮 ——
+            农户在那个框里看到的是 `<p>第一段…</p>` 这样的**源码**，
+            工具栏里还有"行内代码 / 代码块"这种写代码的人才用得上的东西
+            （评审意见说的"太技术化"就是它）。
+
+            发帖页与新闻管理页**一直在用**这个组件（插图会上传到服务器、
+            粘贴截图也走上传），这里统一过来，三处编辑体验一致。
+
+            页内原来的"预览"块随之删除：富文本编辑器本身就是所见即所得，
+            再放一个预览只是多开一条渲染路径（多一处会不同步的地方）。
           -->
-          <div class="editor-toolbar">
-            <el-button-group>
-              <el-button size="small" @click="insertText(t('post.htmlBold'))" :title="t('post.bold')">
-                <i class="fas fa-bold"></i>
-              </el-button>
-              <el-button size="small" @click="insertText(t('post.htmlItalic'))" :title="t('post.italic')">
-                <i class="fas fa-italic"></i>
-              </el-button>
-              <el-button size="small" @click="insertText(t('post.htmlInlineCode'))" :title="t('post.inlineCode')">
-                <i class="fas fa-code"></i>
-              </el-button>
-              <el-button size="small" @click="insertText(t('post.htmlCodeBlock'))" :title="t('post.codeBlock')">
-                <i class="fas fa-file-code"></i>
-              </el-button>
-              <el-button size="small" @click="insertText(t('post.htmlLink'))" :title="t('post.link')">
-                <i class="fas fa-link"></i>
-              </el-button>
-              <el-button size="small" @click="insertText(t('post.htmlImage'))" :title="t('post.image')">
-                <i class="fas fa-image"></i>
-              </el-button>
-              <el-upload
-                class="upload-demo"
-                :action="uploadUrl"
-                :on-success="handleImageUploadSuccess"
-                :on-error="handleImageUploadError"
-                :show-file-list="false"
-                :headers="uploadHeaders"
-                :before-upload="beforeImageUpload"
-              >
-                <el-button size="small" type="primary" :title="t('post.uploadImage')">
-                  <i class="fas fa-upload"></i> {{ t('post.uploadImage') }}
-                </el-button>
-              </el-upload>
-            </el-button-group>
-          </div>
-          <el-input
+          <RichTextEditor
             v-model="form.content"
-            id="content"
-            type="textarea"
-            :rows="12"
-            :placeholder="t('post.contentPlaceholder')"
-            resize="none"
-            ref="editor"
-          ></el-input>
-          <p class="field-hint">{{ t('post.contentFormatHint') }}</p>
-          <div class="preview" v-if="form.content">
-            <h4>{{ t('post.preview') }}</h4>
-            <div class="markdown-body" v-html="compiledMarkdown"></div>
-          </div>
+            upload-target="generic"
+          />
+          <p class="field-hint">{{ t('post.contentFormatHintRich') }}</p>
         </el-form-item>
 
         <!--
@@ -232,7 +193,8 @@ import { useRouter, useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
 import { getForumBoards, getPost, updatePost, createPost, deletePost, uploadImage } from '@/api/forum';
 import { useUserStore } from '@/stores/user';
-import { sanitizeRichText } from '@/utils/richText';  // 第 161 批：预览与详情页同一口径
+import RichTextEditor from '@/components/RichTextEditor.vue';  // 第 164 批：与发帖页共用同一个富文本编辑器
+import { sanitizeRichText } from '@/utils/richText';  // 提交前净化（纵深防御）
 import { debounce } from 'lodash-es';
 // 身份读写统一走适配器（sessionStorage 优先）
 import { getToken } from '@/utils/authStorage';
@@ -263,14 +225,14 @@ const extractBase64Data = (base64) => {
 
 export default {
   name: 'EditPostView',
+  components: { RichTextEditor },
   setup() {
     const { t } = useI18n();  // 第 55 批：多语言
     const { localizedField } = useLocalized();
     const router = useRouter();
     const route = useRoute();
     const userStore = useUserStore();
-    const editor = ref(null);
-    
+
     // 在 setup 函数中定义 currentRoute
     const currentRoute = route; // 用于模板中访问
 
@@ -328,6 +290,29 @@ export default {
     const showDeleteDialog = ref(false);
     const deleting = ref(false);
     const postForm = ref(null);
+
+    /**
+     * 表单校验规则（第 83 批接入 i18n）
+     *
+     * ⚠️ 第 164 批这里被我误删过一次：清理旧工具栏代码的脚本用"缩进 + 首个同级 `};`"
+     *    定位函数结束位置，结果把这个对象整体的 `};` 当成了某个函数的结尾，
+     *    连带把 `rules` 一起吃掉 —— 页面挂在 `rules is not defined`。
+     *    教训：批量删代码后要**对比一下前后的定义清单**（我就是这么发现少了 rules 的），
+     *    光看"编译通过"不够（模板里的变量在运行时才解析）。
+     */
+    const rules = {
+      board: [
+        { required: true, message: t('forum.boardRequired'), trigger: 'change' }
+      ],
+      title: [
+        { required: true, message: t('forum.titleRequired'), trigger: 'blur' },
+        { min: 5, max: 100, message: t('forum.titleLength'), trigger: 'blur' }
+      ],
+      content: [
+        { required: true, message: t('forum.contentRequired'), trigger: 'blur' },
+        { min: 10, message: t('forum.contentMin'), trigger: 'blur' }
+      ]
+    };
     const autoSaveTimer = ref(null);
     const lastSaved = ref(null);
     const isDirty = ref(false);
@@ -349,90 +334,15 @@ export default {
     // 第 161 批：预览改用 sanitizeRichText —— 与详情页 / 内容审核页**同一口径**。
     // 原来这里用 marked 把正文当 markdown 渲染，而库里存的是 HTML（<p>…</p>），
     // 于是预览里是一堆转义后的标签，和发布之后看到的样子**不一致**。
-    const previewContent = computed(() => sanitizeRichText(form.value.content || ''));
     
-    const { proxy } = getCurrentInstance();
-    
-    // 图片上传相关
-    // 修复：原地址是 `${VITE_API_BASE_URL}/api/upload/image/`，而 VITE_API_BASE_URL 已含 /api，
-    // 会拼成 /api/api/upload/image/；Token 也取错了键（项目存的是 auth_token）。
-    const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
-    const uploadUrl = ref(`${apiBase}/upload/image/`);
-      
-    const getCookie = (name) => {
-      const value = `; ${document.cookie}`;
-      const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) return parts.pop().split(';').shift();
-      return '';
-    };
-    
-    const uploadHeaders = computed(() => ({
-      'Authorization': `Token ${getToken() || ''}`,
-      'X-CSRFToken': getCookie('csrftoken')
-    }));
     
     // 在编辑器中插入文本
-    const insertText = (text) => {
-      if (editor.value) {
-        const textarea = editor.value.$el.querySelector('textarea');
-        if (textarea) {
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
-          const content = form.value.content;
-          
-          // 在光标位置插入文本
-          form.value.content = content.substring(0, start) + text + content.substring(end);
-          
-          // 更新光标位置
-          nextTick(() => {
-            const newPos = start + text.length;
-            textarea.setSelectionRange(newPos, newPos);
-            textarea.focus();
-          });
-        } else {
-          // 如果找不到textarea，直接追加到内容末尾
-          form.value.content += text;
-        }
-      } else {
-        // 如果编辑器未初始化，直接追加到内容
-        form.value.content += text;
-      }
-    };
     
     // 图片上传成功处理
-    const handleImageUploadSuccess = (response, file) => {
-      proxy.$message.success(t('post.uploadImageOk'));
-      // 第 161 批：插入 HTML 图片标签（正文是 HTML；原来插的 markdown 语法不会被渲染）
-      if (response && response.url) {
-        insertText(`<img src="${response.url}" alt="${file.name}" />`);
-      }
-    };
     
     // 图片上传失败处理
-    const handleImageUploadError = (error, file) => {
-      console.error('图片上传失败:', error);
-      let errorMessage = t('post.uploadImageFailed');
-      if (error.response && error.response.data) {
-        errorMessage = error.response.data.detail || error.response.data.message || errorMessage;
-      }
-      proxy.$message.error(errorMessage);
-    };
     
     // 图片上传前验证
-    const beforeImageUpload = (file) => {
-      const isImage = file.type.startsWith('image/');
-      const isLt5M = file.size / 1024 / 1024 < 5;
-
-      if (!isImage) {
-        proxy.$message.error(t('msg.imageOnly'));
-        return false;
-      }
-      if (!isLt5M) {
-        proxy.$message.error(t('msg.imageTooLarge5'));
-        return false;
-      }
-      return true;
-    };
     
     const wordCount = computed(() => {
       return form.value.content ? form.value.content.trim().length : 0;
@@ -459,23 +369,7 @@ export default {
       return userStore.user?.is_staff || false;
     });
     
-    // 第 161 批：与 previewContent 同一个口径（详情页怎么渲染，预览就怎么渲染）
-    const compiledMarkdown = computed(() => sanitizeRichText(form.value.content || ''));
-    
-    const rules = {
-      // 第 83 批：校验文案接入 i18n
-      board: [
-        { required: true, message: t('forum.boardRequired'), trigger: 'change' }
-      ],
-      title: [
-        { required: true, message: t('forum.titleRequired'), trigger: 'blur' },
-        { min: 5, max: 100, message: t('forum.titleLength'), trigger: 'blur' }
-      ],
-      content: [
-        { required: true, message: t('forum.contentRequired'), trigger: 'blur' },
-        { min: 10, message: t('forum.contentMin'), trigger: 'blur' }
-      ]
-    };
+    // 第 164 批：编辑器换成共用组件后，这处只用于提交前净化（纵深防御；渲染侧也会净化）
     
     // 检查用户是否有编辑权限
     const checkEditPermission = (post) => {
@@ -569,52 +463,6 @@ export default {
       }
       }
     
-    const handleImageUpload = async (file) => {
-      const loadingInstance = ElLoading.service({
-        lock: true,
-        text: t('post.imageUploading'),
-        background: 'rgba(0, 0, 0, 0.7)'
-      });
-      
-      try {
-        // 检查图片大小（限制5MB）
-        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
-        if (file.size > MAX_SIZE) {
-          throw new Error(t('msg.imageTooLarge5'));
-        }
-        
-        // 检查图片类型
-        const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-        if (!validTypes.includes(file.raw.type)) {
-          throw new Error(t('post.unsupportedImage'));
-        }
-        
-        // 创建FormData
-        const formData = new FormData();
-        formData.append('image', file.raw);
-        
-        // 调用上传API
-        const response = await uploadImage(formData);
-        
-        if (!response || !response.url) {
-          throw new Error(t('post.uploadFailed'));
-        }
-        
-        // 第 163 批：插入 HTML 图片标签。
-        // 原来这里插的是 Markdown `![名字](url)` —— 正文口径是 HTML，
-        // 插 markdown 的后果是"插了图，预览和详情页都看不到"（用户会以为图片丢了）。
-        insertText(`<img src="${response.url}" alt="${file.name || t('post.imageFallback')}" />`);
-        
-        ElMessage.success(t('post.uploadImageOk'));
-        return response.url;
-      } catch (error) {
-        console.error('图片上传失败:', error);
-        ElMessage.error(t('post.uploadImageFailedDetail', { detail: error.message || t('msg.unknownError') }));
-        throw error;
-      } finally {
-        loadingInstance.close();
-      }
-    };
     
     // 加载草稿
     const loadDraft = () => {
@@ -1125,17 +973,11 @@ export default {
       togglePreview,  // 添加切换预览方法
       showDeleteDialog,
       deleting,
-      previewContent,
-      uploadUrl,
-      uploadHeaders,
-      handleImageUploadSuccess,
-      handleImageUploadError,
-      beforeImageUpload,
-      insertText,
-      editor,
+      // 第 164 批：这里原来还导出着旧工具栏那一套（insertText / handleImageUpload* /
+      // beforeImageUpload / uploadUrl / uploadHeaders / editor / previewContent / compiledMarkdown）——
+      // 正文换成共用的 RichTextEditor 之后它们都被删了，留着会在运行时抛 ReferenceError。
       postForm,
       isModerator,
-      handleImageUpload,
       previewPost,
       submitForm,
       deletePost: deleteCurrentPost,
@@ -1146,8 +988,7 @@ export default {
       saveStatus,
       currentRoute,
       isDev,
-      wordCount,
-      compiledMarkdown
+      wordCount
     };
   }
 };
@@ -1220,12 +1061,31 @@ h2 {
   margin-bottom: 4px;
 }
 
+/*
+  第 164 批：正文区域的两处修正
+  ------------------------------------------------------------------
+  1. 宽度：`.el-form-item__content` 在全局样式里是 **flex**，
+     编辑器作为 flex 项会被压成内容宽度（实测只有 340px，右边一大片空白 ——
+     这是原来"编辑器 + 右侧预览"两栏布局留下的；预览删掉之后要把宽度放开）。
+  2. 字体：这里原来给 `.el-textarea__inner` 写死了
+     `'Monaco','Menlo','Ubuntu Mono','Consolas',…,monospace` ——
+     于是农户对着一个**代码字体**的输入框写"叶片上有斑点"，像在写程序。
+     评审意见点名的就是它（我上一次核对时把 grep 结果截断了，误判成"不属实"，特此更正）。
+     现在正文走富文本编辑器（用自己的正文字体），这块只影响"英文版本"那个可选的文本框，
+     一并改成继承正文字体。
+*/
+.el-form-item__content > .rich-text-editor,
+.el-form-item__content > .field-hint {
+  flex: 1 1 100%;
+  width: 100%;
+}
+
 .el-textarea__inner {
-  min-height: 300px !important;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
-  line-height: 1.6;
+  min-height: 160px !important;
+  font-family: inherit;
+  line-height: 1.7;
   font-size: 14px;
-  padding: 15px;
+  padding: 12px 14px;
   resize: vertical;
 }
 

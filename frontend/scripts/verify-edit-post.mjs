@@ -112,41 +112,60 @@ await page.keyboard.press('Escape');
 await page.waitForTimeout(400);
 
 // ---------------------------------------------------------------------------
-// ② 工具栏：6 个按钮，每个都有真实的 Font Awesome 图标（不再是空方块）
+// ② 工具栏：农户四件套（加粗 / 图片 / 列表 / 分隔线），且**没有**代码块这种技术按钮
 // ---------------------------------------------------------------------------
-const toolbarIcons = await page.locator('.editor-toolbar .fas').count();
-check('工具栏 6 个按钮都有图标', toolbarIcons >= 6, `${toolbarIcons} 个 .fas 图标`);
-const legacyIcons = await page.locator('.editor-toolbar [class*="el-icon-"]').count();
-check('工具栏里没有残留的 el-icon-*（那种会显示成空方块）', legacyIcons === 0, `${legacyIcons} 个`);
+const toolbarButtons = await page.locator('.farmer-toolbar .rte-btn').allInnerTexts();
+const toolbarText = toolbarButtons.join(' | ');
+check('工具栏是农户四件套', /加粗/.test(toolbarText) && /图片/.test(toolbarText)
+  && /列表/.test(toolbarText) && /分隔线/.test(toolbarText), toolbarText);
+check('工具栏没有「代码块 / 行内代码」这类技术按钮',
+  !/代码/.test(toolbarText), toolbarText);
+check('工具栏按钮数就是 4 个', toolbarButtons.length === 4, `${toolbarButtons.length} 个`);
 
-const boldHtml = await page.evaluate(() => {
-  const style = getComputedStyle(document.querySelector('.editor-toolbar .fas.fa-bold'), '::before');
-  return style.content;
-});
-check('图标字体真的渲染出了字形（不是空）',
-  Boolean(boldHtml) && boldHtml !== 'none' && boldHtml !== '""', `content=${boldHtml}`);
+const iconCount = await page.locator('.farmer-toolbar .fas').count();
+check('四个按钮都带图标（Font Awesome）', iconCount === 4, `${iconCount} 个图标`);
 
 // ---------------------------------------------------------------------------
+// ②b 正文框是**所见即所得**：显示的是排版后的效果，不是 <p> 源码
+// ---------------------------------------------------------------------------
+const editorRoot = page.locator('.ql-editor').first();
+check('正文用的是富文本编辑器（.ql-editor）', await editorRoot.count() > 0, '');
+
+const editorHtml = await editorRoot.innerHTML();
+check('编辑区里是真实的段落元素（不是转义后的源码）',
+  /<p>/.test(editorHtml) && !/&lt;p&gt;/.test(editorHtml), editorHtml.slice(0, 80));
+check('编辑区里没有裸露的 HTML 标签文本',
+  !editorHtml.includes('&lt;'), '');
+
+const editorFont = await editorRoot.evaluate((el) => getComputedStyle(el).fontFamily);
+check('正文用普通正文字体（不是等宽代码字体）',
+  !/mono/i.test(editorFont), editorFont.slice(0, 60));
+
 // ③ 预览：必须按 HTML 渲染（与详情页同口径），而不是把标签当字面量
 // ---------------------------------------------------------------------------
-const previewHtml = await page.locator('.preview .markdown-body').first().innerHTML().catch(() => '');
-check('预览把正文渲染成了 HTML 元素', /<p>/i.test(previewHtml), previewHtml.slice(0, 70));
-check('预览里没有转义后的标签字面量', !/&lt;p&gt;/i.test(previewHtml), '');
 
 // ---------------------------------------------------------------------------
-// ④ 工具栏插入的是 HTML 片段
+// ④ 点「加粗」真的把选中的字变粗（所见即所得，不是插源码）
 // ---------------------------------------------------------------------------
-const contentBefore = await page.locator('#content').inputValue();
-await page.locator('.editor-toolbar .fas.fa-bold').click();
-await page.waitForTimeout(400);
-const contentAfter = await page.locator('#content').inputValue();
-check('点「加粗」插入的是 HTML 片段（不是 markdown 的 **粗体**）',
-  contentAfter !== contentBefore && contentAfter.includes('<b>') && !contentAfter.includes('**粗体**'),
-  contentAfter.slice(-30));
+await editorRoot.click();
+await page.keyboard.press('Control+A');
+await page.waitForTimeout(300);
+await page.locator('.farmer-toolbar .rte-btn-bold').click();
+await page.waitForTimeout(600);
+const afterBold = await editorRoot.innerHTML();
+check('点「加粗」后编辑区出现了加粗标签',
+  /<(strong|b)>/i.test(afterBold), afterBold.slice(0, 90));
 
-// ---------------------------------------------------------------------------
+// ④b 分隔线按钮：插进去的 <hr> 不会被 Quill 丢掉（这是注册 DividerBlot 的原因）
+await page.keyboard.press('End');
+await page.locator('.farmer-toolbar .rte-btn-divider').click();
+await page.waitForTimeout(600);
+const afterDivider = await editorRoot.innerHTML();
+check('点「分隔线」插入了 <hr>', /<hr/i.test(afterDivider), afterDivider.slice(-60));
+
 // ⑤ 保存后详情页正常渲染（且能看见刚才插入的加粗）
 // ---------------------------------------------------------------------------
+await page.waitForTimeout(500);
 await page.getByRole('button', { name: /保存/ }).first().click();
 await page.waitForTimeout(3000);
 const savedOk = await page.evaluate(() => !document.querySelector('.el-message--error'));
@@ -157,7 +176,7 @@ await page.waitForSelector('.post-content', { timeout: 30_000 });
 await page.waitForTimeout(1500);
 const detailHtml = await page.locator('.post-content').innerHTML();
 check('详情页渲染了正文段落', /<p>/i.test(detailHtml), detailHtml.slice(0, 60));
-check('详情页能看到刚插入的加粗内容', /<b>/i.test(detailHtml), '');
+check('详情页能看到刚插入的加粗内容', /<(strong|b)>/i.test(detailHtml), '');
 
 // ---------------------------------------------------------------------------
 // ⑥ 第 163 批：老正文里的 **Markdown 图片**也要能显示出来

@@ -491,6 +491,15 @@ export const zhCN = {
     uploadNoUrl: '上传接口没有返回图片地址',
     uploading: '图片上传中…',
     uploadTooLarge: '图片太大了（上限 5 MB）',
+    // 第 164 批：工具栏改成农户真正用得上的四个（加粗 / 图片 / 列表 / 分隔线）
+    bold: '加粗',
+    boldHint: '把选中的文字加粗（也可以按 Ctrl+B）',
+    image: '图片',
+    imageHint: '插入一张照片（会自动上传，不用自己处理链接）',
+    list: '列表',
+    listHint: '把选中的几行变成一条条列出来',
+    divider: '分隔线',
+    dividerHint: '在光标处插一条横线，用来把前后两段分开',
   },
   commentAdmin: {
     title: '评论管理',
@@ -2235,6 +2244,7 @@ export const zhCN = {
     htmlLink: '<a href="URL">链接文字</a>',
     htmlImage: '<img src="图片URL" alt="图片描述" />',
     contentFormatHint: '正文支持 HTML（例如 &lt;p&gt;段落&lt;/p&gt;、&lt;b&gt;加粗&lt;/b&gt;）；下方预览与发布后的效果一致。',
+    contentFormatHintRich: '正文就像写微信一样：选中文字可以加粗，点「图片」直接插照片，写清作物与症状，大家才好帮你判断。',
     contentPlaceholder: '请输入内容（支持 Markdown 语法）',
     preview: '预览：',
     updatePost: '更新帖子',
@@ -3281,6 +3291,15 @@ export const en = {
   // Disease-wiki maintenance (admin console /admin/pests, batch 122)
   editor: {
     uploadOk: 'Image uploaded',
+    // Batch 164: the toolbar is down to what a farmer actually uses (bold / image / list / divider)
+    bold: 'Bold',
+    boldHint: 'Make the selected text bold (Ctrl+B works too)',
+    image: 'Image',
+    imageHint: 'Insert a photo (uploaded for you — no links to handle)',
+    list: 'List',
+    listHint: 'Turn the selected lines into a bullet list',
+    divider: 'Divider',
+    dividerHint: 'Insert a horizontal line at the cursor to separate paragraphs',
     uploadFailed: 'Image upload failed: {detail}',
     uploadNoUrl: 'The upload endpoint returned no image URL',
     uploading: 'Uploading image…',
@@ -5009,6 +5028,7 @@ export const en = {
     htmlLink: '<a href="URL">link text</a>',
     htmlImage: '<img src="image URL" alt="description" />',
     contentFormatHint: 'The body accepts HTML (e.g. &lt;p&gt;paragraph&lt;/p&gt;, &lt;b&gt;bold&lt;/b&gt;); the preview below matches what readers will see.',
+    contentFormatHintRich: 'Writing works like a chat message: select text to bold it, use “Image” to add a photo. Mention the crop and the symptoms so others can help.',
     contentPlaceholder: 'Content (Markdown supported)',
     preview: 'Preview:',
     updatePost: 'Update post',
