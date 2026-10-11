@@ -69,6 +69,8 @@ AdminUserStatusView = import_view('api.views_user', 'AdminUserStatusView')
 # 第 146 批：管理操作日志（只读，仅全权管理员）
 AdminAuditLogListView = import_view('api.views_audit', 'AdminAuditLogListView')
 AdminAuditLogActionsView = import_view('api.views_audit', 'AdminAuditLogActionsView')
+# 第 157 批：系统健康（复用 check_env 的检查，仅全权管理员）
+AdminHealthView = import_view('api.views_system_health', 'AdminHealthView')
 # 第 149 批：控制台的评论管理（全局列表 + 软删/硬删/批量软删）
 AdminCommentListView = import_view('api.views_comments_admin', 'AdminCommentListView')
 AdminCommentSoftDeleteView = import_view('api.views_comments_admin', 'AdminCommentSoftDeleteView')
@@ -350,6 +352,8 @@ api_urlpatterns = [
     path('admin/comments/<int:pk>/', AdminCommentHardDeleteView.as_view(),
          name='admin-comment-hard-delete'),
     # 第 146 批：管理操作日志（只读，仅全权管理员）
+    # 第 157 批：系统健康（与操作日志同档：会暴露部署细节，仅全权管理员）
+    path('admin/health/', AdminHealthView.as_view(), name='admin-health'),
     path('admin/audit-logs/', AdminAuditLogListView.as_view(), name='admin-audit-logs'),
     path('admin/audit-logs/actions/', AdminAuditLogActionsView.as_view(),
          name='admin-audit-log-actions'),

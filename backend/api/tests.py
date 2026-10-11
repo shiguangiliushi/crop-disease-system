@@ -11091,3 +11091,93 @@ class BackupDrillCommandTests(TestCase):
         """
         field = Post._meta.get_field('board')
         self.assertFalse(field.null, 'board 变成可空的话，上面那条护栏要跟着改')
+
+
+class AdminHealthViewTests(APITestCase):
+    """
+    管理端「系统健康」（第 157 批）
+
+    它**不重写检查** —— 直接调 `check_env --json`（唯一实现），只补数据量概览与媒体体积。
+    所以这里既不测"依赖装的版本对不对"（那是 check_env 的测试），
+    也不去构造"备份过期"之类场景（那要改全局设置），只钉三件事：
+      · 权限：仅全权管理员（编辑员能审核内容，但不该看服务器路径与部署细节）；
+      · 形状：分节结果 + 数据量 + 运行时信息都在；
+      · 复用：`--json` 的输出能被 `json.loads` 直接解析（第一版 stdout 里混了人读报告，
+        监控侧解析会失败 —— 这条测试就是那次修复的回归）。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        from .models import EditorModuleGrant
+
+        self.superuser = User.objects.create_superuser(
+            username='zz_health_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_health_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review',
+                                         granted_by=self.superuser)
+        self.plain = User.objects.create_user(
+            username='zz_health_plain', password='pw12345678', role='USER',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    def test_requires_full_admin(self):
+        self.assertEqual(self.client_editor.get('/api/admin/health/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client_plain.get('/api/admin/health/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client_super.get('/api/admin/health/').status_code,
+                         status.HTTP_200_OK)
+
+    def test_payload_shape(self):
+        response = self.client_super.get('/api/admin/health/')
+        data = response.data
+        self.assertIn('ok', data)
+        self.assertIn(data['level'], ('ok', 'warn', 'fail'))
+        self.assertTrue(data['sections'], '至少要有一节检查结果')
+        first = data['sections'][0]
+        self.assertIn('title', first)
+        self.assertTrue(first['items'], '每节都要有条目')
+        for item in first['items']:
+            self.assertIn(item['level'], ('ok', 'warn', 'fail'))
+            self.assertTrue(item['text'])
+
+        for key in ('users', 'posts', 'comments', 'detections', 'feedback'):
+            self.assertIn(key, data['counts'])
+        self.assertIn('files', data['media'])
+        for key in ('debug', 'python', 'django', 'database', 'cache', 'backup_root'):
+            self.assertIn(key, data['runtime'])
+
+    def test_counts_reflect_database(self):
+        """数据量概览要真的来自库（不是写死的）"""
+        before = self.client_super.get('/api/admin/health/').data['counts']['users']
+        get_user_model().objects.create_user(
+            username='zz_health_extra', password='pw12345678', role='USER')
+        after = self.client_super.get('/api/admin/health/').data['counts']['users']
+        self.assertEqual(after, before + 1)
+
+    def test_check_env_json_is_pure_json(self):
+        """
+        回归：`check_env --json` 的 stdout **必须能直接 json.loads**
+
+        第一版忘了静默人读输出，于是 stdout 前面还有一整份报告 ——
+        监控侧（以及这个接口）解析必然失败。
+        """
+        import json
+        from io import StringIO as _StringIO
+
+        buffer = _StringIO()
+        call_command('check_env', as_json=True, stdout=buffer)
+        raw = buffer.getvalue().strip()
+        self.assertTrue(raw.startswith('{'), f'stdout 不是纯 JSON：{raw[:80]!r}')
+        payload = json.loads(raw)               # 不抛异常即通过
+        self.assertIn('results', payload)
+        self.assertTrue(payload['results'])

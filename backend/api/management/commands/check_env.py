@@ -89,11 +89,16 @@ class Command(BaseCommand):
         parser.add_argument('--requirements', default='requirements.txt',
                             help='要对照的 requirements 文件（默认 requirements.txt）')
         parser.add_argument('--quiet', action='store_true', help='只输出问题')
+        # 第 157 批：`--json` 让**管理端的「系统健康」页**直接复用这套检查，
+        # 而不是在接口里再写一遍（"同一个检查写两份"正是本项目反复强调要避免的）。
+        parser.add_argument('--json', dest='as_json', action='store_true',
+                            help='以 JSON 输出（给接口/监控用；不打印人能读的报告）')
 
     # ------------------------------------------------------------------
     def handle(self, *args, **options):
         strict = options['strict']
         quiet = options['quiet']
+        as_json = options.get('as_json', False)
         base = Path(settings.BASE_DIR)
         req_path = Path(options['requirements'])
         if not req_path.is_absolute():
@@ -101,6 +106,11 @@ class Command(BaseCommand):
 
         self.problems: list[str] = []
         self.warnings: list[str] = []
+        #: 结构化结果（每一条 = 一个检查项），给 --json 与管理端健康页用
+        self.results: list[dict] = []
+        #: `--json` 模式下**只**输出 JSON —— 否则 stdout 里前面还混着人读报告，
+        #: 监控侧 `json.loads(stdout)` 直接失败（第一版就是这样）
+        self._silent = as_json
 
         self._section('一、依赖包（对照 %s）' % req_path.name, quiet)
         if not req_path.exists():
@@ -117,6 +127,18 @@ class Command(BaseCommand):
 
         self._section('四、生产模式开关（仅提示）', quiet)
         self._check_production_switches(quiet)
+
+        if as_json:
+            import json as _json
+            self.stdout.write(_json.dumps({
+                'ok': not self.problems,
+                'problems': self.problems,
+                'warnings': self.warnings,
+                'results': self.results,
+            }, ensure_ascii=False))
+            if strict and self.problems:
+                raise SystemExit(1)
+            return
 
         # ---------------- 汇总 ----------------
         self.stdout.write('')
@@ -135,19 +157,32 @@ class Command(BaseCommand):
             raise SystemExit(1)
 
     # ------------------------------------------------------------------
+    def _record(self, level, text, section=None):
+        """记一条结构化结果（第 157 批）—— 让 `--json` 与健康页拿到的是数据而不是文本"""
+        self.results.append({
+            'level': level,                 # ok / warn / fail
+            'text': text,
+            'section': section or getattr(self, '_current_section', ''),
+        })
+
     def _section(self, title, quiet):
-        if not quiet:
+        self._current_section = title
+        if not quiet and not self._silent:
             self.stdout.write(self.style.MIGRATE_HEADING(f'\n{title}'))
 
     def _ok(self, text, quiet):
-        if not quiet:
+        self._record('ok', text)
+        if not quiet and not self._silent:
             self.stdout.write(f'  ✓ {text}')
 
     def _bad(self, text):
-        self.stdout.write(self.style.ERROR(f'  ✗ {text}'))
+        self._record('fail', text)
+        if not self._silent:
+            self.stdout.write(self.style.ERROR(f'  ✗ {text}'))
 
     def _warn(self, text, quiet=False):
-        if not quiet:
+        self._record('warn', text)
+        if not quiet and not self._silent:
             self.stdout.write(self.style.WARNING(f'  ⚠ {text}'))
 
     # ------------------------------------------------------------------
