@@ -109,6 +109,7 @@ class AdminHealthView(APIView):
             'sections': sections,
             'counts': _counts(),
             'media': _media_size(),
+            'history': _history(),
             'runtime': {
                 'debug': bool(settings.DEBUG),
                 'python': f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}',
@@ -119,3 +120,48 @@ class AdminHealthView(APIView):
                 'backup_root': str(bu.backup_root()),
             },
         })
+
+
+#: 趋势取最近多少天
+HISTORY_DAYS = 14
+
+
+def _history():
+    """
+    最近 N 天的健康快照（第 158 批）
+
+    为什么要趋势：环境类故障是**安静**的（定时任务挂了、备份没跑成），
+    "最新备份是 3 天前"和"这 14 天一直在跑"是两种完全不同的安心程度。
+    快照由 `manage.py health_snapshot` 每天记一条（建议挂定时任务）。
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .models_health import HealthSnapshot
+
+    since = timezone.localdate() - timedelta(days=HISTORY_DAYS - 1)
+    rows = list(HealthSnapshot.objects.filter(snapshot_date__gte=since))
+    by_date = {row.snapshot_date: row for row in rows}
+
+    # 补齐"没有快照的那几天" —— 缺的那天本身就是信息（说明定时任务没跑）
+    days = []
+    for offset in range(HISTORY_DAYS):
+        day = since + timedelta(days=offset)
+        row = by_date.get(day)
+        days.append({
+            'date': day.isoformat(),
+            'recorded': row is not None,
+            'level': (row.level if row else None),
+            'problem_count': (row.problem_count if row else 0),
+            'warning_count': (row.warning_count if row else 0),
+            'counts': (row.counts if row else {}),
+            'notes': (row.notes if row else ''),
+        })
+    return {
+        'days': days,
+        'recorded_days': sum(1 for day in days if day['recorded']),
+        'window': HISTORY_DAYS,
+        'latest_date': days[-1]['date'] if days else None,
+        'hint': 'python manage.py health_snapshot  # 每天记一条（挂定时任务才有连续趋势）',
+    }

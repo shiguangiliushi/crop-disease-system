@@ -47,6 +47,7 @@ from .models_social import Follow  # 第 40 批：关注关系
 from .models_report import Report  # 第 41 批：举报
 from .models_calendar import CalendarTask  # 第 47 批：种植日历
 from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志
+from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
 from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile  # 第 49 批：专家咨询
 from .models_message import DirectMessage  # 第 42 批：私信
 from .models_message import conversation_key_for  # 第 114 批：私信测试要自己造会话消息
@@ -11181,3 +11182,84 @@ class AdminHealthViewTests(APITestCase):
         payload = json.loads(raw)               # 不抛异常即通过
         self.assertIn('results', payload)
         self.assertTrue(payload['results'])
+
+
+class HealthSnapshotTests(APITestCase):
+    """
+    系统健康快照（第 158 批）
+
+    「系统健康」页看的是**当下**，回答不了"这周备份跑了没有" ——
+    而环境类故障的共性是**安静**（定时任务挂了没人报错）。
+    所以每天记一条快照，让趋势能回答这个问题。这组测试盯三件事：
+      · 一天一条（重复执行只更新当天，定时任务重复跑不会堆垃圾）；
+      · 缺的那天在接口里**显式标出来**（`recorded: false`）——
+        那本身就是信息：说明定时任务没跑；
+      · 过期快照按 `--days` 清理。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_hs_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.client_super = APIClient()
+        self.client_super.force_authenticate(user=self.superuser)
+        HealthSnapshot.objects.all().delete()
+
+    def tearDown(self):
+        HealthSnapshot.objects.all().delete()
+
+    def test_command_records_one_row_per_day(self):
+        out = StringIO()
+        call_command('health_snapshot', stdout=out)
+        self.assertEqual(HealthSnapshot.objects.count(), 1)
+        first = HealthSnapshot.objects.first()
+        self.assertEqual(first.snapshot_date, timezone.localdate())
+        self.assertIn(first.level, ('ok', 'warn', 'fail'))
+        self.assertIn('users', first.counts)
+
+        # 再跑一次：还是 1 条（当天更新，不是新增）
+        call_command('health_snapshot', stdout=StringIO())
+        self.assertEqual(HealthSnapshot.objects.count(), 1)
+        refreshed = HealthSnapshot.objects.first()
+        self.assertEqual(refreshed.pk, first.pk)
+
+    def test_dry_run_writes_nothing(self):
+        out = StringIO()
+        call_command('health_snapshot', dry_run=True, stdout=out)
+        self.assertEqual(HealthSnapshot.objects.count(), 0)
+        self.assertIn('dry-run', out.getvalue())
+
+    def test_prunes_old_rows(self):
+        old = timezone.localdate() - timedelta(days=400)
+        HealthSnapshot.objects.create(snapshot_date=old, level='ok')
+        call_command('health_snapshot', days=180, stdout=StringIO())
+        self.assertFalse(HealthSnapshot.objects.filter(snapshot_date=old).exists())
+        self.assertTrue(HealthSnapshot.objects.filter(
+            snapshot_date=timezone.localdate()).exists())
+
+    def test_api_marks_missing_days(self):
+        """接口要把"没有快照的那几天"也返回，并标成 recorded=False"""
+        HealthSnapshot.objects.create(
+            snapshot_date=timezone.localdate(), level='warn',
+            problem_count=1, warning_count=2, counts={'users': 3}, notes='✗ 测试要点')
+        data = self.client_super.get('/api/admin/health/').data
+        history = data['history']
+        self.assertEqual(len(history['days']), history['window'])
+        self.assertEqual(history['recorded_days'], 1)
+        today = history['days'][-1]
+        self.assertTrue(today['recorded'])
+        self.assertEqual(today['level'], 'warn')
+        self.assertEqual(today['problem_count'], 1)
+        self.assertIn('测试要点', today['notes'])
+        # 昨天没记 → 显式标出来
+        yesterday = history['days'][-2]
+        self.assertFalse(yesterday['recorded'])
+        self.assertIsNone(yesterday['level'])
+
+    def test_history_still_visible_without_snapshots(self):
+        """一条快照都没有时也要能正常返回（页面画一排灰格子），并给出怎么开始记"""
+        data = self.client_super.get('/api/admin/health/').data
+        self.assertEqual(data['history']['recorded_days'], 0)
+        self.assertIn('health_snapshot', data['history']['hint'])

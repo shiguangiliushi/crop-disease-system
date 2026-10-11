@@ -697,6 +697,7 @@ class News(models.Model):  # 定义新闻模型
 # 这样任何 import 了 `api.models` 的进程都能拿到全部模型。
 # ============================================================================
 from . import models_audit  # noqa: E402,F401  第 146 批：管理操作日志
+from . import models_health  # noqa: E402,F401  第 158 批：系统健康快照
 from . import models_calendar  # noqa: E402,F401
 from . import models_expert  # noqa: E402,F401
 from . import models_forum  # noqa: E402,F401
