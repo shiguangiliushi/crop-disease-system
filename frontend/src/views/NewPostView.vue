@@ -262,6 +262,18 @@ export default {
     const boards = ref([]);
     const loading = ref(true);
     const submitting = ref(false);
+    /**
+     * 已经发布成功（第 167 批）
+     *
+     * 用来放行"离开前提醒"。这里的坑值得写清楚：
+     * `useUnsavedChanges` 的守卫在**离开时重新执行判定函数**（`evaluate()`），
+     * 所以发布成功后调用的 `markClean()` 会被立刻覆盖 —— 判定函数看到表单里
+     * 还留着刚发布的内容，于是照样弹"有未保存的修改，确定离开吗？"。
+     * 后果不只是荒谬：用户点「留下」就停在一个**能再次提交**的表单上，再点一次
+     * 就发出**第二篇一模一样的帖子**。
+     * （一键发帖的 E2E 把这个问题暴露出来的 —— 提交成功、提示"发帖成功！"，但页面没走。）
+     */
+    const published = ref(false);
 
     // 草稿状态
     const draftSavedAt = ref('');
@@ -459,6 +471,9 @@ export default {
         // 第 97 批：提交成功 → 清掉"脏"标记，否则紧接着的 router.push 会被
         // 自己的离开守卫拦下来问一句"有未保存的修改"（很荒谬，但确实会）
         markClean();
+        // 第 167 批：markClean() 不够 —— 守卫在离开时会**重新执行判定函数**，
+        // 于是"表单里还有内容"又把它判成脏。这里再置一个显式标记放行。
+        published.value = true;
 
         // 第 38 批：后端可能把帖子置为"待审核"（普通用户 + 开启审核策略）
         const created = response?.data ?? response;
@@ -507,7 +522,35 @@ export default {
 
     const cancel = () => router.push({ name: 'forum' });
 
+    /**
+     * 识别结果「发帖求助」的预填（第 167 批）
+     * ------------------------------------------------------------------
+     * 识别页把 **病名 / 识别图片地址 / 症状** 放进 query 跳过来，这里拼成一段草稿：
+     *   · 标题：【求助】<病名>怎么治？
+     *   · 正文：一句说明 + 识别图片 + 症状 + 一句提问（农户补两句就能发）
+     * 正文口径是 HTML（编辑器与详情页一致），所以图片直接写 `<img src>` ——
+     * 识别图**本来就在服务器上**（`/media/...`），不必再上传一次。
+     *
+     * ⚠️ 只在标题与正文都还空着的时候才预填，别覆盖用户已经写的内容。
+     */
+    const applyAskPrefill = () => {
+      const ask = String(route.query.ask || '').trim();
+      if (!ask) return;
+      if (form.value.title || form.value.content) return;
+
+      const image = String(route.query.image || '').trim();
+      const symptoms = String(route.query.symptoms || '').trim();
+      form.value.title = t('post.askTitle', { disease: ask });
+      form.value.content = [
+        `<p>${t('post.askIntro', { disease: ask })}</p>`,
+        image ? `<p><img src="${image}" alt="${ask}" /></p>` : '',
+        symptoms ? `<p>${t('post.askSymptoms', { symptoms })}</p>` : '',
+        `<p>${t('post.askQuestion')}</p>`,
+      ].filter(Boolean).join('');
+    };
+
     onMounted(async () => {
+      applyAskPrefill();   // 第 167 批：识别结果「发帖求助」带过来的病名/图片/症状
       await Promise.all([fetchBoards(), loadSiteConfig()]);
       maybeRestoreDraft();
     });
@@ -528,6 +571,9 @@ export default {
     const DRAFT_FIELDS = ['title', 'content', 'title_en', 'content_en'];
     const { markClean } = useUnsavedChanges(() => {
       if (submitting.value) return false;   // 正在提交：不要拦
+      // 第 167 批：刚发布成功 —— 内容已经落地成帖子，再问"要不要放弃修改"毫无意义，
+      // 而且会让用户停在一个可重复提交的表单上（重复发帖）。
+      if (published.value) return false;
       const current = form.value || {};
       return DRAFT_FIELDS.some((key) => {
         const value = current[key];

@@ -118,6 +118,20 @@
       <div class="results-header">
         <h3>{{ t('detect.resultBadge') }}</h3>
         <div class="results-actions">
+          <!--
+            第 167 批：一键发帖求助。
+            这是这个论坛最该被用起来的场景：农户识别出「苹果黑星病」，想问问大家怎么治 ——
+            在此之前他得**记住病名 → 切到发帖页 → 手打一遍**，还要自己把照片传上去。
+            现在点一下就把病名、识别图片、症状带进发帖页，他补两句就能发。
+          -->
+          <button
+            v-if="filteredDiseases.length && !detectionResult.healthy"
+            @click="askInForum(filteredDiseases[0])"
+            class="btn btn-outline-success"
+            :title="t('detect.askForumHint')"
+          >
+            <i class="bi bi-people me-1"></i>{{ t('detect.askForum') }}
+          </button>
           <button @click="downloadReport" class="btn btn-success">
             <i class="bi bi-download me-1"></i>{{ t('detect.downloadReport') }}
           </button>
@@ -492,6 +506,33 @@ const onCameraCaptured = (file) => {
  * UPLOAD_LIMIT 仍在本页用（选图时的即时校验）。
  */
 const UPLOAD_LIMIT = 5 * 1024 * 1024;
+
+/**
+ * 一键发帖求助（第 167 批）
+ * ------------------------------------------------------------------
+ * 识别出病害之后最常见的下一步就是"问问别人怎么治"。以前农户得：
+ *   记住病名 → 切到发帖页 → 手打一遍 → 再自己把照片传一次。
+ * 现在把这三样（病名 / 识别图片地址 / 症状）塞进路由 query，
+ * 由发帖页预填成一段草稿，农户补两句就能发。
+ *
+ * 为什么带"图片地址"而不是文件：识别结果里的图**已经在服务器上**（`/media/...`），
+ * 正文口径是 HTML，直接写进 `<img src>` 即可 —— 不必重新上传一遍。
+ */
+const askInForum = (disease) => {
+  if (!disease) return;
+  const name = localizedField(disease, 'name') || '';
+  const imageUrl = detectionResult.value?.annotatedImage
+    || detectionResult.value?.originalImage
+    || '';
+  router.push({
+    name: 'new-post',
+    query: {
+      ask: name,
+      image: imageUrl,
+      symptoms: String(localizedField(disease, 'symptoms') || '').slice(0, 200),
+    },
+  });
+};
 
 // 处理文件选择
 const onFileSelected = (event) => {
