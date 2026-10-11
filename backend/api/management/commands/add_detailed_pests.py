@@ -14,9 +14,31 @@
   · `cleanup_pests.py` 是它的搭档：那个负责删掉"不在这 38 种里"的病害。
     先跑 cleanup 再跑本脚本，才能得到干净的 38 条。
     顺序反了会把刚导入的也删掉。
+
+第 159 批补：标识符与 name_en 的关系
+  · 本命令用的 `english_identifier` 是 **snake_case**（`apple_scab`），
+    而模型给出的类名是 **PlantVillage 风格**（`Apple___Apple_scab`）——
+    两者的匹配交给 `api/pest_lookup.py`（含作物约束与"词元覆盖"规则），
+    并有测试逐个验证"模型能输出的 38 个类名都匹配得上、且作物不串"。
+  · `name_en` 现在由 `_derive_name_en()` 从标识符推导（`apple_scab` → `Apple scab`）：
+    第 69 批那次回填是**数据迁移**，只对当时已存在的行生效，
+    所以在一台全新部署上跑本命令时 38 条的 `name_en` 全是空的（英文界面只能回落中文）。
 """
 from django.core.management.base import BaseCommand
 from api.models import PestInfo, PreventionMethod
+
+
+def _derive_name_en(identifier: str) -> str:
+    """
+    从 `english_identifier` 推一个英文名：`apple_scab` → `Apple scab`。
+
+    与第 69 批那次数据迁移用的是同一个规则（两处保持一致）。
+    """
+    words = [word for word in str(identifier or '').replace('-', '_').split('_') if word]
+    if not words:
+        return ''
+    return ' '.join([words[0].capitalize()] + words[1:])
+
 
 class Command(BaseCommand):
     help = '添加详细的病害数据，包含症状、发病规律和多种防治方法（仅限38种指定病害）'
@@ -585,6 +607,9 @@ class Command(BaseCommand):
                 pest.english_identifier = pest_data['english_identifier']
                 pest.symptoms = pest_data['symptoms']
                 pest.description = pest_data['description']
+                # 第 159 批：`name_en` 缺失时按标识符推一个（见下面 `_derive_name_en` 的说明）
+                if not pest.name_en:
+                    pest.name_en = _derive_name_en(pest_data['english_identifier'])
                 pest.save()
                 
                 # 删除旧的防治方法
@@ -605,6 +630,11 @@ class Command(BaseCommand):
                     name=pest_data['name'],
                     crop_type=pest_data['crop_type'],
                     english_identifier=pest_data['english_identifier'],
+                    # 第 159 批：以前这里**不写 name_en** —— 第 69 批那次"用
+                    # english_identifier 自动回填 name_en"是**数据迁移**，只作用于当时已有的行；
+                    # 在一台全新部署上跑本命令时，38 条词条的 name_en 全是空的，
+                    # 英文界面就只能回落到中文名。这里按同一个规则补上。
+                    name_en=_derive_name_en(pest_data['english_identifier']),
                     symptoms=pest_data['symptoms'],
                     description=pest_data['description']
                 )

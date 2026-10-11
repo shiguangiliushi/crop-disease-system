@@ -846,16 +846,19 @@ class DetectView(APIView):
                     logger.info(f'AI模型返回的病害标识符: {disease_identifier}')
 
                     # 从数据库获取病害详情
-                    try:
-                        # 尝试精确匹配
-                        try:
-                            pest_info = PestInfo.objects.get(english_identifier__iexact=disease_identifier)
-                        except PestInfo.DoesNotExist:
-                            # 如果精确匹配失败，尝试去除所有空格后匹配
-                            clean_identifier = disease_identifier.replace(' ', '')
-                            pest_info = PestInfo.objects.get(english_identifier__iexact=clean_identifier)
+                    #
+                    # ⚠️ 第 159 批：这里的匹配**以前只有一条"去掉空格后精确相等"**，
+                    # 而当前模型给的是 PlantVillage 风格类名（`Apple___Apple_scab`），
+                    # 库里存的是 `apple_scab` —— 于是永远匹配不上：
+                    # 界面显示英文类名（`Apple   Apple Scab`）、主要症状与防治建议只剩占位文字，
+                    # 而**管理后台里明明有内容**（用户就是这样报上来的）。
+                    # 现在统一走 `pest_lookup.find_pest_info`（含"包含于类名"等四层规则），
+                    # 并且与落库时用的是**同一个**函数。
+                    from .pest_lookup import find_pest_info
 
-                        logger.info(f'成功找到病害信息: {pest_info.name} (ID: {pest_info.id})')
+                    pest_info, match_note = find_pest_info(disease_identifier)
+                    if pest_info:
+                        logger.info(f'病害词条匹配成功：{pest_info.name}（{match_note}）')
                         disease_name = pest_info.name
                         description = pest_info.symptoms
                         prevention = "\n".join([m.measure for m in pest_info.prevention_methods.all()])
@@ -866,7 +869,14 @@ class DetectView(APIView):
                             [m.measure_en or m.measure for m in pest_info.prevention_methods.all()]
                         )
                         logger.info(f'获取到防治方法: {prevention}')
-                    except PestInfo.DoesNotExist:
+                    else:
+                        # 匹配不上时的回落 —— **必须留痕**，否则又是"后台有内容、界面却没有"
+                        logger.warning(
+                            f'病害词条匹配失败：类名 {disease_identifier!r}（{match_note}）—— '
+                            f'界面将显示英文类名与占位建议。'
+                            f'请在病害百科里补一条 english_identifier={disease_identifier!r} 的词条'
+                            f'（或把它加进 api/pest_lookup.py 的 ALIASES）'
+                        )
                         disease_name = disease_identifier.replace('_', ' ').title()
                         description = '暂无详细描述'
                         prevention = '请咨询农业专家获取防治建议'
@@ -936,11 +946,10 @@ class DetectView(APIView):
             # 保存检测历史记录
             try:
                 # 尝试获取对应的病害信息
-                pest_info = PestInfo.objects.filter(english_identifier__iexact=disease_identifier).first()
-                if not pest_info:
-                    # 如果精确匹配失败，尝试去除所有空格后匹配
-                    clean_identifier = disease_identifier.replace(' ', '')
-                    pest_info = PestInfo.objects.filter(english_identifier__iexact=clean_identifier).first()
+                #
+                # 第 159 批：这一段原来自己又写了一遍匹配（与上面构建结果的逻辑**不一致**），
+                # 现在统一走 `pest_lookup.link_history` —— 同一个函数，不会再打架。
+                from .pest_lookup import link_history
 
                 history = DetectionHistory.objects.create(
                     user=request.user,
@@ -960,9 +969,14 @@ class DetectView(APIView):
                     annotated_image=annotated_image_path,
                     detection_result=detection_result['disease'],
                     confidence=detection_result['confidence'],
-                    pest_info=pest_info  # 关联病害信息
                 )
-                logger.info(f'成功保存检测历史记录，关联的病害ID: {pest_info.id if pest_info else None}')
+                # 第 159 批：关联病害词条改为"落库之后按同一个匹配函数补上"，
+                # 这样历史记录与界面显示的结果**必然一致**（以前两处各算一次，可能一个有一个没有）。
+                pest_info, match_note = link_history(history, disease_identifier)
+                logger.info(
+                    f'成功保存检测历史记录 #{history.id}，关联病害：'
+                    f'{pest_info.name if pest_info else "无"}（{match_note}）'
+                )
             except Exception as e:
                 logger.error(f'保存检测历史记录失败: {str(e)}')
                 # 即使保存历史记录失败，也继续返回检测结果

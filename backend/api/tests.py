@@ -29,6 +29,8 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
 from django.test import TestCase, TransactionTestCase, override_settings  # 第 102 批：备份测试要改连接
+from django.conf import settings  # 第 159 批：识别测试要读测试图路径
+from django.core.files.uploadedfile import SimpleUploadedFile  # 第 159 批：识别测试要传图
 from django.core.management import call_command  # 第 154 批：备份恢复演练命令的测试
 from django.core.management.base import CommandError  # 第 154 批
 from io import StringIO  # 第 154 批：捕获管理命令输出（原来只在个别函数里局部导入过）
@@ -48,6 +50,12 @@ from .models_report import Report  # 第 41 批：举报
 from .models_calendar import CalendarTask  # 第 47 批：种植日历
 from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志
 from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
+from .pest_lookup import (  # noqa: E402  第 159 批：类名 → 词条匹配
+    find_pest_info,
+    normalize as normalize_pest_key,
+    _crop_of as _crop_of_label,
+)
+from .ai_service import AIService  # noqa: E402  第 159 批：模型能输出的类名
 from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile  # 第 49 批：专家咨询
 from .models_message import DirectMessage  # 第 42 批：私信
 from .models_message import conversation_key_for  # 第 114 批：私信测试要自己造会话消息
@@ -11263,3 +11271,158 @@ class HealthSnapshotTests(APITestCase):
         data = self.client_super.get('/api/admin/health/').data
         self.assertEqual(data['history']['recorded_days'], 0)
         self.assertIn('health_snapshot', data['history']['hint'])
+
+
+class PestLookupTests(TestCase):
+    """
+    "模型类名 → 病害词条"的匹配（第 159 批）
+
+    背景：识别界面曾显示英文类名（`Apple   Apple Scab`）、主要症状与防治建议只剩占位文字，
+    而**管理后台里明明有内容**。根因是当前模型给的是 PlantVillage 风格类名
+    （`Apple___Apple_scab`），库里存的是 `apple_scab`，而匹配规则只有一条
+    "去掉空格后精确相等" —— 永远对不上。
+
+    这里钉住四件事：
+      · 规范化（`___`、空格、括号、逗号都当分隔符）；
+      · PlantVillage 类名能匹配到 snake_case 词条；
+      · **限定同作物**：`Pepper,_bell___healthy` 绝不能匹配到"健康苹果"
+        （第一版就错了 —— 库里好几条词条的 name_en 都叫 `Healthy`，
+        "匹配错"比"匹配不上"更糟：界面会理直气壮地显示另一种病害的防治建议）；
+      · 匹配不上时返回 None（由调用方回落并**记 warning**，不再安静降级）。
+    """
+
+    def setUp(self):
+        self.apple = PestInfo.objects.create(
+            name='苹果黑星病', name_en='Apple scab', english_identifier='apple_scab',
+            crop_type='苹果', symptoms='叶片上出现黑褐色病斑')
+        self.apple_healthy = PestInfo.objects.create(
+            name='健康苹果', name_en='Healthy', english_identifier='apple_healthy',
+            crop_type='苹果')
+        self.pepper_healthy = PestInfo.objects.create(
+            name='健康甜椒', name_en='Healthy', english_identifier='pepper_healthy',
+            crop_type='甜椒')
+        self.cherry_mildew = PestInfo.objects.create(
+            name='樱桃白粉病', name_en='Powdery mildew', english_identifier='cherry_powdery_mildew',
+            crop_type='樱桃')
+        self.pumpkin_mildew = PestInfo.objects.create(
+            name='南瓜白粉病', name_en='Powdery mildew', english_identifier='pumpkin_powdery_mildew',
+            crop_type='南瓜')
+
+    def test_normalize(self):
+        for raw, expected in [
+            ('Apple___Apple_scab', 'apple_apple_scab'),
+            ('Apple Scab', 'apple_scab'),
+            ('apple-scab', 'apple_scab'),
+            ('APPLE_SCAB', 'apple_scab'),
+            ('Grape___Esca_(Black_Measles)', 'grape_esca_black_measles'),
+            ('Pepper,_bell___Bacterial_spot', 'pepper_bell_bacterial_spot'),
+            ('   ', ''),
+            (None, ''),
+        ]:
+            self.assertEqual(normalize_pest_key(raw), expected, f'规范化 {raw!r} 不对')
+
+    def test_plantvillage_label_matches_snake_case(self):
+        pest, note = find_pest_info('Apple___Apple_scab')
+        self.assertIsNotNone(pest, note)
+        self.assertEqual(pest.english_identifier, 'apple_scab')
+
+    def test_exact_forms_still_work(self):
+        for raw in ('apple_scab', 'Apple Scab', 'APPLE_SCAB', 'AppleScab'):
+            pest, note = find_pest_info(raw)
+            self.assertIsNotNone(pest, f'{raw!r} 没匹配上：{note}')
+            self.assertEqual(pest.english_identifier, 'apple_scab')
+
+    def test_crop_is_respected(self):
+        """核心回归：`Pepper,_bell___healthy` 必须是甜椒，不能是苹果"""
+        pest, note = find_pest_info('Pepper,_bell___healthy')
+        self.assertIsNotNone(pest, note)
+        self.assertEqual(pest.english_identifier, 'pepper_healthy',
+                         f'跨作物错配了：{note}')
+
+    def test_squash_maps_to_pumpkin(self):
+        pest, note = find_pest_info('Squash___Powdery_mildew')
+        self.assertIsNotNone(pest, note)
+        self.assertEqual(pest.english_identifier, 'pumpkin_powdery_mildew',
+                         f'作物别名没生效：{note}')
+
+    def test_unknown_returns_none(self):
+        pest, note = find_pest_info('Zzz___Nothing_like_this')
+        self.assertIsNone(pest)
+        self.assertIn('没有匹配', note)
+
+
+@override_settings(DEBUG=True)
+class PestClassCoverageTests(TestCase):
+    """
+    **模型能输出的每一个类名，都必须能匹配到一条词条**（第 159 批）
+
+    这是最强的一条护栏：`AIService.class_names` 就是模型会返回的全部取值
+    （38 个 PlantVillage 类名）。只要有一个匹配不上，用户就会看到英文名 +
+    占位建议 —— 所以这里逐个验证，并且顺带验证**作物没有串**。
+
+    词条数据来自 `add_detailed_pests`（自带数据、不联网）。
+    """
+
+    def setUp(self):
+        call_command('add_detailed_pests', stdout=StringIO())
+
+    def test_every_class_name_matches_a_pest(self):
+        missing = []
+        wrong_crop = []
+        for label in AIService.class_names:
+            pest, note = find_pest_info(label)
+            if pest is None:
+                missing.append(f'{label}（{note}）')
+                continue
+            crop = _crop_of_label(label, {normalize_pest_key(row.english_identifier).split('_')[0]
+                                          for row in PestInfo.objects.all()})
+            identifier = normalize_pest_key(pest.english_identifier)
+            if crop and not identifier.startswith(f'{crop}_'):
+                wrong_crop.append(f'{label} → {pest.english_identifier}（期望作物 {crop}）')
+        self.assertEqual(missing, [], '这些类名没有对应词条：' + '；'.join(missing))
+        self.assertEqual(wrong_crop, [], '这些类名匹配到了别的作物：' + '；'.join(wrong_crop))
+
+    def test_class_names_are_all_covered_by_seed_data(self):
+        """词条数应当不少于模型类名数（少一条就意味着有人会看到英文名）"""
+        self.assertGreaterEqual(PestInfo.objects.count(), len(AIService.class_names))
+
+
+class DetectResultContentTests(TestCase):
+    """
+    识别接口返回的**内容**（第 159 批）
+
+    用户报的是界面问题，但根因在接口：匹配失败时接口返回英文类名 +
+    `暂无详细描述` / `请咨询农业专家获取防治建议`。
+    这里用仓库里那张真实的苹果黑星病图片跑一次，盯住"是中文 + 有内容 + 落库有关联"。
+    """
+
+    def setUp(self):
+        cache.clear()
+        call_command('add_detailed_pests', stdout=StringIO())
+        self.user = get_user_model().objects.create_user(
+            username='zz_lookup_user', password='pw12345678', role='USER')
+        self.client_auth = APIClient()
+        self.client_auth.force_authenticate(user=self.user)
+
+    def test_detect_returns_chinese_name_and_real_content(self):
+        image = Path(settings.BASE_DIR) / 'pests' / 'Apple___Apple_scab14.jpg'
+        if not image.exists():                               # 截图素材被清理时跳过
+            self.skipTest('测试图片不存在')
+        with image.open('rb') as handle:
+            upload = SimpleUploadedFile('leaf.jpg', handle.read(), content_type='image/jpeg')
+            response = self.client_auth.post('/api/detect/', {'image': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        detection = response.data['data']['detection']
+        self.assertRegex(detection['disease'], r'[\u4e00-\u9fff]',
+                         f'病害名不是中文：{detection["disease"]!r}')
+        self.assertNotEqual(detection['description'], '暂无详细描述',
+                            '主要症状回落成了占位文字')
+        self.assertNotEqual(detection['prevention'], '请咨询农业专家获取防治建议',
+                            '防治建议回落成了占位文字')
+
+        history = DetectionHistory.objects.get(pk=response.data['data']['history_id'])
+        self.assertIsNotNone(history.pest_info,
+                             '识别记录没有关联病害词条（历史页也会显示英文名）')
+        self.assertEqual(history.detection_result, detection['disease'],
+                         '历史记录里的名字与界面显示的不一致')
