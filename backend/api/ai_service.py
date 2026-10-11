@@ -34,6 +34,65 @@ logger = logging.getLogger(__name__)
 _WARMUP_LOCK = threading.Lock()
 
 
+def _cjk_font_path() -> str:
+    """
+    找一个**有中文字形**的字体文件（第 159 批）。
+
+    ultralytics 的 `plot()` 默认用 `Arial` —— 画中文会出方框或干脆空白，
+    所以标注图上的中文标签必须配中文字体。找不到就返回空串，调用方退回 Arial。
+    """
+    candidates = [
+        r'C:\Windows\Fonts\msyh.ttc',      # 微软雅黑（Win7+ 自带）
+        r'C:\Windows\Fonts\simhei.ttf',    # 黑体
+        r'C:\Windows\Fonts\simsun.ttc',    # 宋体
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',          # Linux 常见
+        '/System/Library/Fonts/PingFang.ttc',                     # macOS
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return ''
+
+
+def _prepare_chinese_labels(result) -> str:
+    """
+    把标注图上要画的类名换成中文，并返回该用的字体（第 159 批）。
+
+    用户报的"识别结果显示英文病害名"，除了界面文字，**图片上烧进去的那行**也是英文
+    （`Apple___Apple_scab 0.99`）。`plot()` 是照 `result.names` 画的，
+    所以这里先把要画的类的名字替换成词条里的中文名。
+
+    ⚠️ 只替换**本次真的画出来的那几个类**（通常就一个），不做全表替换：
+    每次 `find_pest_info` 都会取一遍词条表，没必要为没画的类付这个开销。
+
+    失败一律吞掉（返回 Arial）：中文标签是锦上添花，不能影响识别本身。
+    """
+    try:
+        from .pest_lookup import find_pest_info
+
+        names = getattr(result, 'names', None)
+        boxes = getattr(result, 'boxes', None)
+        if not isinstance(names, dict) or boxes is None or boxes.cls is None:
+            return 'Arial'
+
+        replaced = False
+        for class_index in {int(value) for value in boxes.cls.tolist()}:
+            raw_name = names.get(class_index)
+            if not raw_name:
+                continue
+            pest, _note = find_pest_info(raw_name)
+            if pest:
+                names[class_index] = pest.name
+                replaced = True
+        if not replaced:
+            return 'Arial'
+        result.names = names
+        return _cjk_font_path() or 'Arial'
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f'标注图中文标签不可用（退回英文）：{exc}')
+        return 'Arial'
+
+
 class AIService:
     _instance = None
     model = None
@@ -243,22 +302,32 @@ class AIService:
                         img.save(buffered, format="JPEG")
                         img_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
                     else:
+                        # 第 159 批：标注图上的标签**换成中文**。
+                        #
+                        # 用户报的"识别结果显示英文病害名"里还有一处英文是烧进图片的：
+                        # ultralytics 的 `plot()` 用模型自己的类名画框标签
+                        # （`Apple___Apple_scab 0.99`）。界面文字改成中文之后图上这行还在，
+                        # 所以这里在画之前替换类名表，并换一个**有中文字形**的字体
+                        # （原来的 Arial 画中文会出方框）。取不到中文名就保持英文，
+                        # 绝不让这个"锦上添花"影响识别本身。
+                        draw_font = _prepare_chinese_labels(results[0])
+
                         # 确保图像是RGB模式
                         if img.mode != 'RGB':
                             img = img.convert('RGB')
-                            
+
                         # 将PIL图像转换为numpy数组
                         img_array = np.array(img)
                         logger.info(f"原始图像形状: {img_array.shape}, 类型: {img_array.dtype}, 通道: {img_array.shape[2] if len(img_array.shape) > 2 else 1}")
-                        
+
                         # 确保图像是RGB格式
                         if len(img_array.shape) == 2:  # 如果是灰度图
                             img_array = np.stack((img_array,) * 3, axis=-1)
                         elif img_array.shape[2] == 4:  # 如果是RGBA
                             img_array = img_array[..., :3]
-                            
+
                         logger.info(f"处理后的图像形状: {img_array.shape}, 类型: {img_array.dtype}")
-                        
+
                         try:
                             # 渲染带框图像 - 使用更大的线条宽度和更明显的颜色
                             annotated_img_array = results[0].plot(
@@ -267,65 +336,75 @@ class AIService:
                                 font_size=16,  # 增加字体大小
                                 labels=True,   # 显示标签
                                 conf=True,     # 显示置信度
-                                font='Arial',  # 使用更清晰的字体
+                                font=draw_font,  # 中文标签需要中文字体（见上）
                                 pil=True       # 确保返回PIL图像
                             )
+                        except Exception as exc:  # noqa: BLE001
+                            # 字体不被 ultralytics 接受时退回一次（保证一定能出图）。
+                            # ⚠️ 这里**只**包住这一次绘图调用：后处理必须留在成功路径上，
+                            # 第一版把后处理一起缩进进了 except，结果成功时整段被跳过、
+                            # 标注图直接变成 None（用户看到的框和标签都没了）。
+                            logger.warning(f"用 {draw_font} 渲染失败，退回 Arial：{exc}")
+                            annotated_img_array = results[0].plot(
+                                img=img_array, line_width=3, font_size=16,
+                                labels=True, conf=True, font='Arial', pil=True,
+                            )
                             
-                            # 处理渲染后的图像
-                            if annotated_img_array is None:
-                                raise ValueError("渲染后的图像为空")
+                        # 处理渲染后的图像
+                        if annotated_img_array is None:
+                            raise ValueError("渲染后的图像为空")
                                 
-                            # 记录图像信息
-                            if hasattr(annotated_img_array, 'size'):
-                                logger.info(f"渲染后图像大小: {annotated_img_array.size}, 类型: {type(annotated_img_array)}")
+                        # 记录图像信息
+                        if hasattr(annotated_img_array, 'size'):
+                            logger.info(f"渲染后图像大小: {annotated_img_array.size}, 类型: {type(annotated_img_array)}")
                             
-                            # 确保是PIL Image对象
-                            if hasattr(annotated_img_array, 'convert'):
-                                # 如果是PIL图像，直接使用
-                                pil_image = annotated_img_array
+                        # 确保是PIL Image对象
+                        if hasattr(annotated_img_array, 'convert'):
+                            # 如果是PIL图像，直接使用
+                            pil_image = annotated_img_array
+                        else:
+                            # 否则尝试转换为PIL图像
+                            if isinstance(annotated_img_array, np.ndarray):
+                                # 确保图像数据在有效范围内
+                                if np.issubdtype(annotated_img_array.dtype, np.floating):
+                                    if annotated_img_array.max() <= 1.0:  # 如果是0-1范围的浮点数
+                                        annotated_img_array = (annotated_img_array * 255).astype('uint8')
+                                    else:
+                                        annotated_img_array = np.clip(annotated_img_array, 0, 255).astype('uint8')
+                                    
+                                # 确保是3通道RGB图像
+                                if len(annotated_img_array.shape) == 2:  # 灰度图转RGB
+                                    annotated_img_array = np.stack((annotated_img_array,) * 3, axis=-1)
+                                elif annotated_img_array.shape[2] == 4:  # RGBA转RGB
+                                    annotated_img_array = annotated_img_array[..., :3]
+                                    
+                                pil_image = Image.fromarray(annotated_img_array)
                             else:
-                                # 否则尝试转换为PIL图像
-                                if isinstance(annotated_img_array, np.ndarray):
-                                    # 确保图像数据在有效范围内
-                                    if np.issubdtype(annotated_img_array.dtype, np.floating):
-                                        if annotated_img_array.max() <= 1.0:  # 如果是0-1范围的浮点数
-                                            annotated_img_array = (annotated_img_array * 255).astype('uint8')
-                                        else:
-                                            annotated_img_array = np.clip(annotated_img_array, 0, 255).astype('uint8')
-                                    
-                                    # 确保是3通道RGB图像
-                                    if len(annotated_img_array.shape) == 2:  # 灰度图转RGB
-                                        annotated_img_array = np.stack((annotated_img_array,) * 3, axis=-1)
-                                    elif annotated_img_array.shape[2] == 4:  # RGBA转RGB
-                                        annotated_img_array = annotated_img_array[..., :3]
-                                    
-                                    pil_image = Image.fromarray(annotated_img_array)
-                                else:
-                                    raise ValueError(f"不支持的图像类型: {type(annotated_img_array)}")
+                                raise ValueError(f"不支持的图像类型: {type(annotated_img_array)}")
                             
-                            # 确保图像是RGB模式
-                            if pil_image.mode != 'RGB':
-                                pil_image = pil_image.convert('RGB')
+                        # 确保图像是RGB模式
+                        if pil_image.mode != 'RGB':
+                            pil_image = pil_image.convert('RGB')
                             
-                            # 记录图像信息
-                            logger.info(f"准备保存图像 - 模式: {pil_image.mode}, 大小: {pil_image.size}")
+                        # 记录图像信息
+                        logger.info(f"准备保存图像 - 模式: {pil_image.mode}, 大小: {pil_image.size}")
                             
-                            try:
-                                # 将图像保存到内存中的BytesIO对象
-                                img_byte_arr = BytesIO()
-                                pil_image.save(img_byte_arr, format='JPEG', quality=95)
-                                img_byte_arr.seek(0)
+                        try:
+                            # 将图像保存到内存中的BytesIO对象
+                            img_byte_arr = BytesIO()
+                            pil_image.save(img_byte_arr, format='JPEG', quality=95)
+                            img_byte_arr.seek(0)
                                 
-                                # 将BytesIO对象转换为base64编码的字符串
-                                img_base64 = f"data:image/jpeg;base64,{base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')}"
-                                logger.info(f"成功生成标注图片，大小: {len(img_base64)} 字节")
+                            # 将BytesIO对象转换为base64编码的字符串
+                            img_base64 = f"data:image/jpeg;base64,{base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')}"
+                            logger.info(f"成功生成标注图片，大小: {len(img_base64)} 字节")
                                 
-                            except Exception as img_error:
-                                logger.error(f"转换PIL图像时出错: {str(img_error)}", exc_info=True)
-                                # 出错时回退到原始图片
-                                buffered = BytesIO()
-                                img.save(buffered, format="JPEG")
-                                img_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
+                        except Exception as img_error:
+                            logger.error(f"转换PIL图像时出错: {str(img_error)}", exc_info=True)
+                            # 出错时回退到原始图片
+                            buffered = BytesIO()
+                            img.save(buffered, format="JPEG")
+                            img_base64 = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
                         
                         except Exception as plot_error:
                             logger.error(f"渲染标注图像时出错: {str(plot_error)}", exc_info=True)

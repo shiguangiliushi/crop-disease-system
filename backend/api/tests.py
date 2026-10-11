@@ -56,6 +56,7 @@ from .pest_lookup import (  # noqa: E402  第 159 批：类名 → 词条匹配
     _crop_of as _crop_of_label,
 )
 from .ai_service import AIService  # noqa: E402  第 159 批：模型能输出的类名
+from .ai_service import _prepare_chinese_labels  # noqa: E402  第 159 批：标注图中文标签
 from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile  # 第 49 批：专家咨询
 from .models_message import DirectMessage  # 第 42 批：私信
 from .models_message import conversation_key_for  # 第 114 批：私信测试要自己造会话消息
@@ -11426,3 +11427,59 @@ class DetectResultContentTests(TestCase):
                              '识别记录没有关联病害词条（历史页也会显示英文名）')
         self.assertEqual(history.detection_result, detection['disease'],
                          '历史记录里的名字与界面显示的不一致')
+
+
+class ChineseLabelTests(TestCase):
+    """
+    标注图上的中文标签（第 159 批）
+
+    用户报的"识别结果显示英文病害名"，除了界面文字，**图片上烧进去的那行**也是英文
+    （`Apple___Apple_scab 0.99`）—— 那是 ultralytics 的 `plot()` 照 `result.names` 画的。
+    这里钉住"替换类名 + 选一个中文字体"，以及"取不到中文名时不要乱动"。
+    """
+
+    class _FakeTensor:
+        """`boxes.cls` 只要能用 `.tolist()` 就够了（测试替身）"""
+
+        def __init__(self, values):
+            self._values = list(values)
+
+        def tolist(self):
+            return self._values
+
+    class _FakeBoxes:
+        def __init__(self, classes):
+            self.cls = ChineseLabelTests._FakeTensor(classes)
+
+    class _FakeResult:
+        def __init__(self, names, classes):
+            self.names = names
+            self.boxes = ChineseLabelTests._FakeBoxes(classes)
+
+    def setUp(self):
+        PestInfo.objects.create(
+            name='苹果黑星病', name_en='Apple scab', english_identifier='apple_scab',
+            crop_type='苹果')
+
+    def test_replaces_drawn_class_name_with_chinese(self):
+        result = self._FakeResult({0: 'Apple___Apple_scab', 1: 'Zzz___unknown'}, [0, 1])
+        font = _prepare_chinese_labels(result)
+        self.assertEqual(result.names[0], '苹果黑星病', '要画的类名应当换成词条里的中文名')
+        self.assertEqual(result.names[1], 'Zzz___unknown', '匹配不上的类名保持原样')
+
+    def test_font_is_a_real_file_when_available(self):
+        """有中文字体时应当返回字体文件路径（否则中文会画成方框）"""
+        result = self._FakeResult({0: 'Apple___Apple_scab'}, [0])
+        font = _prepare_chinese_labels(result)
+        if font == 'Arial':
+            self.skipTest('本机没有找到中文字体（Linux/macOS 上常见），退回 Arial 是预期行为')
+        self.assertTrue(Path(font).exists(), f'返回的字体文件不存在：{font}')
+
+    def test_keeps_arial_when_nothing_matched(self):
+        result = self._FakeResult({0: 'Zzz___nothing'}, [0])
+        self.assertEqual(_prepare_chinese_labels(result), 'Arial')
+
+    def test_survives_broken_result_object(self):
+        """结构不对（没有 boxes / 没有 names）时不能抛异常 —— 识别结果比标签重要"""
+        for broken in (object(), self._FakeResult(None, []), self._FakeResult({}, [])):
+            self.assertEqual(_prepare_chinese_labels(broken), 'Arial')
