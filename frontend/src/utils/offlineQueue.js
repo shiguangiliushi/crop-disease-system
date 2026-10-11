@@ -77,6 +77,44 @@ export function createOfflineQueue(adapter, options = {}) {
       return items.filter((item) => item.status !== 'failed');
     },
 
+    /**
+     * 已判失败的任务（第 162 批）
+     *
+     * 为什么单独给一个方法：失败项**不会**再被 `pending()` 取到，
+     * 于是界面上只能看到一个「N 张同步失败」的数字却无处处理 ——
+     * 用户截图里那两条就是这样卡住的。列表方法让界面能把它们摆出来。
+     */
+    async failed() {
+      const items = await this.list();
+      return items.filter((item) => item.status === 'failed');
+    },
+
+    /**
+     * 把一条失败任务**重新排队**（第 162 批）
+     *
+     * `tries` 归零，让它再获得 `MAX_TRIES` 次机会；否则刚重置就会因
+     * `tries >= MAX_TRIES` 立刻再被判失败。
+     */
+    async retry(id) {
+      const items = await adapter.all();
+      const target = items.find((item) => item.id === id);
+      if (!target) return null;
+      target.status = 'pending';
+      target.tries = 0;
+      target.lastError = '';
+      await adapter.put(target);
+      return target;
+    },
+
+    /** 把所有失败任务重新排队（第 162 批） */
+    async retryAllFailed() {
+      const items = await this.failed();
+      for (const item of items) {
+        await this.retry(item.id);
+      }
+      return items.length;
+    },
+
     async count() {
       const items = await this.list();
       return {

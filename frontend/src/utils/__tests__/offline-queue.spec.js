@@ -64,6 +64,58 @@ describe('离线队列', () => {
     expect(pending).toHaveLength(1);
   });
 
+  // -------------------------------------------------------------------------
+  // 第 162 批：失败项**能被处理**（用户截图里那两条「同步失败」原本无处可去）
+  // -------------------------------------------------------------------------
+  it('failed() 能把失败项列出来（界面要摆给用户看）', async () => {
+    const a = await queue.add({ blob: new Blob(['a']), filename: 'leaf-a.jpg' });
+    const b = await queue.add({ blob: new Blob(['b']), filename: 'leaf-b.jpg' });
+    for (let i = 0; i < MAX_TRIES; i += 1) await queue.markTried(a.id, '识别服务暂时不可用');
+
+    const failed = await queue.failed();
+    expect(failed).toHaveLength(1);
+    expect(failed[0].id).toBe(a.id);
+    expect(failed[0].filename).toBe('leaf-a.jpg');
+    expect(failed[0].lastError).toBe('识别服务暂时不可用');
+    expect(failed[0].tries).toBe(MAX_TRIES);
+    expect(await queue.failed()).not.toContainEqual(expect.objectContaining({ id: b.id }));
+  });
+
+  it('retry() 把失败项重新排队，并把 tries 归零', async () => {
+    const a = await queue.add({ blob: new Blob(['a']) });
+    for (let i = 0; i < MAX_TRIES; i += 1) await queue.markTried(a.id, 'x');
+    expect((await queue.count()).failed).toBe(1);
+
+    await queue.retry(a.id);
+
+    const counts = await queue.count();
+    expect(counts.failed).toBe(0);
+    expect(counts.pending).toBe(1);
+    const item = (await queue.list()).find((row) => row.id === a.id);
+    expect(item.status).toBe('pending');
+    // ⚠️ tries 必须归零：否则下一次 markTried 立刻又 >= MAX_TRIES，重试等于没重试
+    expect(item.tries).toBe(0);
+    expect(item.lastError).toBe('');
+    // 回到 pending 之后要能被同步流程取到
+    expect((await queue.pending()).map((row) => row.id)).toContain(a.id);
+  });
+
+  it('retryAllFailed() 一次把失败项全部重新排队', async () => {
+    const a = await queue.add({ blob: new Blob(['a']) });
+    const b = await queue.add({ blob: new Blob(['b']) });
+    const c = await queue.add({ blob: new Blob(['c']) });
+    for (const id of [a.id, b.id]) {
+      for (let i = 0; i < MAX_TRIES; i += 1) await queue.markTried(id, 'x');
+    }
+    expect((await queue.count()).failed).toBe(2);
+
+    const count = await queue.retryAllFailed();
+
+    expect(count).toBe(2);
+    expect(await queue.count()).toEqual({ total: 3, pending: 3, failed: 0 });
+    expect((await queue.list()).find((row) => row.id === c.id).status).toBe('pending');
+  });
+
   it('出队与清空', async () => {
     const a = await queue.add({ blob: new Blob(['a']) });
     await queue.add({ blob: new Blob(['b']) });

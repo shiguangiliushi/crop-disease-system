@@ -55,7 +55,8 @@ import {
   ElNotification,
   ElOption,
   ElPagination,
-  ElPopconfirm,
+  ElPopconfirm,  // 第 162 批：下面 components 里还补了 ElPopover（那次漏注册会让整块模板不渲染）
+  ElPopover,
   ElRadio,  // 第 41 批：补导入（下面注释说明为什么此前是坏的）
   ElRadioButton,
   ElRadioGroup,
@@ -114,6 +115,12 @@ const components = [
   ElOption,
   ElPagination,
   ElPopconfirm,
+  // 第 162 批：ElPopover 此前没有注册 —— 离线队列面板用了 <el-popover>，
+  // Vue 直接报 "Failed to resolve component: el-popover"，
+  // **整块模板都不渲染**（页眉那个「N 张同步失败」的入口因此消失）。
+  // 这类"用了没注册"的坑本文件里已经踩过三次（ElInputNumber / ElRadio / 这次的 ElPopover）——
+  // `npm run check` 里的 check:components 现在会直接报出来，别再靠肉眼。
+  ElPopover,
   // 第 41 批修复：ElRadio **此前没有注册**（只注册了 RadioGroup / RadioButton），
   // 于是任何 <el-radio> 都被当成未知自定义元素渲染 —— 界面上只剩一行文字、
   // 点了没反应（举报弹窗的"举报理由"就是这样）。这里补上导入。
