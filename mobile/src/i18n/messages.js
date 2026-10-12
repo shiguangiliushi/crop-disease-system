@@ -115,6 +115,20 @@ export const messages = {
       failed: '识别失败，请重试',
       offline: '当前处于离线状态，请联网后再识别',
     },
+    // 第 176 批：一键求助（复制一段现成的求助文案，粘到微信群/论坛里问）
+    askHelp: {
+      title: '遇到拿不准的，问问大家',
+      hint: '复制一段现成的说明：病名、把握多大、症状、防治建议和这张照片的链接，粘到微信群或论坛里就能问。',
+      copy: '复制求助内容',
+      copied: '已复制，去群里粘贴吧',
+      copyFailedTitle: '长按下面的文字复制',
+      heading: '【求助】{disease}怎么治？',
+      lineConfidence: '我用手机拍照识别，结果是「{disease}」，系统给出的把握是 {percent}%。',
+      lineSymptom: '主要症状：{symptom}',
+      linePrevention: '系统给的防治建议：{prevention}',
+      lineImage: '识别照片：{url}',
+      lineQuestion: '我该怎么处理？用点什么药、多久一次？先谢谢各位！',
+    },
     result: {
       title: '识别结果',
       detected: '检出病害',
@@ -322,6 +336,20 @@ export const messages = {
       serviceUnavailable: 'Detection service is unavailable, please retry later',
       failed: 'Detection failed, please retry',
       offline: 'You are offline. Connect to the network and retry.',
+    },
+    // Batch 176: one-tap help request (copy a ready-made description to paste into a group chat)
+    askHelp: {
+      title: 'Not sure? Ask around',
+      hint: 'Copies a ready-to-paste description: the disease, how confident the model was, the symptoms, the suggested treatment and a link to the photo.',
+      copy: 'Copy help request',
+      copied: 'Copied — paste it into your group',
+      copyFailedTitle: 'Long-press the text below to copy',
+      heading: '[Help] How do I treat {disease}?',
+      lineConfidence: 'I photographed a leaf with the app; it says “{disease}” with {percent}% confidence.',
+      lineSymptom: 'Main symptoms: {symptom}',
+      linePrevention: 'Suggested treatment: {prevention}',
+      lineImage: 'Photo: {url}',
+      lineQuestion: 'How should I treat it — which product, and how often? Thanks in advance!',
     },
     result: {
       title: 'Result',

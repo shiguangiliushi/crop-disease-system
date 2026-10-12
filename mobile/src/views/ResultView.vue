@@ -55,6 +55,32 @@
         <p class="pre-wrap">{{ prevention || t('result.noPrevention') }}</p>
       </div>
 
+      <!--
+        第 176 批：一键求助
+        ------------------------------------------------------------------
+        农户识别出病害之后，最常见的下一步是**拿去问人**（微信群、农资店、农技员）。
+        但"打开论坛写帖子"在手机上是件重活，而移动端本来就没有论坛
+        （设计约定：论坛留给桌面端，见 router/index.js 的说明）。
+
+        所以这里做的是**复制一段现成的求助文案**：病名、把握多大、主要症状、
+        系统给的防治建议、识别图片的链接 —— 粘到微信群里就能问，
+        对方看得懂，农户也不用打字。
+      -->
+      <div class="card">
+        <p class="card-title">{{ t('askHelp.title') }}</p>
+        <p class="muted ask-hint">{{ t('askHelp.hint') }}</p>
+        <van-button
+          block
+          round
+          type="primary"
+          icon="records-o"
+          :loading="askingHelp"
+          @click="askForHelp"
+        >
+          {{ t('askHelp.copy') }}
+        </van-button>
+      </div>
+
       <!-- 纠错反馈：一条识别结果只提交一次 -->
       <div class="card">
         <p class="card-title">{{ t('result.feedbackAsk') }}</p>
@@ -129,8 +155,10 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showFailToast, showImagePreview, showSuccessToast } from 'vant';
 import { fetchHistoryDetail } from '@/api/history';
+import { copyText } from '@/utils/clipboard';  // 第 176 批：复制求助文案（含 HTTP 回退）
 import { submitRecognitionFeedback } from '@/api/detection';
-import { fetchPestOptions } from '@/api/content';  // 第 91 批：纠错时选"正确病害"
+import { fetchPestOptions } from '@/api/content';
+import { showDialog, showToast } from 'vant';  // 第 176 批：复制成功/失败提示  // 第 91 批：纠错时选"正确病害"
 import { formatApiError } from '@/api/http';
 import { useDetectStore } from '@/stores/detect';
 import { useI18n } from '@/i18n';
@@ -164,6 +192,64 @@ const symptoms = computed(() => pick(disease.value.symptoms, disease.value.sympt
 const prevention = computed(() => pick(disease.value.prevention, disease.value.preventionEn));
 
 const displayImage = computed(() => result.value?.annotatedImage || result.value?.originalImage || '');
+
+/**
+ * 一键求助（第 176 批）
+ * ------------------------------------------------------------------
+ * 拼出一段**可以直接粘到微信群里**的文案，然后复制到剪贴板。
+ * 文案里带：病名、把握多大、主要症状、系统给的防治建议、识别图片链接。
+ *
+ * 为什么是"复制"而不是"去论坛发帖"：移动端没有论坛（设计上留给桌面端），
+ * 而农户真实的提问场景就是微信群 —— 复制一段现成的话，比让他打字现实得多。
+ *
+ * 复制失败时（HTTP 局域网下 Clipboard API 不可用、execCommand 也被拦）
+ * **把文案显示出来**让用户长按复制 —— 宁可多一步，也不能"点了没反应"。
+ */
+const askingHelp = ref(false);
+
+const buildHelpText = () => {
+  const name = disease.value?.name || result.value?.disease_name || '';
+  const percent = confidencePercent.value;
+  const symptom = disease.value?.symptoms || result.value?.symptoms || '';
+  const prevent = prevention.value || '';
+  const rawImage = result.value?.annotatedImage || result.value?.originalImage || '';
+  // ⚠️ 后端在 Windows 上给出的图片地址可能带反斜杠（编码后是 %5C），
+  // 而且这里是**相对路径** —— 粘到微信里别人根本点不开。统一成绝对地址 + 正斜杠。
+  const image = rawImage
+    ? new URL(String(rawImage).replace(/\\/g, '/').replace('%5C', '/'), window.location.origin).href
+    : '';
+
+  const lines = [
+    t('askHelp.heading', { disease: name }),
+    t('askHelp.lineConfidence', { disease: name, percent }),
+  ];
+  if (symptom) lines.push(t('askHelp.lineSymptom', { symptom: String(symptom).slice(0, 200) }));
+  if (prevent) lines.push(t('askHelp.linePrevention', { prevention: String(prevent).slice(0, 200) }));
+  if (image) lines.push(t('askHelp.lineImage', { url: image }));
+  lines.push(t('askHelp.lineQuestion'));
+  return lines.join('\n');
+};
+
+const askForHelp = async () => {
+  askingHelp.value = true;
+  try {
+    const text = buildHelpText();
+    const ok = await copyText(text);
+    if (ok) {
+      showToast(t('askHelp.copied'));
+      return;
+    }
+    // 兜底：把文案显示出来，让用户长按复制
+    showDialog({
+      title: t('askHelp.copyFailedTitle'),
+      message: text,
+      messageAlign: 'left',
+      confirmButtonText: t('common.confirm'),
+    });
+  } finally {
+    askingHelp.value = false;
+  }
+};
 
 const confidencePercent = computed(() => {
   const value = disease.value.confidence || 0;
@@ -276,6 +362,13 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 176 批：求助卡片的说明小字 */
+.ask-hint {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
 .result-page {
   min-height: 100vh;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
