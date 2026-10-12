@@ -1,6 +1,5 @@
 <template>
   <div class="page mine-page">
-    <van-nav-bar :title="t('mine.title')" fixed placeholder />
 
     <div class="page-pad">
       <!-- 未登录：不弹回登录页，就地引导（点"我的"多半只是想看看有没有登录） -->

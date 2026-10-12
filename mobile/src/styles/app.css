@@ -62,13 +62,6 @@ body {
   padding: 18px 16px 10px;
 }
 
-.brand-bar h1 {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--brand);
-}
-
 .brand-logo {
   width: 38px;
   height: 38px;

@@ -2,7 +2,12 @@
   <div class="page detect-page">
     <div class="brand-bar">
       <span class="brand-logo">叶</span>
-      <h1>{{ t('detect.title') }}</h1>
+      <!--
+        第 173 批：这里原来有一个 `<h1>{{ t('detect.title') }}</h1>`。
+        顶栏收进外壳后，页面标题由 App.vue 统一渲染 —— 留着就变成
+        **同一屏里两个"病害识别"** ✗（把顶栏加出来之后一眼就看出来了），所以整块去掉。
+        品牌标记（叶）与语言切换保留：前者是识别页的身份，后者是手机上切语言的入口。
+      -->
       <button type="button" class="lang-switch" @click="toggleLocale">
         {{ locale === 'en' ? '中文' : 'EN' }}
       </button>

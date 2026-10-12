@@ -1,10 +1,5 @@
 <template>
   <div class="auth-page">
-    <van-nav-bar
-      :title="t('auth.forgotTitle')"
-      left-arrow
-      @click-left="goBack"
-    />
 
     <div class="auth-hero">
       <h2>{{ t('auth.forgotTitle') }}</h2>

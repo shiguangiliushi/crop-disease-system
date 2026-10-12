@@ -5,7 +5,7 @@
  * 桌面端的论坛、百科、看板等一律不放 —— 手机屏幕塞不下，
  * 硬塞的结果是每个页面都不好用。
  *
- * meta 约定：
+ * meta 约定（第 173 批起顶栏由 App.vue 统一渲染，所以多了 back / navbar）：
  *   requiresAuth: true   → 未登录跳登录页（带上回跳地址）
  *   tabbar: false        → 不显示底部导航（登录/注册/结果页）
  *   title                → i18n key，用于 document.title
@@ -26,14 +26,14 @@ const routes = [
     path: '/register',
     name: 'register',
     component: () => import('@/views/RegisterView.vue'),
-    meta: { title: 'auth.registerTitle', tabbar: false },
+    meta: { title: 'auth.registerTitle', tabbar: false, back: true },
   },
   {
     // 第 91 批：忘记密码。此前移动端没有这一页，忘了密码 = 永久登不进（只能找管理员）。
     path: '/forgot-password',
     name: 'forgot-password',
     component: () => import('@/views/ForgotPasswordView.vue'),
-    meta: { title: 'auth.forgotTitle', tabbar: false },
+    meta: { title: 'auth.forgotTitle', tabbar: false, back: true },
   },
   {
     path: '/detect',
@@ -45,7 +45,7 @@ const routes = [
     path: '/result',
     name: 'result',
     component: () => import('@/views/ResultView.vue'),
-    meta: { title: 'result.title', requiresAuth: true, tabbar: false },
+    meta: { title: 'result.title', requiresAuth: true, tabbar: false, back: true },
   },
   {
     // 从识别记录点进来的详情：同一个结果页，数据源换成接口
@@ -53,7 +53,7 @@ const routes = [
     name: 'result-detail',
     component: () => import('@/views/ResultView.vue'),
     props: true,
-    meta: { title: 'history.detail', requiresAuth: true, tabbar: false },
+    meta: { title: 'history.detail', requiresAuth: true, tabbar: false, back: true },
   },
   {
     path: '/history',

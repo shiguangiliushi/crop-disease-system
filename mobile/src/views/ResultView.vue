@@ -1,12 +1,5 @@
 <template>
   <div class="page result-page">
-    <van-nav-bar
-      :title="isDetail ? t('history.detail') : t('result.title')"
-      left-arrow
-      fixed
-      placeholder
-      @click-left="goBack"
-    />
 
     <div v-if="loading" class="loading-box">
       <van-loading color="#2e7d32" vertical>{{ t('common.loading') }}</van-loading>

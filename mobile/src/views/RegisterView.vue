@@ -1,6 +1,5 @@
 <template>
   <div class="auth-page">
-    <van-nav-bar :title="t('auth.registerTitle')" left-arrow @click-left="router.back()" />
 
     <div class="auth-hero">
       <p class="muted">{{ t('auth.registerSubtitle') }}</p>

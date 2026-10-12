@@ -1,5 +1,7 @@
-node_modules
+﻿node_modules
 dist
 .npm-cache
 *.local
 .DS_Store
+# 第 173 批：移动端 E2E 的截图留证（本地用，不入库；要发布的图放 docs/images）
+dsh-shots

@@ -9,7 +9,10 @@
     </div>
 
     <div class="auth-hero">
-      <h2>{{ t('auth.loginTitle') }}</h2>
+      <!--
+        第 173 批：这里原来的 `<h2>{{ t('auth.loginTitle') }}</h2>` 与外壳顶栏重复
+        （顶栏标题用的就是同一个 key），去掉标题、保留副标题。
+      -->
       <p class="muted">{{ t('auth.loginSubtitle') }}</p>
     </div>
 

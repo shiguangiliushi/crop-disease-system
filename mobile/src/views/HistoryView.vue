@@ -1,6 +1,5 @@
 <template>
   <div class="page history-page">
-    <van-nav-bar :title="t('history.title')" fixed placeholder />
 
     <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
       <div class="page-pad">
