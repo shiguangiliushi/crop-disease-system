@@ -43,7 +43,7 @@
           <van-button
             block
             round
-            color="#2e7d32"
+            type="primary"
             size="large"
             :loading="detecting"
             :loading-text="t('detect.uploading')"
@@ -68,8 +68,8 @@
     <!-- 上传/识别进度：两段式（真实上传进度 → 服务端分析） -->
     <van-overlay :show="detecting" z-index="2500" :lock-scroll="true">
       <div class="progress-wrap">
-        <van-loading color="#7ec87e" size="30" vertical>{{ progressText }}</van-loading>
-        <van-progress :percentage="progress" color="#7ec87e" :show-pivot="false" track-color="#3d4a3d" />
+        <van-loading color="var(--brand)" size="30" vertical>{{ progressText }}</van-loading>
+        <van-progress :percentage="progress" color="var(--brand)" :show-pivot="false" track-color="#3d4a3d" />
         <p class="progress-detail">{{ progressDetail }}</p>
       </div>
     </van-overlay>
@@ -320,7 +320,7 @@ onBeforeUnmount(stopProgressTimer);
 }
 
 .entry--primary {
-  background: #e8f5e9;
+  background: var(--brand-soft);
 }
 
 .entry-icon {

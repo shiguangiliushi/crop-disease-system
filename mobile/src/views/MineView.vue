@@ -9,7 +9,7 @@
           <p class="guest-name">{{ t('mine.guest') }}</p>
           <p class="muted">{{ t('mine.guestHint') }}</p>
         </div>
-        <van-button size="small" round color="#2e7d32" @click="router.push('/login')">
+        <van-button size="small" round type="primary" @click="router.push('/login')">
           {{ t('mine.goLogin') }}
         </van-button>
       </div>
@@ -251,7 +251,7 @@ watch(() => auth.userId, loadStats);
   border-radius: 50%;
   object-fit: cover;
   flex: 0 0 auto;
-  background: #e8f5e9;
+  background: var(--brand-soft);
 }
 
 .avatar--guest,
@@ -259,7 +259,7 @@ watch(() => auth.userId, loadStats);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #2e7d32;
+  color: var(--brand);
   font-size: 1.2rem;
   font-weight: 700;
 }
@@ -292,7 +292,7 @@ watch(() => auth.userId, loadStats);
 
 .stat strong {
   font-size: 1.25rem;
-  color: #2e7d32;
+  color: var(--brand);
 }
 
 .stat span {

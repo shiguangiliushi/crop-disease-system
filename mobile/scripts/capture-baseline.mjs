@@ -8,6 +8,7 @@
  *   suffix 省略 → 拍基线（-before）；传 after → 拍改后
  */
 import { chromium } from '@playwright/test';
+import { clearThrottle } from './helpers.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -39,6 +40,9 @@ const PAGES = [...PAGES_AUTHED, ...PAGES_GUEST];
 const AUTHED = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'zh-CN' };
 const USERNAME = process.env.MOBILE_E2E_USER || 'admin';
 const PASSWORD = process.env.MOBILE_E2E_PASS || 'admin123456';
+
+// ⚠️ 先清限流：登录接口有频率限制，E2E 连跑几轮就会被挡住
+clearThrottle();
 
 const browser = await chromium.launch();
 

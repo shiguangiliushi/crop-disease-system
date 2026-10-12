@@ -49,10 +49,8 @@
       <div class="auth-actions">
         <van-button
           round
-          block
-          type="primary"
+          block type="primary"
           native-type="submit"
-          color="#2e7d32"
           :loading="loading"
           :loading-text="t('auth.registering')"
         >

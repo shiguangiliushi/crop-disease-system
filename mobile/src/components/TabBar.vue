@@ -1,5 +1,5 @@
 <template>
-  <van-tabbar route fixed placeholder safe-area-inset-bottom active-color="#2e7d32">
+  <van-tabbar route fixed placeholder safe-area-inset-bottom>
     <van-tabbar-item replace to="/detect" icon="photograph">{{ t('nav.detect') }}</van-tabbar-item>
     <van-tabbar-item replace to="/history" icon="records">{{ t('nav.history') }}</van-tabbar-item>
     <van-tabbar-item replace to="/mine" icon="user-o">{{ t('nav.mine') }}</van-tabbar-item>

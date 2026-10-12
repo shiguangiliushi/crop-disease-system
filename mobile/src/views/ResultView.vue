@@ -2,12 +2,12 @@
   <div class="page result-page">
 
     <div v-if="loading" class="loading-box">
-      <van-loading color="#2e7d32" vertical>{{ t('common.loading') }}</van-loading>
+      <van-loading color="var(--brand)" vertical>{{ t('common.loading') }}</van-loading>
     </div>
 
     <div v-else-if="!result" class="loading-box">
       <p class="muted">{{ t('common.empty') }}</p>
-      <van-button size="small" round color="#2e7d32" @click="router.replace('/detect')">
+      <van-button size="small" round type="primary" @click="router.replace('/detect')">
         {{ t('detect.title') }}
       </van-button>
     </div>
@@ -63,7 +63,7 @@
             size="small"
             round
             :type="feedback === true ? 'primary' : 'default'"
-            :color="feedback === true ? '#2e7d32' : undefined"
+            :color="feedback === true ? 'var(--brand)' : undefined"
             :loading="feedbackLoading"
             @click="sendFeedback(true)"
           >
@@ -105,7 +105,7 @@
       <p class="disclaimer muted">{{ t('result.disclaimer') }}</p>
 
       <div class="result-actions">
-        <van-button block round color="#2e7d32" size="large" @click="router.replace('/detect')">
+        <van-button block round type="primary" size="large" @click="router.replace('/detect')">
           {{ t('result.retry') }}
         </van-button>
         <van-button block round plain size="large" @click="router.push('/history')">
@@ -184,7 +184,7 @@ const confidenceTagType = computed(() => {
 });
 
 const confidenceColor = computed(() => {
-  if (confidencePercent.value >= 70) return '#2e7d32';
+  if (confidencePercent.value >= 70) return 'var(--brand)';
   if (confidencePercent.value >= 40) return '#f0a020';
   return '#d9534f';
 });
@@ -334,12 +334,12 @@ onMounted(async () => {
 .confidence-value {
   font-size: 1.05rem;
   font-weight: 700;
-  color: #2e7d32;
+  color: var(--brand);
 }
 
 .saved-tip {
   margin: 10px 0 0;
-  color: #2e7d32;
+  color: var(--brand);
 }
 
 .feedback-row {

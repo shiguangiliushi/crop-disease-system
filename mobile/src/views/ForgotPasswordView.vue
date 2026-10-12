@@ -2,7 +2,11 @@
   <div class="auth-page">
 
     <div class="auth-hero">
-      <h2>{{ t('auth.forgotTitle') }}</h2>
+      <!--
+        第 174 批：去掉这里的 <h2>{{ t('auth.forgotTitle') }}</h2> ——
+        顶栏标题用的就是同一个 key，留着就是同屏两个「找回密码」
+        （登录页与注册页在第 173 批已经改掉了，漏了这一页）。
+      -->
       <p class="muted">{{ t('auth.forgotSubtitle') }}</p>
     </div>
 
@@ -15,7 +19,8 @@
         <van-icon name="info-o" /> {{ t('auth.forgotNotReceived') }}
       </p>
       <div class="auth-actions">
-        <van-button round block color="#2e7d32" @click="goBack">
+        <!-- 第 174 批：原来写死 color="#2e7d32"，改成 type="primary" 走主题变量 -->
+      <van-button round block type="primary" @click="goBack">
           {{ t('auth.backToLogin') }}
         </van-button>
       </div>
@@ -43,7 +48,6 @@
           block
           type="primary"
           native-type="submit"
-          color="#2e7d32"
           :loading="loading"
           :loading-text="t('auth.sending')"
         >

@@ -15,6 +15,7 @@
  * 用法：node scripts/verify-app-shell.mjs
  */
 import { chromium } from '@playwright/test';
+import { clearThrottle } from './helpers.mjs';
 
 const UI = 'http://127.0.0.1:5174';
 const results = [];
@@ -35,6 +36,9 @@ const EXPECT = {
 };
 
 const AUTHED = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'zh-CN' };
+// ⚠️ 先清限流：登录接口有频率限制，E2E 连跑几轮就会被挡住
+clearThrottle();
+
 const browser = await chromium.launch();
 const errors = [];
 

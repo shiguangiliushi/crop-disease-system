@@ -31,12 +31,16 @@
           </van-swipe-cell>
         </van-list>
 
-        <div v-if="!items.length && !loading" class="empty-box">
-          <p class="muted">{{ t('history.empty') }}</p>
-          <van-button size="small" round color="#2e7d32" @click="router.push('/detect')">
+        <!--
+          第 174 批：空状态换成 van-empty —— 之前是自定义的小方块 + 一行字 + 一个写死主色的按钮，
+          在一个已经全量用 Vant 的 App 里显得像"另一个 app 拼进来的页面"。
+          按钮一并改成 type="primary"（走主题变量，不再写死十六进制）。
+        -->
+        <van-empty v-if="!items.length && !loading" :description="t('history.empty')">
+          <van-button size="small" round type="primary" @click="router.push('/detect')">
             {{ t('history.emptyAction') }}
           </van-button>
-        </div>
+        </van-empty>
       </div>
     </van-pull-refresh>
   </div>
@@ -210,11 +214,4 @@ const confirmDelete = async (item) => {
   height: 100%;
 }
 
-.empty-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  padding: 60px 20px;
-}
 </style>
