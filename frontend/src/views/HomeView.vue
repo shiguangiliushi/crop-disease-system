@@ -277,10 +277,19 @@ const features = [
 //   · 想改数量只改 `commonDiseases` 一处；
 //   · 中英文切换时数量自然跟着文案走（原来数字写死，若某种语言多一条就会对不上）。
 const popularCrops = computed(() => {
+  // 第 169 批：图标换成**「关于」页那套作物 emoji**（🍎🥔🌽🍇）。
+  //
+  // 原来这里是 Bootstrap 图标，而且是"凑合"出来的：苹果用 `bi-bug`（一只虫子 ✗）、
+  // 马铃薯用 `bi-circle`、玉米用 `bi-flower2`、葡萄用 `bi-basket`（代码里自己写着
+  // "使用篮子图标作为替代"）。同一个"苹果"在关于页是 🍎、在首页是一只虫子，
+  // 用户看到的就是"两张页面各说各话"（用户反馈要求换成关于页那一套）。
+  //
+  // 用 emoji 而不是图标字体还有一个实际好处：emoji 由系统字体渲染，
+  // 不依赖 Font Awesome / Bootstrap Icons 有没有加载成功 —— 首页首屏最不该出现空方块。
   const crops = [
     {
       name: t('home.cropApple'),
-      icon: 'bi bi-bug',
+      icon: '🍎',
       path: '/pests?crop=apple',
       commonDiseases: [
         t('home.diseaseAppleScab'),
@@ -291,16 +300,14 @@ const popularCrops = computed(() => {
     },
     {
       name: t('home.cropPotato'),
-      // 第 105 批审计发现：马铃薯与玉米用的是同一个图标（`bi-person-badge`，一个人像），
-      // 显然是复制粘贴留下的。这里换成土豆/玉米更贴近的图标（葡萄那个原本就有注释）。
-      icon: 'bi bi-circle',
+      icon: '🥔',
       path: '/pests?crop=potato',
       commonDiseases: [t('home.diseasePotatoEarlyBlight'), t('home.diseasePotatoLateBlight')],
       bgColor: '#e3f2fd'
     },
     {
       name: t('home.cropCorn'),
-      icon: 'bi bi-flower2',
+      icon: '🌽',
       path: '/pests?crop=corn',
       commonDiseases: [
         t('home.diseaseCornCommonRust'),
@@ -311,7 +318,7 @@ const popularCrops = computed(() => {
     },
     {
       name: t('home.cropGrape'),
-      icon: 'bi-basket',  // 使用篮子图标作为替代
+      icon: '🍇',
       path: '/pests?crop=grape',
       commonDiseases: [
         t('home.diseaseGrapeLeafBlight'),
@@ -468,7 +475,8 @@ const popularCrops = computed(() => {
           :style="{ '--crop-bg': crop.bgColor }"
         >
           <div class="crop-main" @click="navigateTo(crop.path)">
-            <div class="crop-icon"><i :class="crop.icon"></i></div>
+            <!-- 第 169 批：图标改为直接渲染 emoji（与「关于」页同一套），不再是图标字体的 class -->
+            <div class="crop-icon" aria-hidden="true">{{ crop.icon }}</div>
             <div class="crop-info">
               <!-- 作物名与病害名来自数据库，属"内容"，保持原样 -->
               <h3>{{ crop.name }}</h3>
@@ -1117,7 +1125,9 @@ const popularCrops = computed(() => {
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow-xs);
-  font-size: 22px;
+  /* 第 169 批：这里现在是作物 emoji（与「关于」页同一套），不再是图标字体 */
+  font-size: 28px;
+  line-height: 1;
   color: var(--brand-700);
 }
 

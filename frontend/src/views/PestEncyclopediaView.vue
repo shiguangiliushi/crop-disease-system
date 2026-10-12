@@ -142,7 +142,16 @@
           </div>
 
           <div class="pagination-info">
-            Page {{ currentPage }}/{{ totalPages }} · {{ allFilteredPests.length }} entries
+            <!--
+              第 169 批：这句原本是**写死的英文** ——
+              中文界面下显示 "Page 1/5 · 26 entries"（用户反馈）。
+              走 i18n：中文「第 1/5 页 · 共 26 条」，英文保持原样。
+            -->
+            {{ t('wiki.pageInfo', {
+              page: currentPage,
+              total: totalPages,
+              count: allFilteredPests.length,
+            }) }}
           </div>
         </div>
       </div>
