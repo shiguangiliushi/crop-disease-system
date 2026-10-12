@@ -46,6 +46,8 @@ class AdminAuditLog(models.Model):
         ('comment.bulk_delete', '批量软删除评论'),
         ('feedback.bulk_status', '批量流转反馈状态'),
         ('feedback.bulk_delete', '批量删除反馈'),
+        # 第 172 批：控制台「识别记录」页的删除（不可逆，图片文件一并删）
+        ('detection.delete', '删除识别记录'),
         ('board.create', '新建版块'),
         ('board.update', '编辑版块'),
         ('board.set_status', '版块启停'),

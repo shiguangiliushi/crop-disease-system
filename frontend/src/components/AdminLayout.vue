@@ -46,6 +46,10 @@ const navItems = [
     capability: authStore.CAP_CONTENT },
   { to: '/admin/users', icon: 'fas fa-users-gear', labelKey: 'manage.users',
     capability: authStore.CAP_USER_ADMIN },
+  // 第 172 批：识别记录（跨用户的全局视图）—— 与「用户管理」同档：
+  // 记录里带用户身份与用户上传的图片，所以走 USER_ADMIN 而不是内容能力。
+  { to: '/admin/detection-history', icon: 'fas fa-clock-rotate-left',
+    labelKey: 'manage.detections', capability: authStore.CAP_USER_ADMIN },
   { to: '/admin/review', icon: 'fas fa-clipboard-check', labelKey: 'manage.review',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
   // 第 147 批：论坛管理（与内容审核同一模块：能审帖的人就能管理帖子）

@@ -11742,3 +11742,172 @@ class PostPestTagTests(APITestCase):
         rows = [row for row in response.data['results'] if row['title'].startswith('zz标签：列表带标签')]
         self.assertTrue(rows)
         self.assertEqual(rows[0]['pests'][0]['name'], '苹果黑星病')
+
+
+class AdminDetectionTests(APITestCase):
+    """
+    控制台「识别记录」接口（第 172 批）
+
+    农户每识别一次落一条 DetectionHistory。这一页给管理员**跨用户**的全局视图，
+    所以这里把三件事钉死：
+
+      · **门禁**：识别记录里带用户身份与用户上传的图片 → 与「用户管理」同档（USER_ADMIN）。
+        普通用户 403、内容编辑员也 403（他能审内容，但不该看用户的识别历史）；
+      · **筛选口径**：搜索 / 按用户 / 按词条 / 只看未匹配 / 置信度区间 / 日期区间，
+        以及"统计数字跟着筛选走"（否则筛完还显示全库总数，会让人以为没生效）；
+      · **删除**：仅全权管理员，且**行与图片文件一起删** —— 只删行会留下孤儿文件，
+        media 目录越滚越大（健康页的"媒体目录体积"就是这么涨的）。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_superuser(
+            username='zz_det_admin', password='pw12345678', email='', role='ADMIN')
+        self.plain = User.objects.create_user(
+            username='zz_det_plain', password='pw12345678', role='USER')
+        self.editor = User.objects.create_user(
+            username='zz_det_editor', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=self.editor, module='review')
+
+        self.pest = PestInfo.objects.create(
+            name='苹果黑星病', name_en='Apple scab', crop_type='苹果', crop_type_en='Apple',
+            english_identifier='Apple___Apple_scab_zzdet', symptoms='绒状霉层')
+
+        # 三条记录：已匹配 / 未匹配 / 低置信度
+        self.matched = DetectionHistory.objects.create(
+            user=self.plain, detection_result='苹果黑星病', confidence=0.95,
+            pest_info=self.pest, image='detection_uploads/zz_det_a.jpg')
+        self.unmatched = DetectionHistory.objects.create(
+            user=self.plain, detection_result='未知叶斑', confidence=0.71,
+            pest_info=None, image='detection_uploads/zz_det_b.jpg')
+        self.low = DetectionHistory.objects.create(
+            user=self.admin, detection_result='苹果黑星病', confidence=0.42,
+            pest_info=self.pest, image='detection_uploads/zz_det_c.jpg')
+
+        self.c_admin = APIClient(); self.c_admin.force_authenticate(user=self.admin)
+        self.c_plain = APIClient(); self.c_plain.force_authenticate(user=self.plain)
+        self.c_editor = APIClient(); self.c_editor.force_authenticate(user=self.editor)
+
+    def tearDown(self):
+        DetectionHistory.objects.filter(
+            detection_result__in=('苹果黑星病', '未知叶斑')).delete()
+        PestInfo.objects.filter(english_identifier='Apple___Apple_scab_zzdet').delete()
+        get_user_model().objects.filter(username__startswith='zz_det_').delete()
+
+    def _ids(self, response):
+        return [row['id'] for row in response.data['results']]
+
+    # -- 门禁 ---------------------------------------------------------------
+    def test_permissions(self):
+        """普通用户与内容编辑员都拿不到（识别记录属于用户数据）"""
+        self.assertEqual(self.c_admin.get('/api/admin/detections/').status_code,
+                         status.HTTP_200_OK)
+        self.assertEqual(self.c_plain.get('/api/admin/detections/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.c_editor.get('/api/admin/detections/').status_code,
+                         status.HTTP_403_FORBIDDEN)
+        self.assertIn(self.c_plain.get('/api/admin/detections/').status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    def test_anonymous_rejected(self):
+        self.assertIn(APIClient().get('/api/admin/detections/').status_code,
+                      (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    # -- 列表内容 -----------------------------------------------------------
+    def test_list_shape_and_no_base64(self):
+        """
+        列表要**轻**：只回图片地址，绝不回 base64。
+
+        农户端序列化器会把标注图的 base64 塞进响应（识别结果页要直接渲染它）——
+        列表页照抄的话，一页 20 条就是几十 MB。
+        """
+        response = self.c_admin.get('/api/admin/detections/?page_size=50')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = {row['id']: row for row in response.data['results']}
+        self.assertIn(self.matched.id, rows)
+        row = rows[self.matched.id]
+        self.assertEqual(row['user']['username'], 'zz_det_plain')
+        self.assertEqual(row['result'], '苹果黑星病')
+        self.assertTrue(row['matched'])
+        self.assertEqual(row['pest']['name'], '苹果黑星病')
+        self.assertTrue(row['image'].startswith('/media/'), row['image'])
+        # 没有任何字段像 base64 图片
+        joined = json.dumps(response.data, ensure_ascii=False)
+        self.assertNotIn('base64', joined.lower())
+        self.assertNotIn('data:image', joined)
+
+    def test_no_base64_key_is_gone(self):
+        """确认没把 base64 顺手塞进别的字段（例如 annotated_image）"""
+        response = self.c_admin.get('/api/admin/detections/?page_size=50')
+        for row in response.data['results']:
+            self.assertLess(len(row.get('annotated_image') or ''), 300)
+
+    # -- 筛选 ---------------------------------------------------------------
+    def test_filter_unmatched(self):
+        ids = self._ids(self.c_admin.get('/api/admin/detections/?matched=false&page_size=50'))
+        self.assertIn(self.unmatched.id, ids)
+        self.assertNotIn(self.matched.id, ids)
+
+    def test_filter_by_user_and_confidence(self):
+        ids = self._ids(self.c_admin.get(
+            f'/api/admin/detections/?user={self.admin.id}&page_size=50'))
+        self.assertEqual(ids, [self.low.id])
+
+        ids = self._ids(self.c_admin.get(
+            '/api/admin/detections/?confidence_max=0.6&page_size=50'))
+        self.assertIn(self.low.id, ids)
+        self.assertNotIn(self.matched.id, ids)
+
+    def test_search_by_username_and_result(self):
+        by_user = self._ids(self.c_admin.get('/api/admin/detections/?search=zz_det_plain&page_size=50'))
+        self.assertIn(self.matched.id, by_user)
+        self.assertNotIn(self.low.id, by_user)
+
+        by_result = self._ids(self.c_admin.get('/api/admin/detections/?search=未知&page_size=50'))
+        self.assertEqual(by_result, [self.unmatched.id])
+
+    def test_invalid_filters_do_not_500(self):
+        """非法筛选值一律忽略（不报错）—— 与其它管理列表一致"""
+        for query in ('?user=abc', '?pest=abc', '?confidence_min=abc',
+                      '?date_from=2026-13-45', '?ordering=drop_table'):
+            response = self.c_admin.get(f'/api/admin/detections/{query}')
+            self.assertEqual(response.status_code, status.HTTP_200_OK, query)
+
+    def test_stats_follow_filters(self):
+        """
+        统计数字必须是**当前筛选条件下**的。
+
+        否则点开"只看未匹配"后，上面还写着全库总数 —— 用户会以为筛选没生效。
+        """
+        all_stats = self.c_admin.get('/api/admin/detections/').data['stats']
+        self.assertGreaterEqual(all_stats['total'], 3)
+        self.assertGreaterEqual(all_stats['unmatched'], 1)
+
+        filtered = self.c_admin.get('/api/admin/detections/?matched=false').data['stats']
+        self.assertEqual(filtered['matched'], 0)
+        self.assertEqual(filtered['total'], filtered['unmatched'])
+
+    # -- 删除 ---------------------------------------------------------------
+    def test_delete_requires_full_admin(self):
+        url = f'/api/admin/detections/{self.unmatched.id}/'
+        self.assertEqual(self.c_editor.delete(url).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.c_plain.delete(url).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(DetectionHistory.objects.filter(id=self.unmatched.id).exists())
+
+    def test_admin_delete_removes_row_and_writes_audit(self):
+        target = DetectionHistory.objects.create(
+            user=self.plain, detection_result='苹果黑星病', confidence=0.9,
+            pest_info=self.pest, image='detection_uploads/zz_det_del.jpg')
+        response = self.c_admin.delete(f'/api/admin/detections/{target.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(DetectionHistory.objects.filter(id=target.id).exists())
+
+        log = AdminAuditLog.objects.filter(action='detection.delete').first()
+        self.assertIsNotNone(log, '删除识别记录必须留下审计记录')
+        self.assertEqual(str(log.target_id), str(target.id))
+        self.assertIn('zz_det_plain', log.detail or '')
+
+    def test_delete_missing_row_is_404(self):
+        self.assertEqual(self.c_admin.delete('/api/admin/detections/99999999/').status_code,
+                         status.HTTP_404_NOT_FOUND)

@@ -77,6 +77,9 @@ AdminCommentSoftDeleteView = import_view('api.views_comments_admin', 'AdminComme
 AdminCommentRestoreView = import_view('api.views_comments_admin', 'AdminCommentRestoreView')
 AdminCommentHardDeleteView = import_view('api.views_comments_admin', 'AdminCommentHardDeleteView')
 AdminCommentBulkDeleteView = import_view('api.views_comments_admin', 'AdminCommentBulkDeleteView')
+# 第 172 批：控制台「识别记录」（跨用户看识别历史；删除仅全权管理员）
+AdminDetectionListView = import_view('api.views_detections_admin', 'AdminDetectionListView')
+AdminDetectionDeleteView = import_view('api.views_detections_admin', 'AdminDetectionDeleteView')
 UserCommentsView = import_view('api.views_user', 'UserCommentsView')  # 第 25 批：用户的评论列表
 # 第 23 批：用户资料完善（真实头像 + 修改密码）
 UserAvatarView = import_view('api.views_user', 'UserAvatarView')
@@ -354,6 +357,12 @@ api_urlpatterns = [
     # 第 146 批：管理操作日志（只读，仅全权管理员）
     # 第 157 批：系统健康（与操作日志同档：会暴露部署细节，仅全权管理员）
     path('admin/health/', AdminHealthView.as_view(), name='admin-health'),
+    # 第 172 批：控制台「识别记录」—— 跨用户看识别历史（USER_ADMIN 能力；
+    # 删除不可逆，仅全权管理员）。注意路径与农户端的 `history/` 不是一回事：
+    # 那边只看自己的记录。
+    path('admin/detections/', AdminDetectionListView.as_view(), name='admin-detections'),
+    path('admin/detections/<int:pk>/', AdminDetectionDeleteView.as_view(),
+         name='admin-detection-delete'),
     path('admin/audit-logs/', AdminAuditLogListView.as_view(), name='admin-audit-logs'),
     path('admin/audit-logs/actions/', AdminAuditLogActionsView.as_view(),
          name='admin-audit-log-actions'),
