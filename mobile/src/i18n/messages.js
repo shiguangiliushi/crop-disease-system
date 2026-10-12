@@ -129,6 +129,16 @@ export const messages = {
       lineImage: '识别照片：{url}',
       lineQuestion: '我该怎么处理？用点什么药、多久一次？先谢谢各位！',
     },
+    // 第 177 批：生成可分享的识别结果卡片（图片）
+    shareCard: {
+      make: '生成分享图',
+      previewTitle: '识别结果卡片',
+      confidence: '识别把握 {percent}',
+      footer: '拍照识别 · 科学防治',
+      hint: '长按上面的图片即可保存或转发到微信；部分手机可用下面的分享按钮。',
+      share: '分享到…',
+      failed: '生成分享图失败，请稍后再试',
+    },
     result: {
       title: '识别结果',
       detected: '检出病害',
@@ -350,6 +360,16 @@ export const messages = {
       linePrevention: 'Suggested treatment: {prevention}',
       lineImage: 'Photo: {url}',
       lineQuestion: 'How should I treat it — which product, and how often? Thanks in advance!',
+    },
+    // Batch 177: generate a shareable result card (image)
+    shareCard: {
+      make: 'Make share image',
+      previewTitle: 'Diagnosis card',
+      confidence: '{percent} confidence',
+      footer: 'Photo diagnosis · science-based treatment',
+      hint: 'Long-press the image to save or forward it (WeChat included). Some phones also support the share button below.',
+      share: 'Share…',
+      failed: 'Could not create the image — please try again',
     },
     result: {
       title: 'Result',

@@ -79,7 +79,47 @@
         >
           {{ t('askHelp.copy') }}
         </van-button>
+        <!--
+          第 177 批：生成**图片卡片**。
+          文字链接在群里经常没人点，而农户之间本来就是"发图说话"：
+          照片 + 病名 + 处理办法一张图说完，农资店老板扫一眼就能答。
+        -->
+        <van-button
+          block
+          round
+          plain
+          type="primary"
+          icon="photo-o"
+          class="share-card-btn"
+          :loading="sharingCard"
+          @click="openShareCard"
+        >
+          {{ t('shareCard.make') }}
+        </van-button>
       </div>
+
+      <!-- 分享图预览：手机上保存图片靠"长按"，所以这里必须把图**显示出来** -->
+      <van-dialog
+        v-model:show="shareCardVisible"
+        :title="t('shareCard.previewTitle')"
+        :show-confirm-button="false"
+        close-on-click-overlay
+      >
+        <div class="share-card-body">
+          <img v-if="shareCardUrl" :src="shareCardUrl" class="share-card-img" :alt="t('shareCard.previewTitle')" />
+          <p class="muted share-card-hint">{{ t('shareCard.hint') }}</p>
+          <van-button
+            v-if="canShareFiles"
+            block
+            round
+            type="primary"
+            class="share-card-action"
+            @click="shareTheCard"
+          >
+            {{ t('shareCard.share') }}
+          </van-button>
+        </div>
+      </van-dialog>
 
       <!-- 纠错反馈：一条识别结果只提交一次 -->
       <div class="card">
@@ -155,7 +195,8 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showFailToast, showImagePreview, showSuccessToast } from 'vant';
 import { fetchHistoryDetail } from '@/api/history';
-import { copyText } from '@/utils/clipboard';  // 第 176 批：复制求助文案（含 HTTP 回退）
+import { copyText } from '@/utils/clipboard';
+import { dataUrlToFile, renderResultCard } from '@/utils/shareCard';  // 第 177 批：生成分享图  // 第 176 批：复制求助文案（含 HTTP 回退）
 import { submitRecognitionFeedback } from '@/api/detection';
 import { fetchPestOptions } from '@/api/content';
 import { showDialog, showToast } from 'vant';  // 第 176 批：复制成功/失败提示  // 第 91 批：纠错时选"正确病害"
@@ -228,6 +269,68 @@ const buildHelpText = () => {
   if (image) lines.push(t('askHelp.lineImage', { url: image }));
   lines.push(t('askHelp.lineQuestion'));
   return lines.join('\n');
+};
+
+/**
+ * 生成"可分享的识别结果卡片"（第 177 批）
+ * ------------------------------------------------------------------
+ * 画一张 750×1000 的图（App 名 / 识别图 / 病名 / 置信度 / 处理办法摘要），
+ * 然后**显示出来**让用户长按保存或转发 —— 手机浏览器（尤其微信内置）里
+ * "下载图片"基本靠长按，给一个下载按钮反而没人会用。
+ *
+ * 支持 Web Share API Level 2 的机型（安卓 Chrome、iOS 16.4+ Safari）
+ * 额外给一个"分享"按钮，直接调系统分享面板。
+ */
+const sharingCard = ref(false);
+const shareCardVisible = ref(false);
+const shareCardUrl = ref('');
+const shareCardFile = ref(null);
+
+/** 机型是否支持"分享文件"（不支持就只给长按提示） */
+const canShareFiles = computed(() => {
+  if (!shareCardFile.value || typeof navigator.canShare !== 'function') return false;
+  try { return navigator.canShare({ files: [shareCardFile.value] }); } catch { return false; }
+});
+
+const openShareCard = async () => {
+  sharingCard.value = true;
+  try {
+    const raw = result.value?.annotatedImage || result.value?.originalImage || '';
+    // 与求助文案同一套处理：绝对地址 + 正斜杠（后端在 Windows 上给的是反斜杠路径）
+    const imageUrl = raw
+      ? new URL(String(raw).replace(/\\/g, '/').replace('%5C', '/'), window.location.origin).href
+      : '';
+    const advice = prevention.value || disease.value?.symptoms || '';
+    shareCardUrl.value = await renderResultCard({
+      imageUrl,
+      diseaseName: disease.value?.name || result.value?.disease_name || '',
+      confidenceText: t('shareCard.confidence', { percent: `${confidencePercent.value}%` }),
+      advice: String(advice).slice(0, 220),
+      appName: t('common.appName'),
+      footer: t('shareCard.footer'),
+    });
+    shareCardFile.value = dataUrlToFile(shareCardUrl.value);
+    shareCardVisible.value = true;
+  } catch (error) {
+    console.error('[shareCard] 生成失败:', error);
+    showToast(t('shareCard.failed'));
+  } finally {
+    sharingCard.value = false;
+  }
+};
+
+const shareTheCard = async () => {
+  if (!shareCardFile.value) return;
+  try {
+    await navigator.share({
+      files: [shareCardFile.value],
+      title: t('shareCard.previewTitle'),
+      text: disease.value?.name || '',
+    });
+  } catch (error) {
+    // 用户取消分享不算错误，不打扰他
+    if (error?.name !== 'AbortError') console.warn('[shareCard] 分享失败:', error?.message || error);
+  }
 };
 
 const askForHelp = async () => {
@@ -362,6 +465,32 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 177 批：分享图按钮与预览 */
+.share-card-btn {
+  margin-top: 10px;
+}
+
+.share-card-body {
+  padding: 4px 16px 16px;
+  text-align: center;
+}
+
+.share-card-img {
+  width: 100%;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.share-card-hint {
+  margin: 12px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.share-card-action {
+  margin-top: 12px;
+}
+
 /* 第 176 批：求助卡片的说明小字 */
 .ask-hint {
   margin: 0 0 10px;
