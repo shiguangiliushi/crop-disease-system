@@ -2249,6 +2249,9 @@ export const zhCN = {
     requiredFields: '请先补全带 * 的必填项',
     submittedForReview: '已提交，等待管理员审核通过后公开',
     postOk: '发帖成功！',
+    // 第 170 批：编辑已有帖子保存成功后用它 —— 原来复用「发帖成功！」，
+    // 会让人以为又发了一篇新的（用户反馈的截图就是编辑页）。
+    postUpdated: '更新成功！',
     loadBoardsFailed: '获取版块列表失败：{detail}',
     draftSaved: '本地草稿已保存（{time}）',
     draftAutoSave: '边写边自动存到本机，误关页面也不丢',
@@ -5078,6 +5081,7 @@ export const en = {
     requiredFields: 'Please complete the required fields marked *',
     submittedForReview: 'Submitted — it will go public once an admin approves it',
     postOk: 'Posted!',
+    postUpdated: 'Updated!',
     loadBoardsFailed: 'Could not load the board list: {detail}',
     draftSaved: 'Draft saved locally ({time})',
     draftAutoSave: 'Saved to this device as you type — safe to close the page',

@@ -616,6 +616,32 @@ export default {
     // 被外层 catch 吞掉，用户点了"保存草稿"其实什么都没发生。
     // 现在把函数体提取成 performDraftSave：定时器用 debounce 包装，显式调用直接执行。
     /**
+     * 保存成功后：把「脏」的比对基准挪到当前表单（第 170 批）
+     * ========================================================================
+     * ## 为什么必须有这一步
+     *
+     * 本页的"有没有未保存的修改"是**表单与 `originalForm` 基准比对**出来的
+     * （见下面的 watch），而 `useUnsavedChanges` 的离开守卫会在**每次离开时重新求值**。
+     * 于是出现过这样的荒谬场景（用户反馈）：
+     *
+     *   点「更新帖子」→ 保存**成功** → 提示"更新成功" → 紧接着 `router.push` 去详情页
+     *   → 守卫重新比对，发现表单内容和**打开时的基准**不一样 → 弹
+     *   「当前页面还有未保存的内容，离开后这些修改会丢失」✗
+     *
+     * 用户这时无论点「留在此页」还是「离开并放弃修改」都不对：修改其实**已经存好了**。
+     * （同一类问题第 167 批在发帖页出现过一次，那里的判定是"表单里有没有字"，
+     *   当时用一个 `published` 标记放行；这里是基准比对，正确做法就是**挪基准**。）
+     *
+     * 挪完基准还顺带修好了两处小别扭：
+     *   · "取消编辑 / 返回"按钮的文案与禁用状态跟着 `isDirty` 走，保存后自然变成「返回」；
+     *   · 保存后再点「保存草稿」不会因为"没改过"而变成空操作。
+     */
+    const markFormSaved = () => {
+      originalForm.value = JSON.parse(JSON.stringify(form.value));
+      isDirty.value = false;
+    };
+
+    /**
      * @param {boolean} force 用户**显式**点了"保存草稿"（表单校验失败后改存草稿、
      *        保存失败后重试）时为 true —— 这时即使 isDirty 为 false（比如打开帖子
      *        后一个字没改）也要真的写一次，否则按钮就是个摆设。
@@ -674,7 +700,9 @@ export default {
         
         // 清除本地草稿
         clearDraft();
-        
+        // 第 170 批：草稿也是"已经存好了" → 挪基准，否则之后离开页面会被守卫拦下
+        markFormSaved();
+
         lastSaved.value = new Date();
         saveStatus.value = t('post.draftSaved', { time: formatTime(lastSaved.value) });
         
@@ -786,9 +814,20 @@ export default {
         if (response && response.id) {
           // 清除草稿
           clearDraft();
+          // 第 170 批：**必须**在 router.push 之前挪基准 ——
+          // 否则离开守卫会在跳转时重新判定"还有未保存的修改"，弹出
+          // 「当前页面还有未保存的内容，离开后这些修改会丢失」（用户反馈的正是这个）。
+          markFormSaved();
           
           // 显示成功消息
-          const successMessage = isDraft ? t('post.draftSavedNoTime') : t('post.postOk');
+          //
+          // 第 170 批：区分"新建"与"更新" —— 编辑一篇已有帖子后提示「发帖成功！」
+          // 会让人以为又发了一篇新的（用户反馈的截图里标题是「编辑帖子」、
+          // 按钮是「更新帖子」，提示却写"发帖成功"）。
+          const isEditing = Boolean(route.params.id);
+          const successMessage = isDraft
+            ? t('post.draftSavedNoTime')
+            : (isEditing ? t('post.postUpdated') : t('post.postOk'));
           ElMessage.success(successMessage);
           
           // 跳转到详情页
@@ -882,8 +921,11 @@ export default {
       try {
         deleting.value = true;
         await deletePost(route.params.id);
-        
+
         ElMessage.success(t('post.postDeleted'));
+        // 第 170 批：帖子都删掉了，再问"要不要放弃未保存的修改"毫无意义 ——
+        // 不置干净的话，删除成功后跳回论坛会被自己的离开守卫拦下。
+        isDirty.value = false;
         router.push({ name: 'forum' });
       } catch (error) {
         console.error('删除失败:', error);
