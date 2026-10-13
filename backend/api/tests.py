@@ -1394,13 +1394,26 @@ class RichTextSanitizerContractTests(TestCase):
         self.assertIn('FORBID_ATTR', source)
 
     def test_v_html_call_sites_use_the_sanitizer(self):
-        """用到 v-html 渲染用户内容的页面必须引用净化函数"""
-        views_dir = Path(__file__).resolve().parents[2] / 'frontend' / 'src' / 'views'
-        for name in ('PostDetailView.vue', 'ContentReviewView.vue', 'NewsDetailView.vue'):
-            source = (views_dir / name).read_text(encoding='utf-8')
+        """
+        用到 v-html 渲染用户内容的页面必须引用净化函数
+
+        ⚠️ 第 183 批：审核预览弹窗随「内容审核 / 论坛管理 / 评论管理」三页合并
+        搬进了 `components/admin/content/PostPanel.vue`（原 `views/ContentReviewView.vue`
+        已删除），这里跟着改路径 —— **覆盖的东西一个字没变**：
+        凡是把用户写的正文塞进 v-html 的地方，都必须先过 `sanitizeRichText`。
+        """
+        frontend_src = Path(__file__).resolve().parents[2] / 'frontend' / 'src'
+        targets = (
+            frontend_src / 'views' / 'PostDetailView.vue',
+            frontend_src / 'views' / 'NewsDetailView.vue',
+            frontend_src / 'components' / 'admin' / 'content' / 'PostPanel.vue',
+        )
+        for path in targets:
+            self.assertTrue(path.exists(), f'前端文件不见了（改名/搬动后要同步这条测试）：{path}')
+            source = path.read_text(encoding='utf-8')
             self.assertIn(
                 'sanitizeRichText', source,
-                f'{name} 里渲染用户内容却没有引用 sanitizeRichText（存储型 XSS 回归）',
+                f'{path.name} 里渲染用户内容却没有引用 sanitizeRichText（存储型 XSS 回归）',
             )
 
 
@@ -12152,7 +12165,8 @@ class PostDeletePermissionTests(APITestCase):
     错的是**前端**：那个按钮原先没有任何 v-if，编辑员看得到、点了必然 403。
 
     所以这条测试把后端口径钉死（防止哪天有人"顺手放宽"），
-    前端那一半由 AdminForumView 的 v-if=canDelete 保证。
+    前端那一半由 `components/admin/content/PostPanel.vue` 的 v-if="forumCanDelete" 保证
+    （第 183 批合并进「内容管理」之前是 AdminForumView.vue 的 v-if="canDelete"）。
     """
 
     def setUp(self):

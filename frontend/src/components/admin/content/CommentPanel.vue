@@ -1,0 +1,485 @@
+<script setup>
+/**
+ * 「内容管理」— 评论页签（第 183 批）
+ * ============================================================================
+ * 本组件 = 原 `/admin/comments`「评论管理」页（第 149/152 批）**原样搬过来**，
+ * 只把顶部的 `<h1>` 页头换成了页内的一条工具行（页面标题由 Hub 提供）。
+ * 业务逻辑、接口、分页、筛选、权限判定、确认框文案一行未改。
+ *
+ * ## 权限（与后端一致，前端只是"不画"）
+ *   · **看 + 软删除 + 批量软删除**：`review` **或** `forum` 内容模块
+ *     （信息编辑员即可，软删除是内容审核的日常工作：内容置为 `[已删除]`、行还在、可追溯）；
+ *   · **硬删除 / 恢复**（不可逆）：**仅全权管理员** —— 按钮只给这类人画，
+ *     后端 `AdminCommentHardDeleteView` / `restore` 同样 403。批量**不提供**硬删除。
+ *
+ * ⚠️ 页签可见性由 Hub 负责（`review` 或 `forum` 模块），本组件不再自己判一遍"能不能进"。
+ */
+import { computed, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import {
+  bulkSoftDeleteComments, fetchAdminComments, hardDeleteComment, restoreComment,
+  softDeleteComment,
+} from '@/api/adminComment';
+import { formatApiError } from '@/api/http';
+import { formatTime } from '@/utils/date';
+import { useI18n } from '@/i18n';
+import { useAuthStore } from '@/stores/auth';
+import { useQueryState } from '@/composables/useQueryState';
+
+defineOptions({ name: 'ContentCommentPanel' });
+
+const { t } = useI18n();
+const router = useRouter();
+const authStore = useAuthStore();
+
+const items = ref([]);
+const total = ref(0);
+const loading = ref(false);
+const page = ref(1);
+const pageSize = ref(10);
+const filters = ref({ search: '', scope: '' });
+const selectedIds = ref([]);
+const bulkActing = ref(false);
+
+/**
+ * 能看评论管理、能软删（与后端门禁对齐）
+ *
+ * 第 151 批：`forum`（论坛交流）也算 —— 评论管理正是论坛工作的一部分；
+ * `review` 仍是宽口径，两边都留（老账号不掉权限）。
+ */
+const canModerate = computed(() => Boolean(
+  authStore.hasContentModule?.('review')
+  || authStore.hasContentModule?.('forum')
+  || authStore.user?.is_staff
+  || authStore.user?.is_superuser,
+));
+/** 能彻底删除 / 恢复：仅全权管理员 */
+const canHardDelete = computed(() => Boolean(authStore.isAdmin));
+
+const buildParams = () => {
+  const params = { page: page.value, page_size: pageSize.value };
+  if (filters.value.search.trim()) params.search = filters.value.search.trim();
+  if (filters.value.scope === 'deleted') params.only_deleted = 'true';
+  return params;
+};
+
+const loadList = async () => {
+  loading.value = true;
+  try {
+    const data = await fetchAdminComments(buildParams());
+    items.value = data.results || [];
+    total.value = data.count ?? items.value.length;
+  } catch (error) {
+    ElMessage.error(formatApiError(error, t('commentAdmin.loadFailed')));
+  } finally {
+    loading.value = false;
+  }
+};
+
+const applyFilter = () => { page.value = 1; loadList(); };
+const handleSizeChange = () => { page.value = 1; loadList(); };
+const hasFilter = computed(() => Boolean(filters.value.search.trim() || filters.value.scope));
+const resetFilters = () => {
+  filters.value = { search: '', scope: '' };
+  applyFilter();
+};
+
+const onSelectionChange = (rows) => { selectedIds.value = rows.map((row) => row.id); };
+const clearSelection = () => { selectedIds.value = []; };
+
+const softRemove = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      t('commentAdmin.softDeleteConfirm'),
+      t('commentAdmin.softDelete'),
+      { type: 'warning', confirmButtonText: t('commentAdmin.softDelete'),
+        cancelButtonText: t('common.cancel') },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await softDeleteComment(row.id);
+    ElMessage.success(t('commentAdmin.softDeleteOk'));
+    await loadList();
+  } catch (error) {
+    ElMessage.error(formatApiError(error, t('commentAdmin.softDeleteFailed')));
+  }
+};
+
+/**
+ * 恢复一条被软删除的评论（第 152 批，仅全权管理员）
+ *
+ * 确认框里额外提示一件事：这条可能是**作者本人**删的（row.deleted_by）——
+ * 把他自己删掉的评论放回去之前，管理员应当知道自己在推翻谁的操作。
+ */
+const restore = async (row) => {
+  const byAuthor = row.deleted_by
+    ? t('commentAdmin.restoreConfirmBy', { name: row.deleted_by })
+    : t('commentAdmin.restoreConfirmUnknown');
+  try {
+    await ElMessageBox.confirm(
+      t('commentAdmin.restoreConfirm', { text: row.original_content || '' }) + byAuthor,
+      t('commentAdmin.restore'),
+      { type: 'warning', confirmButtonText: t('commentAdmin.restore'),
+        cancelButtonText: t('common.cancel') },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await restoreComment(row.id);
+    ElMessage.success(t('commentAdmin.restoreOk'));
+    await loadList();
+  } catch (error) {
+    ElMessage.error(formatApiError(error, t('commentAdmin.restoreFailed')));
+  }
+};
+
+const hardRemove = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      t('commentAdmin.hardDeleteConfirm'),
+      t('commentAdmin.hardDelete'),
+      { type: 'error', confirmButtonText: t('commentAdmin.hardDelete'),
+        cancelButtonText: t('common.cancel') },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await hardDeleteComment(row.id);
+    ElMessage.success(t('commentAdmin.hardDeleteOk'));
+    await loadList();
+  } catch (error) {
+    ElMessage.error(formatApiError(error, t('commentAdmin.hardDeleteFailed')));
+  }
+};
+
+const bulkRemove = async () => {
+  const count = selectedIds.value.length;
+  try {
+    await ElMessageBox.confirm(
+      t('commentAdmin.bulkDeleteConfirm', { count }),
+      t('commentAdmin.bulkDelete'),
+      { type: 'warning', confirmButtonText: t('commentAdmin.bulkDelete'),
+        cancelButtonText: t('common.cancel') },
+    );
+  } catch {
+    return;
+  }
+  bulkActing.value = true;
+  try {
+    const data = await bulkSoftDeleteComments(selectedIds.value);
+    if (!data || data.failed === 0) {
+      ElMessage.success(t('commentAdmin.bulkDeleteOk', { count: data?.succeeded ?? 0 }));
+    } else {
+      ElMessage.warning(t('review.bulkPartial', { ok: data.succeeded, failed: data.failed }));
+    }
+    clearSelection();
+    await loadList();
+  } catch (error) {
+    ElMessage.error(formatApiError(error, t('commentAdmin.bulkDeleteFailed')));
+  } finally {
+    bulkActing.value = false;
+  }
+};
+
+const openPost = (postId) => {
+  window.open(router.resolve({ name: 'post-detail', params: { id: postId } }).href, '_blank');
+};
+
+// 筛选与分页进 URL（第 98 批约定）
+const filterRef = (key) => ({
+  get value() { return filters.value[key]; },
+  set value(next) { filters.value[key] = next ?? ''; },
+});
+const { isReady: queryReady } = useQueryState({
+  fields: {
+    page: { ref: page, type: 'int', default: 1 },
+    page_size: { ref: pageSize, type: 'int', default: 10 },
+    search: { ref: filterRef('search'), type: 'string', default: '' },
+    scope: { ref: filterRef('scope'), type: 'string', default: '' },
+  },
+  onExternalChange: () => loadList(),
+});
+
+watch(queryReady, (ready) => {
+  if (ready) loadList();
+}, { immediate: true });
+</script>
+
+<template>
+  <div class="content-comment-panel">
+    <header class="hub-block-head">
+      <span class="hub-block-icon"><i class="fas fa-comment-dots"></i></span>
+      <div class="hub-block-text">
+        <h2>{{ t('commentAdmin.title') }}</h2>
+        <p>{{ t('commentAdmin.subtitle') }}</p>
+      </div>
+      <div class="hub-block-actions">
+        <el-button plain :loading="loading" @click="loadList">
+          <i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}
+        </el-button>
+      </div>
+    </header>
+
+    <div class="filter-bar">
+      <el-select v-model="filters.scope" :placeholder="t('commentAdmin.scopeFilter')"
+                 style="width: 160px" @change="applyFilter">
+        <el-option :label="t('commentAdmin.scopeNormal')" value="" />
+        <el-option :label="t('commentAdmin.scopeDeleted')" value="deleted" />
+      </el-select>
+      <el-input v-model="filters.search" :placeholder="t('commentAdmin.searchPlaceholder')"
+                clearable style="width: 260px" @clear="applyFilter" @keyup.enter="applyFilter">
+        <template #prefix><i class="fas fa-search"></i></template>
+        <template #append>
+          <el-button @click="applyFilter"><i class="fas fa-search"></i></el-button>
+        </template>
+      </el-input>
+      <el-button plain :disabled="!hasFilter" @click="resetFilters">
+        <i class="fas fa-rotate-left"></i> {{ t('commentAdmin.resetFilters') }}
+      </el-button>
+      <span class="total-hint">{{ t('commentAdmin.totalHint', { count: total }) }}</span>
+    </div>
+
+    <!-- 批量条：只有"能审核"的人看得到（软删除=审核工作） -->
+    <div v-if="canModerate" class="bulk-bar">
+      <span v-if="selectedIds.length" class="bulk-count">
+        {{ t('commentAdmin.selectedCount', { count: selectedIds.length }) }}
+      </span>
+      <span v-else class="bulk-count muted">{{ t('commentAdmin.selectHint') }}</span>
+      <div class="bulk-actions">
+        <el-button size="small" type="danger" plain :disabled="!selectedIds.length"
+                   :loading="bulkActing" @click="bulkRemove">
+          <i class="fas fa-trash"></i> {{ t('commentAdmin.bulkDelete') }}
+        </el-button>
+        <el-button v-if="selectedIds.length" size="small" text @click="clearSelection">
+          {{ t('review.clearSelection') }}
+        </el-button>
+      </div>
+    </div>
+
+    <el-table
+      v-loading="loading"
+      :data="items"
+      row-key="id"
+      class="admin-table"
+      @selection-change="onSelectionChange"
+    >
+      <el-table-column v-if="canModerate" type="selection" width="46"
+                       :selectable="(row) => !row.is_deleted" reserve-selection />
+
+      <el-table-column :label="t('commentAdmin.colContent')" min-width="330">
+        <template #default="{ row }">
+          <div class="comment-text" :class="{ 'is-deleted': row.is_deleted }">
+            {{ row.content || t('commentAdmin.emptyContent') }}
+          </div>
+          <!-- 第 152 批：已删除的评论把**原内容**显示出来（后端留的档）——
+               管理员要看着原文才能判断"这条该不该恢复"。 -->
+          <div v-if="row.is_deleted && row.original_content" class="original-text">
+            <span class="original-label">{{ t('commentAdmin.originalContent') }}</span>
+            {{ row.original_content }}
+            <!-- 删除人写在行里：管理员**在决定要不要恢复之前**就该看到
+                 "这条是作者自己删的、还是版主删的" -->
+            <span v-if="row.deleted_by" class="deleted-by">
+              {{ t('commentAdmin.deletedBy', { name: row.deleted_by }) }}
+            </span>
+          </div>
+          <div v-else-if="row.is_deleted" class="original-text muted">
+            {{ t('commentAdmin.noOriginal') }}
+          </div>
+          <div class="comment-sub">
+            <span><i class="fas fa-user"></i> {{ row.author?.username || t('forum.unknownUser') }}</span>
+            <span><i class="fas fa-clock"></i> {{ formatTime(row.created_at, 'YYYY-MM-DD HH:mm') }}</span>
+            <span v-if="row.parent"><i class="fas fa-reply"></i> {{ t('commentAdmin.isReply') }}</span>
+          </div>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('commentAdmin.colPost')" min-width="200">
+        <template #default="{ row }">
+          <el-button v-if="row.post" link type="primary" @click="openPost(row.post.id)">
+            {{ row.post.title || `#${row.post.id}` }}
+          </el-button>
+          <span v-else class="muted">{{ t('commentAdmin.postGone') }}</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('commentAdmin.colStatus')" width="110">
+        <template #default="{ row }">
+          <el-tag size="small" :type="row.is_deleted ? 'info' : 'success'" effect="light">
+            {{ row.is_deleted ? t('commentAdmin.statusDeleted') : t('commentAdmin.statusNormal') }}
+          </el-tag>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="t('commentAdmin.colActions')" width="210" fixed="right">
+        <template #default="{ row }">
+          <el-button v-if="!row.is_deleted" size="small" type="danger" link @click="softRemove(row)">
+            {{ t('commentAdmin.softDelete') }}
+          </el-button>
+          <!--
+            第 152 批：恢复（仅全权管理员）
+            · 只有"删过 + 留了原文"的才能恢复 → 用 can_restore 提前禁用，
+              并说明原因（本批之前删的评论没留原文，后端会 400）；
+            · 后端也是 is_full_admin 门禁 —— 编辑员的本职是"删"，"恢复"是纠错。
+          -->
+          <el-button v-if="canHardDelete && row.is_deleted" size="small" type="primary" link
+                     :disabled="!row.can_restore"
+                     :title="row.can_restore ? '' : t('commentAdmin.noOriginalHint')"
+                     @click="restore(row)">
+            {{ t('commentAdmin.restore') }}
+          </el-button>
+          <!-- 硬删除不可逆：只给全权管理员画这个按钮（后端也是 403） -->
+          <el-button v-if="canHardDelete" size="small" type="danger" link @click="hardRemove(row)">
+            {{ t('commentAdmin.hardDelete') }}
+          </el-button>
+          <span v-if="row.is_deleted && !canHardDelete" class="muted">—</span>
+        </template>
+      </el-table-column>
+
+      <template #empty>
+        <el-empty :description="t('commentAdmin.empty')" :image-size="80" />
+      </template>
+    </el-table>
+
+    <el-pagination
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[10, 20, 50]"
+      layout="total, sizes, prev, pager, next"
+      class="admin-pagination"
+      @current-change="loadList"
+      @size-change="handleSizeChange"
+    />
+  </div>
+</template>
+
+<style scoped>
+/* ----------------------------------------------------------------------------
+   页签内的区块头（第 183 批）：样式与 PostPanel / ReportPanel 里的同名类一致 ——
+   三个面板各自 scoped，无法共享，改动时请三处一起改。
+   ---------------------------------------------------------------------------- */
+.hub-block-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.hub-block-icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--brand-50, #f1f9f4);
+  color: var(--brand-700, #1f6343);
+  font-size: 16px;
+}
+
+.hub-block-text {
+  min-width: 0;
+}
+
+.hub-block-text h2 {
+  margin: 0 0 3px;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink-900, #1b2b23);
+}
+
+.hub-block-text p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-500, #78897f);
+}
+
+.hub-block-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 原 AdminCommentsView 的样式 ---------- */
+.comment-text {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-800);
+  word-break: break-word;
+}
+
+.comment-text.is-deleted {
+  color: var(--ink-400, #9dada5);
+  font-style: italic;
+}
+
+.original-text {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--brand-300, #9ecfb8);
+  background: var(--ink-50);
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-600, #5b6b62);
+  word-break: break-word;
+}
+
+.original-label {
+  font-weight: 600;
+  margin-right: 4px;
+  color: var(--brand-700, #1c6b4b);
+}
+
+.deleted-by {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-400, #9dada5);
+}
+
+.comment-sub {
+  margin-top: 4px;
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--ink-400, #9dada5);
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--ink-50);
+}
+
+.bulk-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand-700, #1c6b4b);
+}
+
+.bulk-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-pagination {
+  margin-top: 14px;
+  justify-content: flex-end;
+}
+</style>

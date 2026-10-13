@@ -186,7 +186,9 @@ class ReportViewSet(APIView):
                     type='system',
                     title=f'收到新的举报：{report.get_reason_display()}',
                     message=f'{report.reporter.username} 举报了 {report.target_label}',
-                    url='/admin/review',
+                    # 第 183 批：举报处理搬进了「内容管理」页的**举报页签**
+                    # （只有它是给全权管理员的，收件人也正是全权管理员）。
+                    url='/admin/content?tab=reports',
                     actor=report.reporter,
                 )
         except Exception:

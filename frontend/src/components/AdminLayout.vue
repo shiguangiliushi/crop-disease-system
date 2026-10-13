@@ -50,14 +50,11 @@ const navItems = [
   // 记录里带用户身份与用户上传的图片，所以走 USER_ADMIN 而不是内容能力。
   { to: '/admin/detection-history', icon: 'fas fa-clock-rotate-left',
     labelKey: 'manage.detections', capability: authStore.CAP_USER_ADMIN },
-  { to: '/admin/review', icon: 'fas fa-clipboard-check', labelKey: 'manage.review',
-    capability: authStore.CAP_CONTENT, module: authStore.MODULE_REVIEW },
-  // 第 147 批：论坛管理（与内容审核同一模块：能审帖的人就能管理帖子）
-  { to: '/admin/forum', icon: 'fas fa-comments', labelKey: 'manage.forum',
-    capability: authStore.CAP_CONTENT,
-    modules: [authStore.MODULE_REVIEW, authStore.MODULE_FORUM] },
-  // 第 149 批：评论管理（与论坛管理同一模块：评论审核就是内容审核工作）
-  { to: '/admin/comments', icon: 'fas fa-comment-dots', labelKey: 'manage.comments',
+  // 第 183 批：「内容管理」—— 原来的「内容审核」「论坛管理」「评论管理」三项合并成一页
+  // （页签：帖子 / 评论 / 举报）。三项本来就是同一件事的三个入口：都由
+  // 「内容审核(review)」或「论坛交流(forum)」覆盖，用户在三个入口之间来回找。
+  // ⚠️ 一个相关模块都没有的人**看不到这一项**（modules 过滤），与后端一致。
+  { to: '/admin/content', icon: 'fas fa-layer-group', labelKey: 'manage.content',
     capability: authStore.CAP_CONTENT,
     modules: [authStore.MODULE_REVIEW, authStore.MODULE_FORUM] },
   // 第 157 批：系统健康（**仅全权管理员** —— 会暴露服务器路径与部署细节）

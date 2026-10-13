@@ -514,7 +514,8 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
                         f'{post.author.username} posted in "{post.board.name_en or post.board.name}" '
                         f'and it is waiting for review'
                     ),
-                    url='/admin/review',
+                    # 第 183 批：审核队列在「内容管理」页的**帖子页签**（原 /admin/review）
+                    url='/admin/content?tab=posts',
                     actor=post.author,
                     post=post,
                 )

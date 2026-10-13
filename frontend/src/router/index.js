@@ -134,21 +134,47 @@ const router = createRouter({
         title: '通知中心'
       }
     },
-    // 第 38 批：内容审核（待审核帖子 + 敏感词词库，仅管理员）
+    // 第 183 批：「内容管理」—— 把原来的「内容审核 / 论坛管理 / 评论管理」三页合并成
+    // **一个页面 + 三个页签**（帖子 / 评论 / 举报）。
+    // 为什么合并：侧栏里那三项都由「内容审核(review)」或「论坛交流(forum)」覆盖
+    // （见 backend/api/capabilities.py），本来就是同一件事的三个入口，
+    // 用户得记住"删帖去哪个、删评论去哪个"。
+    // 页签各自按模块显示：帖子/评论 = review 或 forum；举报 = **仅全权管理员**
+    // （后端 `views_report._can_handle_reports()` = `is_full_admin()`，编辑员点了会 403，
+    //  所以那个页签根本不画给他）。
+    // 地址带 `?tab=posts|comments|reports`，可直接分享；旧三条地址是重定向（见下）。
     {
-      path: '/admin/review',
-      name: 'content-review',
-      component: () => import('@/views/ContentReviewView.vue'),
+      path: '/admin/content',
+      name: 'admin-content',
+      component: () => import('@/views/AdminContentHubView.vue'),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
         capability: 'CONTENT',   // 第 126 批：内容生产
-        module: 'review',    // 第 128 批：内容侧按模块隔离（内容审核）
+        // 第 151 批的写法：「内容审核」或「论坛交流」任一命中即可进（review 宽口径，forum 细口径）
+        modules: ['review', 'forum'],
         // 第 117 批：`adminArea` = 走管理后台外壳（AdminLayout：左侧栏 + 顶部条），
         // 不显示农户端的顶栏与页脚。App.vue 读这个标记（isAdminArea）。
         adminArea: true,
+        title: '内容管理',
+        breadcrumb: ['管理', '内容管理']
+      }
+    },
+    // 第 183 批：三条旧地址**全部保留为重定向**到新页对应页签 ——
+    // 书签、外链、E2E 里的 `/admin/forum?search=xx` 一律照旧；
+    // `...to.query` 必须带上：那两个页签的筛选与分页本来就写在 URL 上（第 98 批的约定），
+    // 丢掉参数会让"打开一条带筛选的老链接"变成"打开一个空列表"。
+    {
+      path: '/admin/review',
+      name: 'content-review',
+      redirect: (to) => ({ path: '/admin/content', query: { ...to.query, tab: 'posts' } }),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        capability: 'CONTENT',
+        module: 'review',    // 第 128 批：内容审核模块
         title: '内容审核',
-        breadcrumb: ['管理', '内容审核']
+        breadcrumb: ['管理', '内容管理', '帖子']
       }
     },
     // 第 39 批：管理员数据看板
@@ -493,18 +519,18 @@ const router = createRouter({
       // 第 149 批：管理端「评论管理」
       // 帖子有「论坛管理」页，评论却一直没有控制台入口 —— 一波广告刷在十几条帖子的
       // 评论区里，只能一条条帖子点进去删。农户端的评论列表还挂在帖子下，没法跨帖子看。
+      // 第 183 批：它成为「内容管理」的**评论页签**，这条地址改为重定向。
       path: '/admin/comments',
       name: 'admin-comments',
-      component: () => import('@/views/AdminCommentsView.vue'),
+      redirect: (to) => ({ path: '/admin/content', query: { ...to.query, tab: 'comments' } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
         capability: 'CONTENT',
         // 第 151 批：「内容审核」或「论坛交流」任一即可（review 宽口径，forum 细口径）
         modules: ['review', 'forum'],
-        adminArea: true,
         title: '评论管理',
-        breadcrumb: ['管理', '评论管理']
+        breadcrumb: ['管理', '内容管理', '评论']
       }
     },
 
@@ -529,9 +555,11 @@ const router = createRouter({
       // 第 147 批：管理端「论坛管理」
       // 在此之前控制台只能管理**待审核**的帖子（内容审核页）：已发布的帖子里有广告、
       // 有吵架、也有该置顶加精的好帖，但控制台看不到它们 —— 只能回农户端论坛翻。
+      // 第 183 批：它成为「内容管理」的**帖子页签**的第二块（帖子管理），这条地址改为重定向；
+      // 「内容审核」页的审核队列也并进了同一个页签。
       path: '/admin/forum',
       name: 'admin-forum',
-      component: () => import('@/views/AdminForumView.vue'),
+      redirect: (to) => ({ path: '/admin/content', query: { ...to.query, tab: 'posts' } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
@@ -539,9 +567,8 @@ const router = createRouter({
         capability: 'CONTENT',
         // 第 151 批：「内容审核」或「论坛交流」任一即可
         modules: ['review', 'forum'],
-        adminArea: true,   // 第 117 批：管理后台外壳
         title: '论坛管理',
-        breadcrumb: ['管理', '论坛管理']
+        breadcrumb: ['管理', '内容管理', '帖子']
       }
     },
 

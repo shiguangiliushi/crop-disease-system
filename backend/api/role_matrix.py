@@ -36,9 +36,16 @@
 """
 
 #: 内容模块 → 它解锁的管理端页面（与 frontend/src/components/AdminLayout.vue 的 navItems 对应）
+#:
+#: 第 183 批：`review` 与 `forum` 现在指向**同一页** ——
+#: 原来的 `/admin/review`（内容审核）、`/admin/forum`（论坛管理）、`/admin/comments`（评论管理）
+#: 三页合并成了 `/admin/content`「内容管理」（页内三个页签：帖子 / 评论 / 举报）。
+#: 这三个页签里，帖子与评论是 review **或** forum 任一即可（与后端 `is_moderator()` /
+#: `_reject_non_moderator` 同口径）；**举报只给全权管理员**（`is_full_admin`），
+#: 它不属于任何一个模块，所以在这一张表里没有对应的模块行。
 MODULE_PAGES = {
-    'review': ['/admin/review'],
-    'forum': ['/admin/forum', '/admin/comments'],
+    'review': ['/admin/content'],
+    'forum': ['/admin/content'],
     'news': ['/admin/news'],
     'pests': ['/admin/pests'],
     'feedback': ['/admin/feedback'],
@@ -147,7 +154,13 @@ def allowed(allow, capabilities, modules):
 
 
 def pages_of(capabilities, modules, is_full_admin=False):
-    """该账号在管理后台能看到哪些页面（顺序：公共 → 能力 → 模块 → 仅全权）"""
+    """
+    该账号在管理后台能看到哪些页面（顺序：公共 → 能力 → 模块 → 仅全权）
+
+    ⚠️ 第 183 批起这里会**保序去重**：`review` 与 `forum` 指向同一页
+    （`/admin/content` 的三个页签里，帖子与评论两个页签两边都能进），
+    同时勾了这两个模块的人不该在"能进的页面"里看到两次 `/admin/content`。
+    """
     pages = list(COMMON_PAGES)
     for capability, items in CAPABILITY_PAGES.items():
         if capability in capabilities:
@@ -157,7 +170,11 @@ def pages_of(capabilities, modules, is_full_admin=False):
             pages.extend(MODULE_PAGES[module])
     if is_full_admin:
         pages.extend(FULL_ADMIN_PAGES)
-    return pages
+    unique = []
+    for page in pages:
+        if page not in unique:
+            unique.append(page)
+    return unique
 
 
 def module_functions(module):

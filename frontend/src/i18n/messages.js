@@ -185,6 +185,8 @@ export const zhCN = {
     'admin-boards': '版块管理',
     'admin-forum': '论坛管理',
     'admin-comments': '评论管理',
+    // 第 183 批：三页合并后的「内容管理」（页签：帖子/评论/举报）
+    'admin-content': '内容管理',
     'admin-audit-logs': '操作日志',
     'admin-health': '系统健康',
     'admin-feedback': '意见反馈管理',
@@ -193,6 +195,8 @@ export const zhCN = {
   manage: {
     title: '管理',
     dashboard: '数据看板',
+    // 第 183 批：原「内容审核 / 论坛管理 / 评论管理」三项合并后的侧栏入口
+    content: '内容管理',
     review: '内容审核',
     news: '新闻管理',
     boards: '版块管理',
@@ -208,6 +212,23 @@ export const zhCN = {
     // 第 117 批：农户端顶栏那个下拉不再重复列 5 个管理页，
     // 只留"进入管理后台"这一个入口（其余都在后台的侧栏里）
     enterConsole: '进入管理后台',
+  },
+  // ==========================================================================
+  // 内容管理：一页三页签（第 183 批）
+  // --------------------------------------------------------------------------
+  // 原「内容审核 / 论坛管理 / 评论管理」三页合并成一页 + 三个页签。
+  // ⚠️ 页签名与三个面板的**区块标题**是两套文案，有意分开：
+  //    页签回答"我在这里切什么"（帖子/评论/举报），
+  //    区块标题沿用原来那几页的名字（review.title / forumAdmin.title / commentAdmin.title），
+  //    免得同一个功能又多出一个新名字。
+  // ==========================================================================
+  contentHub: {
+    subtitle: '帖子、评论与举报都在这一页处理 —— 页签按你被授权的模块显示。',
+    tabPosts: '帖子',
+    tabComments: '评论',
+    tabReports: '举报',
+    reportsSubtitle: '用户提交的举报与处置（仅全权管理员：回包里带举报人标识，且"下架内容"不可逆）',
+    noAccess: '你的账号没有「内容审核 / 论坛交流」权限，这一页没有可显示的内容。',
   },
   // ==========================================================================
   // 内容模块名（第 128 批）
@@ -3136,6 +3157,8 @@ export const en = {
     'admin-boards': 'Board management',
     'admin-forum': 'Forum management',
     'admin-comments': 'Comment management',
+    // 第 183 批：三页合并后的「内容管理」（页签：帖子/评论/举报）
+    'admin-content': 'Content management',
     'admin-audit-logs': 'Audit log',
     'admin-health': 'System health',
     'admin-feedback': 'Feedback management',
@@ -3144,6 +3167,8 @@ export const en = {
   manage: {
     title: 'Manage',
     dashboard: 'Dashboard',
+    // Batch 183: sidebar entry after merging Content review / Forum management / Comment management
+    content: 'Content management',
     // 第 134 批：这几个名字**同时是权限名**（第 128 批起内容拆成四个模块），
     // 所以侧栏、浏览器标签页、权限提示、页面标题必须**完全一致** ——
     // 以前同一个功能在侧栏叫 "News Admin"、在标签页叫 "News management"，
@@ -3165,6 +3190,15 @@ export const en = {
     pests: 'Disease wiki admin',
     notifications: 'Notifications',
     enterConsole: 'Open admin console',
+  },
+  // Batch 183: the content hub — one page, three tabs (see the Chinese side for why)
+  contentHub: {
+    subtitle: 'Posts, comments and reports in one place — tabs follow the modules you are granted.',
+    tabPosts: 'Posts',
+    tabComments: 'Comments',
+    tabReports: 'Reports',
+    reportsSubtitle: 'Reports submitted by users (full admins only: the payload identifies the reporter, and hiding content cannot be undone)',
+    noAccess: 'Your account has no Content review / Forum management permission, so this page has nothing to show.',
   },
   // 第 128 批：内容模块名（见中文侧说明）
   contentModule: {

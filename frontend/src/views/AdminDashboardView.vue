@@ -29,13 +29,15 @@
     <div v-if="todoCount > 0" class="todo-bar">
       <i class="fas fa-bell"></i>
       <span>{{ t('dashboard.todoLabel', { count: todoCount }) }}</span>
-      <RouterLink v-if="totals.pending_posts" to="/admin/review">
+      <!-- 第 183 批：三页合并后，待办直接落到「内容管理」的对应页签
+           （帖子=审核队列+帖子管理，举报=仅全权管理员那一页签） -->
+      <RouterLink v-if="totals.pending_posts" to="/admin/content?tab=posts">
         {{ t('dashboard.pendingPosts') }} {{ totals.pending_posts }}
       </RouterLink>
       <RouterLink v-if="totals.feedback_pending" to="/admin/feedback">
         {{ t('dashboard.pendingFeedback') }} {{ totals.feedback_pending }}
       </RouterLink>
-      <RouterLink v-if="totals.reports_pending" to="/admin/review">
+      <RouterLink v-if="totals.reports_pending" to="/admin/content?tab=reports">
         {{ t('dashboard.pendingReports') }} {{ totals.reports_pending }}
       </RouterLink>
     </div>
