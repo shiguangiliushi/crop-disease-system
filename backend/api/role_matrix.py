@@ -62,7 +62,7 @@ MODULE_LABELS = {
 
 #: 三个能力各自解锁的页面（内容页由模块决定，所以这里只列非内容的）
 CAPABILITY_PAGES = {
-    'USER_ADMIN': ['/admin/users', '/admin/detection-history'],
+    'USER_ADMIN': ['/admin/users'],   # 第 184 批：识别记录并入用户管理页的页签
     'BROADCAST': ['/admin/boards'],
 }
 

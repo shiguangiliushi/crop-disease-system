@@ -196,7 +196,7 @@ const router = createRouter({
       // 想看用户列表/专家身份只能进 Django 自带的 /admin/）
       path: '/admin/users',
       name: 'admin-users',
-      component: () => import('@/views/AdminUsersView.vue'),
+      component: () => import('@/views/AdminUserHubView.vue'),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
@@ -457,7 +457,8 @@ const router = createRouter({
       // 第 172 批：这里原来 redirect 到农户端 `/history`（第 22 批撤掉管理页时的权宜之计）——
       // 后果是管理员点进来只看到**自己**的识别记录，而管理端要的是跨用户的全局视图。
       // 现在是真的管理页：谁在什么时候认出了什么、置信度多少、有没有匹配到词条。
-      component: () => import('@/views/AdminDetectionHistoryView.vue'),
+      // 第 184 批：识别记录已并入「用户管理」页的第二个页签
+      redirect: (to) => ({ path: '/admin/users', query: { ...to.query, tab: 'detections' } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,

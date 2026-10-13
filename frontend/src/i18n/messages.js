@@ -9,6 +9,11 @@
  * 其余页面用 `docs/tools/check_i18n_coverage.py` 统计剩余量，按批推进。
  */
 export const zhCN = {
+  // 第 184 批：用户管理合并页的页签
+  userHub: {
+    tabUsers: '用户',
+    tabDetections: '识别记录',
+  },
   // 第 179 批：开通/修改编辑员时的"他能做什么"预览
   editorPerms: {
     title: '勾了这几项，他就能做这些：',
@@ -23,6 +28,8 @@ export const zhCN = {
       feedback: '查看全部反馈、回复、批量流转状态',
     },
   },
+
+
 
   common: {
     refresh: '刷新',
@@ -3000,6 +3007,11 @@ export const zhCN = {
 };
 
 export const en = {
+  // Batch 184: tabs of the merged user-management page
+  userHub: {
+    tabUsers: 'Users',
+    tabDetections: 'Detections',
+  },
   // Batch 179: "what can they do" preview when granting editor modules
   editorPerms: {
     title: 'With these checked, they can:',
