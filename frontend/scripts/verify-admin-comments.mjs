@@ -118,7 +118,9 @@ await loginAs(page, superName);
 const nav = await page.evaluate(
   () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
 );
-check('侧栏出现「评论管理」', nav.includes('评论管理'), nav);
+// 第 188 批：侧栏的「评论管理」已在第 183 批并入**一项**「内容管理」（页签区分），
+// 所以这里断言合并后的入口；`/admin/comments` 老地址仍会重定向到评论页签。
+check('侧栏出现「内容管理」（第 183 批合并后的入口）', nav.includes('内容管理'), nav);
 
 await page.goto(`${UI}/admin/comments?search=zz评论`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.el-table__row', { timeout: 25_000 });

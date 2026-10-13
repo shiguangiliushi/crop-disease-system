@@ -192,8 +192,9 @@ const forumCtx = await browser.newContext({ viewport: { width: 1700, height: 100
 const forumPage = await forumCtx.newPage();
 await loginAs(forumPage, forumEditorName);
 const forumNav = await navText(forumPage);
-check('论坛编辑员侧栏有「论坛管理」', forumNav.includes('论坛管理'), forumNav);
-check('论坛编辑员侧栏有「评论管理」', forumNav.includes('评论管理'), forumNav);
+// 第 188 批：侧栏三项（内容审核 / 论坛管理 / 评论管理）已在第 183 批合并成
+// **一项**「内容管理」（页签区分），所以这里断言合并后的入口，而不是三个旧名字。
+check('论坛编辑员侧栏有「内容管理」（第 183 批合并后的入口）', forumNav.includes('内容管理'), forumNav);
 check('论坛编辑员侧栏**没有**「内容审核」', !forumNav.includes('内容审核'), forumNav);
 check('论坛编辑员侧栏没有「用户管理」与「操作日志」',
   !forumNav.includes('用户管理') && !forumNav.includes('操作日志'), forumNav);
@@ -269,12 +270,14 @@ const reviewCtx = await browser.newContext({ viewport: { width: 1700, height: 10
 const reviewPage = await reviewCtx.newPage();
 await loginAs(reviewPage, reviewEditorName);
 const reviewNav = await navText(reviewPage);
-check('内容审核编辑员侧栏仍有「论坛管理」与「评论管理」',
-  reviewNav.includes('论坛管理') && reviewNav.includes('评论管理'), reviewNav);
+check('内容审核编辑员侧栏同样只有合并后的「内容管理」',
+  reviewNav.includes('内容管理'), reviewNav);
+// 老地址 /admin/forum 会**重定向**到 /admin/content?tab=posts —— 断言放宽成
+// "落到了那一页"，否则断言的是路由实现细节而不是"这个人能不能进"
 await reviewPage.goto(`${UI}/admin/forum`, { waitUntil: 'domcontentloaded' });
 await reviewPage.waitForTimeout(2500);
-check('内容审核编辑员仍能直接打开论坛管理页（老账号不掉权限）',
-  reviewPage.url().includes('/admin/forum'), reviewPage.url().replace(UI, ''));
+check('内容审核编辑员仍能打开「内容管理 · 帖子」页（老账号不掉权限）',
+  reviewPage.url().includes('/admin/content'), reviewPage.url().replace(UI, ''));
 
 await page.screenshot({ path: 'dsh-shots/admin-forum-module.png', clip: { x: 0, y: 0, width: 1700, height: 640 } });
 

@@ -5,8 +5,16 @@
  * 已发布的帖子里有广告、有吵架、也有该置顶加精的好帖 —— 但控制台看不到它们，
  * 只能回农户端论坛翻。
  *
+ * ⚠️ 第 183 批把这几个入口合并了，本脚本**在 188 批按新结构改过**，否则它是红的：
+ *   · 侧栏的「内容审核 / 论坛管理 / 评论管理」三项已并成一项**「内容管理」**
+ *     （`/admin/content?tab=posts|comments|reports`）；
+ *   · 页面里不再有 `.admin-hero h1`，论坛管理的标题是页面内第二个区块的 `h2`；
+ *   · 帖子表格与**审核队列的表格不是同一张**，选择器必须限定在论坛管理区块内
+ *     （区块里给了 `data-testid="forum-table"`，比按文案过滤稳）。
+ *   旧地址 `/admin/forum` 仍会重定向到这一页，所以老书签/老链接照样能用。
+ *
  * 覆盖：
- *   ① 侧栏出现「论坛管理」，页面能打开，概览小卡显示各状态数量
+ *   ① 侧栏出现「内容管理」，页面能打开，论坛管理区块在
  *   ② 列表默认把各状态的帖子都列出来（版主视角，这是管理页的前提）
  *   ③ 按状态/版块/关键字筛选生效，且**进 URL**（刷新/分享不丢）
  *   ④ 行内：待审帖「通过」→ 变成已发布；「驳回」要填原因
@@ -99,9 +107,19 @@ const loginAs = async (target, username) => {
   await target.waitForSelector('.admin-console', { timeout: 25_000 });
 };
 
-const rowTitles = () => page.evaluate(() => [...document.querySelectorAll('.el-table__row')]
-  .map((row) => row.innerText.replace(/\s+/g, ' ').trim()));
-const rowOf = (title) => page.locator('.el-table__row').filter({ hasText: title }).first();
+/**
+ * 论坛管理所在的区块（`data-testid` 由 PostPanel 提供）
+ *
+ * 为什么不按文案过滤：这一页里「内容审核」区块的文案也含"论坛"二字，而
+ * 「审核队列」区块里还有一排独立的复选框与按钮 —— 不限定范围就会选错元素
+ * （第 188 批改脚本时正是因为这一点才加了 testid）。
+ */
+const forumBlock = () => page.locator('.hub-block:has([data-testid="forum-table"])');
+/** 论坛管理这张表里的行（页面里还有审核队列的列表，必须限定） */
+const forumRows = () => forumBlock().locator('.el-table__row');
+const rowTitles = () => forumRows().allInnerTexts()
+  .then((list) => list.map((t) => t.replace(/\s+/g, ' ').trim()));
+const rowOf = (title) => forumRows().filter({ hasText: title }).first();
 
 await loginAs(page, superName);
 
@@ -111,13 +129,15 @@ await loginAs(page, superName);
 const nav = await page.evaluate(
   () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
 );
-check('侧栏出现「论坛管理」', nav.includes('论坛管理'), nav);
+check('侧栏出现「内容管理」（第 183 批合并后的入口）', nav.includes('内容管理'), nav);
 
 await page.goto(`${UI}/admin/forum`, { waitUntil: 'domcontentloaded' });
-await page.waitForSelector('.el-table__row', { timeout: 25_000 });
+await page.waitForSelector('[data-testid="forum-table"] .el-table__row', { timeout: 25_000 });
 await page.waitForTimeout(1800);
-check('页面标题是「论坛管理」',
-  (await page.locator('.admin-hero h1').innerText()).includes('论坛管理'));
+check('老地址 /admin/forum 会落到「内容管理 · 帖子」页',
+  page.url().includes('/admin/content') && page.url().includes('tab=posts'), page.url().replace(UI, ''));
+check('页面里有「论坛管理」区块',
+  await page.locator('.hub-block h2', { hasText: '论坛管理' }).first().isVisible());
 
 // 用版块筛选，只看这个测试版块的帖子
 await page.goto(`${UI}/admin/forum`, { waitUntil: 'domcontentloaded' });
@@ -214,18 +234,18 @@ await statusSelect.click();
 await page.waitForTimeout(500);
 await page.locator('.el-select-dropdown__item:visible', { hasText: '待审核' }).first().click();
 await page.waitForTimeout(2000);
-const bulkRows = await page.locator('.el-table__row').count();
+const bulkRows = await forumRows().count();
 check('还有待审帖可供批量处理', bulkRows >= 1, `${bulkRows} 条`);
 
-await page.locator('.el-table__header .el-checkbox').first().click();
+await forumBlock().locator('.el-table__header .el-checkbox').first().click();
 await page.waitForTimeout(500);
 check('全选后批量条显示已选数量',
-  (await page.locator('.bulk-bar').innerText()).includes('已选'), '');
-await page.locator('.bulk-bar button', { hasText: '批量通过' }).click();
+  (await forumBlock().locator('.bulk-bar').innerText()).includes('已选'), '');
+await forumBlock().locator('.bulk-bar button', { hasText: '批量通过' }).click();
 await page.waitForTimeout(2500);
 check('批量通过后待审列表清空',
-  (await page.locator('.el-table__row').count()) === 0,
-  `${await page.locator('.el-table__row').count()} 条`);
+  (await forumRows().count()) === 0,
+  `${await forumRows().count()} 条`);
 
 await boardSelect.click();
 await page.waitForTimeout(500);
@@ -235,15 +255,15 @@ await statusSelect.click();
 await page.waitForTimeout(500);
 await page.locator('.el-select-dropdown__item:visible', { hasText: '全部状态' }).first().click();
 await page.waitForTimeout(2000);
-await page.locator('.el-table__header .el-checkbox').first().click();
+await forumBlock().locator('.el-table__header .el-checkbox').first().click();
 await page.waitForTimeout(500);
-await page.locator('.bulk-bar button', { hasText: '批量删除' }).click();
+await forumBlock().locator('.bulk-bar button', { hasText: '批量删除' }).click();
 await page.waitForSelector('.el-message-box', { timeout: 10_000 });
 await page.locator('.el-message-box__btns button.el-button--primary').click();
 await page.waitForTimeout(2500);
 check('批量删除后列表清空',
-  (await page.locator('.el-table__row').count()) === 0,
-  `${await page.locator('.el-table__row').count()} 条`);
+  (await forumRows().count()) === 0,
+  `${await forumRows().count()} 条`);
 
 // ---------------------------------------------------------------------------
 // ⑧ 编辑员：能进能审，但看不到批量删除
@@ -265,12 +285,15 @@ await loginAs(editorPage, editorName);
 const editorNav = await editorPage.evaluate(
   () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
 );
-check('编辑员侧栏也能看到「论坛管理」（同为 review 模块）', editorNav.includes('论坛管理'), editorNav);
+check('编辑员侧栏也能看到「内容管理」（同为 review 模块）', editorNav.includes('内容管理'), editorNav);
 await editorPage.goto(`${UI}/admin/forum`, { waitUntil: 'domcontentloaded' });
-await editorPage.waitForSelector('.el-table__row', { timeout: 25_000 });
+await editorPage.waitForSelector('[data-testid="forum-table"] .el-table__row', { timeout: 25_000 });
 await editorPage.waitForTimeout(1800);
-const editorBulkText = await editorPage.locator('.bulk-bar').innerText();
+const editorBulkText = await editorPage
+  .locator('.hub-block:has([data-testid="forum-table"]) .bulk-bar').innerText();
 check('编辑员看不到「批量删除」（仅全权管理员）', !editorBulkText.includes('批量删除'),
+  editorBulkText.replace(/\s+/g, ' ').slice(0, 60));
+check('编辑员仍能看到「批量通过」（review 模块可审核）', editorBulkText.includes('批量通过'),
   editorBulkText.replace(/\s+/g, ' ').slice(0, 60));
 
 const editorApi = await editorPage.evaluate(async ({ api, title }) => {
