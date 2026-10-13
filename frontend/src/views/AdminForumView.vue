@@ -176,7 +176,8 @@
                      :loading="acting === `essence-${row.id}`" @click="toggleEssence(row)">
             {{ row.is_essence ? t('forum.unessenceAction') : t('forum.essenceAction') }}
           </el-button>
-          <el-button size="small" type="danger" link @click="removeOne(row)">
+          <!-- 第 181 批：删帖只给全权管理员（后端 CanDeletePost 的既定口径）—— 原先这个按钮**没有任何 v-if**，编辑员看得到、点了必然 403 -->
+          <el-button v-if="canDelete" size="small" type="danger" link title="仅全权管理员可删除帖子；编辑员请用【驳回】或软删评论处置" @click="removeOne(row)">
             {{ t('feedbackAdmin.delete') }}
           </el-button>
         </template>
@@ -248,7 +249,10 @@
  *     不能按版块/状态/关键字去**找**该处理的帖子。
  *
  * 这一页把论坛帖子当成一类**可管理的内容**：按版块/状态/置顶精华/关键字筛选，
- * 行内通过·驳回·置顶·加精·删除，批量通过/驳回/删除。
+ * 行内通过·驳回·置顶·加精，批量通过/驳回/删除。
+ * ⚠️ 第 181 批：行内【删除】只给全权管理员 —— 后端 CanDeletePost 明确不给信息编辑员
+ *   （帖子删除不在编辑员能力矩阵里；编辑员用驳回 + 软删评论处置内容）。
+ *   此处原按 canModerate 显示，编辑员点了必然 403 —— 按钮在、权限没有。
  *
  * ## 权限（三层口径一致）
  *

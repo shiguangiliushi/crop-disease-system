@@ -12140,3 +12140,75 @@ class RoleMatrixEndpointTests(APITestCase):
         self.assertTrue(full_only, '矩阵里应当有仅全权管理员的动作')
         data = self.c_admin.get('/api/admin/role-matrix/').data
         self.assertIn('full_admin_pages', data)
+
+
+class PostDeletePermissionTests(APITestCase):
+    """
+    删帖权限：作者本人或全权管理员，**信息编辑员不行**（第 181 批）
+
+    背景（用户报的）：一个只勾了「论坛管理」的信息编辑员，在后台论坛管理页点【删除】
+    报 403。查证结论是**后端口径本来就是对的** —— `CanDeletePost` 的 docstring 写明
+    "帖子删除不在编辑员的能力矩阵里（编辑员通过审核/驳回、软删评论做内容处置）"；
+    错的是**前端**：那个按钮原先没有任何 v-if，编辑员看得到、点了必然 403。
+
+    所以这条测试把后端口径钉死（防止哪天有人"顺手放宽"），
+    前端那一半由 AdminForumView 的 v-if=canDelete 保证。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.author = User.objects.create_user(
+            username='zz_pd_author', password='pw12345678', role='USER')
+        self.admin = User.objects.create_user(
+            username='zz_pd_admin', password='pw12345678', is_staff=True, role='ADMIN')
+        self.editor = User.objects.create_user(
+            username='zz_pd_editor', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=self.editor, module='forum', granted_by=self.admin)
+        self.board = ForumBoard.objects.create(name='zz 删帖权限测试版块')
+
+    def tearDown(self):
+        Post.objects.filter(title__startswith='zz 删帖').delete()
+        ForumBoard.objects.filter(name='zz 删帖权限测试版块').delete()
+        get_user_model().objects.filter(username__startswith='zz_pd_').delete()
+
+    def _post(self):
+        return Post.objects.create(
+            author=self.author, board=self.board, title='zz 删帖探针', content='内容')
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def test_author_can_soft_delete_own_post(self):
+        post = self._post()
+        resp = self._client(self.author).delete(f'/api/forums/posts/{post.id}/')
+        self.assertEqual(resp.status_code, 204)
+        post.refresh_from_db()
+        self.assertTrue(post.is_deleted, '应当是软删除（标记 + 清空正文），不是真删行')
+
+    def test_full_admin_can_delete_any_post(self):
+        post = self._post()
+        resp = self._client(self.admin).delete(f'/api/forums/posts/{post.id}/')
+        self.assertEqual(resp.status_code, 204)
+
+    def test_forum_editor_cannot_delete_others_post(self):
+        """
+        只勾「论坛管理」的编辑员：**不能**删别人的帖子（403）
+
+        这正是用户遇到的那一步。同时确认他并非"什么都干不了"——
+        审核、驳回、评论软删都归他（见 test_forum_editor_can_still_moderate）。
+        """
+        post = self._post()
+        resp = self._client(self.editor).delete(f'/api/forums/posts/{post.id}/')
+        self.assertEqual(resp.status_code, 403)
+        post.refresh_from_db()
+        self.assertFalse(post.is_deleted, '被拒后不应有任何改动')
+
+    def test_forum_editor_can_still_moderate(self):
+        """同一个编辑员：评论软删仍然可以（两条路径的口径差别是刻意的）"""
+        post = self._post()
+        comment = Comment.objects.create(post=post, author=self.author, content='zz 评论')
+        resp = self._client(self.editor).post(f'/api/admin/comments/{comment.id}/soft-delete/')
+        self.assertEqual(resp.status_code, 200)
