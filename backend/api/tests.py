@@ -12212,3 +12212,87 @@ class PostDeletePermissionTests(APITestCase):
         comment = Comment.objects.create(post=post, author=self.author, content='zz 评论')
         resp = self._client(self.editor).post(f'/api/admin/comments/{comment.id}/soft-delete/')
         self.assertEqual(resp.status_code, 200)
+
+
+class PostUnpublishTests(APITestCase):
+    """
+    "撤回已发布的内容"（第 182 批）
+
+    用户报的：在论坛管理里选中一条**已发布**的帖子点「批量驳回」没反应。
+    查证结论是**后端刻意只处理 pending**（docstring 写明"已发布的帖子被批量通过没有意义"），
+    但那条理由只对 **approve** 成立 —— 结果"已经发出去的内容发现有错"在界面上无路可走：
+    单条驳回只对待审显示、批量驳回静默跳过。这部分把口径补齐并钉死：
+
+      · 批量**驳回**：待审 ✅、已发布 ✅（= 下架，可再次通过恢复）、已 hidden ❌（重复操作）；
+      · 批量**通过**：仍然只认待审（已发布的再通过没有意义）；
+      · 下架后前台**看不到**它（`status='hidden'` 且不是已删除）。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.author = User.objects.create_user(
+            username='zz_up_author', password='pw12345678', role='USER')
+        self.editor = User.objects.create_user(
+            username='zz_up_editor', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=self.editor, module='forum', granted_by=self.admin
+                                         if hasattr(self, 'admin') else self.editor)
+        self.board = ForumBoard.objects.create(name='zz 撤回发布测试版块')
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+
+    def tearDown(self):
+        Post.objects.filter(title__startswith='zz 撤回').delete()
+        ForumBoard.objects.filter(name='zz 撤回发布测试版块').delete()
+        get_user_model().objects.filter(username__startswith='zz_up_').delete()
+
+    def _post(self, status):
+        return Post.objects.create(author=self.author, board=self.board,
+                                   title=f'zz 撤回 {status}', content='内容', status=status)
+
+    def _bulk(self, ids, action):
+        return self.client_editor.post('/api/forums/posts/bulk-review/',
+                                       {'ids': ids, 'action': action, 'reason': 'zz 测试'},
+                                       format='json')
+
+    def test_bulk_reject_unpublishes_a_published_post(self):
+        """★ 用户遇到的那一步：已发布的帖子批量驳回 → 真的下架"""
+        post = self._post('published')
+        resp = self._bulk([post.id], 'reject')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['succeeded'], 1, resp.data.get('results'))
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'hidden', '已发布的帖子驳回后应当变为 hidden（下架）')
+
+    def test_bulk_reject_still_handles_pending(self):
+        post = self._post('pending')
+        resp = self._bulk([post.id], 'reject')
+        self.assertEqual(resp.data['succeeded'], 1)
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'hidden')
+
+    def test_bulk_reject_skips_already_hidden_with_reason(self):
+        """已 hidden 的再驳回：跳过，并且**说明原因**（不再静默）"""
+        post = self._post('hidden')
+        resp = self._bulk([post.id], 'reject')
+        self.assertEqual(resp.data['succeeded'], 0)
+        detail = resp.data['results'][0]['detail']
+        self.assertIn('不能撤回', detail)
+        self.assertIn('hidden', detail)
+
+    def test_bulk_approve_still_only_takes_pending(self):
+        """通过仍然只认待审（已发布的再通过没有意义）"""
+        published = self._post('published')
+        pending = self._post('pending')
+        resp = self._bulk([published.id, pending.id], 'approve')
+        self.assertEqual(resp.data['succeeded'], 1)
+        published.refresh_from_db()
+        self.assertEqual(published.status, 'published', '已发布的帖子不该被"通过"改动')
+
+    def test_unpublished_post_disappears_from_public_list(self):
+        """下架后前台列表看不到它（这才是用户真正想要的效果）"""
+        post = self._post('published')
+        guest = APIClient()
+        self.assertIn(post.id, [p['id'] for p in guest.get('/api/forums/posts/').data['results']])
+        self._bulk([post.id], 'reject')
+        self.assertNotIn(post.id, [p['id'] for p in guest.get('/api/forums/posts/').data['results']])

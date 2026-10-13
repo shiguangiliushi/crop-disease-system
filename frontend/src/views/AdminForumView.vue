@@ -166,6 +166,17 @@
                      @click="openReject(row)">
             {{ t('review.reject') }}
           </el-button>
+          <!--
+            第 182 批：**已发布**的帖子给一个「下架」入口。
+            原先界面上没有任何办法撤回已发布的内容：单条驳回只对待审显示、
+            批量驳回（后端）只处理 pending —— 用户反馈"点批量驳回没用"就是这个。
+            后端第 182 批已允许驳回处理 published（语义=下架，可再次通过恢复），
+            这里补上对应入口，走同一个驳回对话框（要填理由，进审核轨迹）。
+          -->
+          <el-button v-if="row.status === 'published' && canModerate" size="small"
+                     type="warning" link @click="openReject(row)">
+            {{ t('review.unpublish') }}
+          </el-button>
           <el-button v-if="canModerate" size="small" link
                      :type="row.is_pinned ? 'danger' : 'default'"
                      :loading="acting === `pin-${row.id}`" @click="togglePin(row)">
@@ -258,6 +269,8 @@
  *
  * · **看与审**：`review` 内容模块（信息编辑员即可）—— 与后端
  *   `is_moderator()`、以及内容审核页同一口径；
+ * · **批量驳回**：待审与**已发布**都能处理（后者语义是撤回发布=下架，可再次通过恢复）；
+ *   已驳回的不重复处理，且会在结果里**说明原因**（第 182 批前是静默跳过）。
  * · **批量删除**：仅全权管理员（不可逆的破坏性操作，后端 `bulk_delete` 也是 403）；
  * · **版块管理**：BROADCAST，只有能管版块的人才看到那个跳转按钮。
  *

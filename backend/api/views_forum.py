@@ -650,7 +650,9 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         设计取舍：
           · **逐条处理、不整体失败**：某一条不合法（比如 id 不存在、或不是待审状态）
             不应该让另外 19 条白做。响应里逐条给结果，前端把失败原因显示出来。
-          · **只处理 pending**：已发布的帖子被"批量通过"没有意义，
+          · **通过只处理 pending**：已发布的帖子被"批量通过"没有意义；
+            第 182 批起 **驳回** 也处理 `published`（撤回发布 = 下架，可再次通过恢复），
+            但不能处理已 hidden 的（那是重复操作）
             已隐藏的帖子被"批量通过"等于绕过驳回 —— 这两类明确跳过并说明原因。
           · 上限 200 条：一次点几千条会让请求超时，而且前端也不该有这种入口。
         """
@@ -694,11 +696,17 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
             if post.is_deleted:
                 results.append({'id': post_id, 'ok': False, 'detail': '帖子已删除'})
                 continue
-            if post.status != 'pending':
-                results.append({
-                    'id': post_id, 'ok': False,
-                    'detail': f'不是待审状态（当前 {post.status}），已跳过',
-                })
+            # 第 182 批：**驳回**允许处理"已发布"的帖子 —— 语义是**撤回发布（下架）**。
+            # 原先两种动作共用"只处理 pending"，于是"已经发出去的内容发现有错"在界面上
+            # 无路可走：单条驳回只对待审显示、批量驳回静默跳过（用户反馈"点批量驳回没用"
+            # 就是这个）。单条 reject 接口本来对已发布也生效（实测 200 → hidden），
+            # 批量这里只是把口径对齐。**通过**仍然只认 pending：已发布的再"通过"没有意义。
+            allowed = ('pending',) if action_name == 'approve' else ('pending', 'published')
+            if post.status not in allowed:
+                detail = (f'不是待审状态（当前 {post.status}），已跳过'
+                          if action_name == 'approve'
+                          else f'当前状态是 {post.status}，不能撤回（只有待审或已发布可以）')
+                results.append({'id': post_id, 'ok': False, 'detail': detail})
                 continue
 
             if action_name == 'approve':
