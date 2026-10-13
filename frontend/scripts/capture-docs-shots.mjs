@@ -1,5 +1,5 @@
 /**
- * 统一生成 README / docs 用的界面截图（第 160 批）
+ * 统一生成 README / docs 用的界面截图（第 160 批；第 189 批按页面合并改过路由）
  * ============================================================================
  * ## 为什么要重做
  *
@@ -8,7 +8,7 @@
  *   · 管理端 4 张 ← 各管理端 E2E 脚本顺带截的（**一次性**管理员账号 `zze2e_xxx`）。
  * 于是 README 的截图里顶栏写着 `zze2e_demo_k3f9` 这种机器名 —— 挂在 GitHub 首屏很难看。
  *
- * 这个脚本用**真实的管理员账号 `admin`** 一次截全 8 张，并且：
+ * 这个脚本用**真实的管理员账号 `admin`** 一次截全，并且：
  *   · **不需要 admin 的密码**：通过 Django 给 `admin` 签发一个 token，
  *     再用登录接口同款的 `CustomUserSerializer` 数据注入 `sessionStorage`
  *     （键名与 `utils/authStorage.js` 一致：`auth_token` / `user`）；
@@ -16,8 +16,20 @@
  *   · 识别结果那张会真的上传仓库里的苹果黑星病图片并等结果出来
  *     （所以图上显示的是**中文**病害名 + 真实症状与防治建议）。
  *
+ * ## ⚠️ 第 189 批：这些截图为什么必须重截
+ *
+ * 第 183/184/185/186 批把管理端入口合并了（侧栏从"内容审核/论坛管理/评论管理/系统健康/
+ * 操作日志/版块管理"六项变成「内容管理」+「系统」两项），而本脚本还在访问**旧地址**：
+ *   · `/admin/forum` → 现在会重定向到「内容管理 · 帖子」，截出来的是**另一个页面**
+ *     （README 上那张"论坛管理"图里，侧栏和面包屑都是早就没有的旧结构）；
+ *   · `/admin/comments` 的"已删除"筛选落在**帖子**页签上 → 切筛选自然没生效，
+ *     截出来的不是"评论可恢复"那张；
+ *   · `/admin/audit-logs` → 现在是「系统 · 操作日志」页签。
+ * 所以本批把地址全部改成**直接落到页签**（`/admin/content?tab=…`、`/admin/health?tab=…`），
+ * 并新增一张「系统 · 系统健康」（README 的图说里一直有"系统健康"，但没有对应截图）。
+ *
  * 用法：
- *   node scripts/capture-docs-shots.mjs            # 截 8 张 PNG 到 dsh-shots/
+ *   node scripts/capture-docs-shots.mjs            # 截 PNG 到 dsh-shots/
  *   python docs/tools/optimize_readme_images.py    # 再转成 WebP 入 docs/images/
  *
  * ⚠️ 只截图，不改业务数据；演示内容在结束时清理（帖子里带 `zz演示` 前缀）。
@@ -49,7 +61,11 @@ const seedOutput = runDjango([
   'from api.serializers import CustomUserSerializer',
   `admin = get_user_model().objects.get(username='${ADMIN}')`,
   // 演示版块 + 三条帖子（都归 admin，标题带 zz演示 便于清理）
-  "board, _ = ForumBoard.objects.get_or_create(name='zze2e演示版块', defaults={'order': 900})",
+  // ⚠️ 第 189 批：版块名改成**像真的**（原来叫 `zze2e演示版块`，会显示在截图里的帖子行上，
+  //    既是机器名又难看）；清理仍按 `zze2e演示版块` 前缀，所以这里保留前缀只改后半段。
+  "board, _ = ForumBoard.objects.get_or_create(name='zze2e演示版块 · 作物病害交流', defaults={'order': 900})",
+  // 顺便清掉上一版留下的旧名版块 + 上一次运行留下的同名纪录，避免开发库里堆演示版块
+  "print('cleaned stale demo boards:', ForumBoard.objects.filter(name='zze2e演示版块').delete()[0])",
   "Post.objects.filter(title__startswith='zz演示').delete()",
   "p1 = Post.objects.create(title='zz演示：叶片背面这些白点是什么？', content='<p>大棚里的黄瓜，最近叶子背面出现密集白色小点，摸上去有点黏。请问是白粉虱还是别的原因？</p>', author=admin, board=board, status='published', is_pinned=True, is_essence=True, view_count=128, like_count=12)",
   "Post.objects.create(title='zz演示：连续阴雨后要不要补喷一次杀菌剂？', content='<p>连着下了四天雨，棚里湿度很高，之前打的药是不是被冲掉了？</p>', author=admin, board=board, status='published', view_count=64, like_count=5)",
@@ -142,22 +158,34 @@ await shoot('farmer-wiki.png');
 // ④ 管理端 4 张
 // ---------------------------------------------------------------------------
 log('管理端：');
-await goto('/admin/dashboard', '.admin-console', 2500);
-await shoot('admin-console-dashboard.png');
 
-await goto('/admin/forum', '.admin-console', 2500);
+// 「内容管理 · 帖子」：这张图要展示**合并后的页面结构**（页头 + 三个页签 + 论坛管理区块）。
+// ⚠️ 审核队列区块会占满整屏、把"论坛管理"挤到下面，所以截图前把它隐藏 ——
+//    这只是为了取景，不改任何行为（用内联 style 藏一个区块）。
+await goto('/admin/content?tab=posts', '.admin-console', 3000);
+await page.evaluate(() => {
+  const queue = document.querySelector('.content-post-panel > .hub-block');
+  if (queue) queue.style.display = 'none';
+});
+await page.waitForTimeout(600);
 await shoot('admin-forum.png');
 
-await goto('/admin/comments', '.admin-console', 2500);
-// 列表默认只看"正常"评论，而这张图要展示的是**恢复**（软删除可回溯）——
-// 所以先把"评论范围"切到"已删除"（el-select 要点开再选，不能直接填值）。
+// 「内容管理 · 评论」：展示**软删除可恢复**（先把"评论范围"切到"已删除"）
+await goto('/admin/content?tab=comments', '.admin-console', 3000);
 await page.locator('.admin-console .el-select').first().click();
 await page.waitForTimeout(600);
 await page.locator('.el-select-dropdown__item', { hasText: '已删除' }).first().click();
 await page.waitForTimeout(2500);
 await shoot('admin-comment-restore.png');
 
-await goto('/admin/audit-logs', '.admin-console', 2500);
+await goto('/admin/dashboard', '.admin-console', 2500);
+await shoot('admin-console-dashboard.png');
+
+// 「系统」是第 185/186 批合并出来的页面（系统健康 + 操作日志 + 版块管理三个页签）
+await goto('/admin/health?tab=health', '.admin-console', 3000);
+await shoot('admin-health.png');
+
+await goto('/admin/health?tab=audit', '.admin-console', 3000);
 await shoot('admin-audit-log.png');
 
 log(errors.length ? `⚠️ 页面报错 ${errors.length} 条：${errors.slice(0, 2).join(' | ')}` : '✅ 全程无 JS 报错');
@@ -175,8 +203,15 @@ runDjango([
   "print('cleaned comments:', Comment.objects.filter(content__startswith='zz演示').delete()[0])",
   "print('cleaned boards:', ForumBoard.objects.filter(name__startswith='zze2e演示版块').delete()[0])",
   "print('cleaned audit:', AdminAuditLog.objects.filter(detail__startswith='演示：').delete()[0])",
-  // 历次 E2E 留下的临时账号在日志里很难看（zze2e_xxx），只删这些机器名的行
-  "print('cleaned test-actor audit:', AdminAuditLog.objects.filter(actor_repr__startswith='zze2e').delete()[0])",
+  // ⚠️ 历次 E2E 留下的临时账号（`zze2e_fa_super_x0sa`、`zzfixc_admin_…` 这类机器名）会出现在
+  //    「操作日志」截图里，很难看。它们必须在**截图之前**清掉（只放在收尾清理里没用）。
+  //    按"以 zz 开头、但不是本次演示行"清 —— 各批脚本都约定用 zz 前缀造临时数据。
+  "print('cleaned pre-existing test-actor audit:', AdminAuditLog.objects.filter(actor_repr__startswith='zz').exclude(detail__startswith='演示：').delete()[0])",
+  // 还有一类：**操作人是 admin**（共享管理员账号）、但操作对象是测试数据的行
+  // （如 `删除识别记录 #1124（zz_detE2E_user · …）`）。它们的 `detail` 里**没有** zz，
+  // zz 在**目标**那一列（`target_repr`）—— 所以三个字段一起查（detail / target_repr / target_id）。
+  "from django.db.models import Q",
+  "print('cleaned pre-existing test-target audit:', AdminAuditLog.objects.filter(Q(detail__contains='zz') | Q(target_repr__contains='zz') | Q(target_id__contains='zz')).exclude(detail__startswith='演示：').delete()[0])",
 ]);
 log('演示内容已清理');
 log('下一步：python docs/tools/optimize_readme_images.py');

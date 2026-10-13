@@ -36,11 +36,17 @@ SHOTS = ROOT / 'frontend' / 'dsh-shots'
 OUT = ROOT / 'docs' / 'images'
 
 #: 要入库的管理端截图：源文件名 → 目标文件名（不含扩展名）
+#:
+#: ⚠️ 第 189 批：`admin-health`（「系统 · 系统健康」）是**新增**的一张 ——
+#: README 的图说里一直有"系统健康"，但那张图从来没进过库（第 185 批把它并进「系统」页之后
+#: 更是连入口都变了）。源文件由 `frontend/scripts/capture-docs-shots.mjs` 生成；
+#: 其余几张的地址也在这一批从旧地址（/admin/forum、/admin/audit-logs…）改成了页签地址。
 ADMIN_SHOTS = {
     'admin-console-dashboard.png': 'admin-dashboard',
     'admin-forum.png': 'admin-forum',
     'admin-audit-log.png': 'admin-audit-log',
     'admin-comment-restore.png': 'admin-comment-restore',
+    'admin-health.png': 'admin-health',
 }
 
 #: 农户端（由 capture-docs-shots.mjs 生成，这里只负责缩放与转码）

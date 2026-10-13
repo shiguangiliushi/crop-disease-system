@@ -57,16 +57,26 @@
     <td width="50%"><b>论坛交流（含置顶/精华）</b><br/><img src="docs/images/farmer-forum.webp" alt="论坛"/></td>
   </tr>
   <tr>
+    <td width="50%"><b>识别结果（真实推理）</b><br/><img src="docs/images/farmer-detect-result.webp" alt="识别结果"/></td>
     <td width="50%"><b>病害百科</b><br/><img src="docs/images/farmer-wiki.webp" alt="百科"/></td>
-    <td width="50%"><b>管理后台·数据看板</b><br/><img src="docs/images/admin-dashboard.webp" alt="看板"/></td>
   </tr>
   <tr>
-    <td width="50%"><b>论坛管理（后台）</b><br/><img src="docs/images/admin-forum.webp" alt="论坛管理"/></td>
-    <td width="50%"><b>操作日志（审计）</b><br/><img src="docs/images/admin-audit-log.webp" alt="操作日志"/></td>
+    <td width="50%"><b>管理后台 · 数据看板</b><br/><img src="docs/images/admin-dashboard.webp" alt="看板"/></td>
+    <td width="50%"><b>管理后台 · 内容管理（帖子 / 评论 / 举报三个页签）</b><br/><img src="docs/images/admin-forum.webp" alt="内容管理"/></td>
+  </tr>
+  <tr>
+    <td width="50%"><b>管理后台 · 系统（健康 / 操作日志 / 版块管理）</b><br/><img src="docs/images/admin-health.webp" alt="系统健康"/></td>
+    <td width="50%"><b>操作日志（审计，只读）</b><br/><img src="docs/images/admin-audit-log.webp" alt="操作日志"/></td>
   </tr>
 </table>
 
-> 管理端截图里另有一张「评论删除可恢复」留证：`docs/images/admin-comment-restore.webp`。
+> 管理端还有一张「评论删除可恢复」留证：`docs/images/admin-comment-restore.webp`
+> —— 软删除的评论会保留原文，管理员可在「内容管理 · 评论」里按需恢复。
+>
+> 截图由 `frontend/scripts/capture-docs-shots.mjs` 用**真实管理员账号 `admin`**
+> 自动重截（演示数据跑完即清），再用 `docs/tools/optimize_readme_images.py`
+> 缩放并转成 WebP 入库 —— 改了界面结构后请重跑这两个脚本，别让 README 挂着过期截图
+> （第 189 批就是因为没重跑，图上还是早就合并掉的六个侧栏入口）。
 
 ---
 
