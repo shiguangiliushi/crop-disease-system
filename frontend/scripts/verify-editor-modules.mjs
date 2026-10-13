@@ -1,9 +1,9 @@
 /**
- * 信息编辑员「各自的功能」—— 前端侧栏与拦截（第 178 批，第 183 批改）
+ * 信息编辑员「各自的功能」—— 前端侧栏与拦截（第 178 批，第 183 / 184 批改）
  * ============================================================================
  * 后端那一半已经由 `api.tests.RoleMatrixTests` 钉住了（拿矩阵表真请求每个接口）。
  * 这一支验**农户/编辑员看到的那一半**：控制台侧栏显示哪几项、直接输网址进不进得去、
- * **「内容管理」页里哪几个页签画给他看**。
+ * **「内容管理」页里哪几个页签画给他看**、**「用户管理」合并页的两个页签**。
  *
  * 本脚本验证（四种身份各一遍）：
  *   ① **只勾「新闻管理」的编辑员**：侧栏只有 数据看板 + 新闻管理；
@@ -16,6 +16,10 @@
  *   ④ **全权管理员**：侧栏有全部入口（含系统健康/操作日志这些仅全权的），
  *      内容管理页三个页签齐全，且三条旧地址（/admin/review、/admin/forum、/admin/comments）
  *      都重定向到新页对应页签
+ *   ⑤ **全权管理员 · 用户管理合并页**（第 184 批）：侧栏里「识别记录」不再单独占一项；
+ *      `/admin/users` 是「用户」+「识别记录」两个页签、`?tab=` 双向同步、
+ *      深链 `/admin/users?tab=detections` 直接落在识别记录上（且**不挂载**另一个页签，
+ *      免得多打一遍接口），旧地址 `/admin/detection-history?...` 跳到新页并**保留参数**
  *
  * 为什么值得做：后端 403 只保证"拿不到数据"，而农户/编辑员感受的是**界面** ——
  * 侧栏或页签列出一个点进去 403 的入口，等于把人往墙上引（第 180/181 批两次踩过）。
@@ -42,6 +46,7 @@ const seed = runDjango([
   'from django.contrib.auth import get_user_model',
   'from rest_framework.authtoken.models import Token',
   'from api.serializers import CustomUserSerializer',
+  'from api.capabilities import capabilities_of, content_modules_of',
   'from api.models import EditorModuleGrant',
   'User = get_user_model()',
   "admin = User.objects.get(username='admin')",
@@ -59,7 +64,16 @@ const seed = runDjango([
   "make('zz_editor_pests', 'pests')",
   "make('zz_editor_forum', 'forum')",
   "print('ZZ_ADMIN_TOKEN=' + Token.objects.get_or_create(user=admin)[0].key)",
-  "print('ZZ_ADMIN_USER=' + json.dumps(CustomUserSerializer(admin).data, ensure_ascii=False))",
+  # ⚠️ 第 184 批：`CustomUserSerializer` **不含** is_superuser / is_staff / capabilities /
+  #    content_modules（它只服务注册接口）。只注入它的输出时，"仅超级管理员"的那些按钮
+  #    与 hasCapability 判断都拿不到依据 —— 侧栏靠 role==='ADMIN' 的兜底还能显示，
+  #    但只要哪天兜底口径变了，这一支就会假绿。这里按
+  #    scripts/verify-editor-permission-preview.mjs 的同一套补法补齐四个字段。
+  'payload = dict(CustomUserSerializer(admin).data)',
+  "payload.update({'is_superuser': admin.is_superuser, 'is_staff': admin.is_staff,",
+  "                'capabilities': list(capabilities_of(admin)),",
+  "                'content_modules': list(content_modules_of(admin))})",
+  "print('ZZ_ADMIN_USER=' + json.dumps(payload, ensure_ascii=False))",
 ]);
 const adminToken = /ZZ_ADMIN_TOKEN=(\S+)/.exec(seed)?.[1];
 const adminUser = /ZZ_ADMIN_USER=(.+)/.exec(seed)?.[1];
@@ -224,6 +238,11 @@ const navHrefs = await p4.evaluate(() =>
 check('侧栏不再有 /admin/review、/admin/forum、/admin/comments 三条旧入口',
   !navHrefs.some((href) => ['/admin/review', '/admin/forum', '/admin/comments'].includes(href)),
   navHrefs.join(' '));
+// 第 184 批：识别记录并入「用户管理」—— 侧栏不再单列一项，href 也不该再出现
+check('侧栏不再有 /admin/detection-history（识别记录已并入「用户管理」页签）',
+  !navHrefs.includes('/admin/detection-history'), navHrefs.join(' '));
+check('管理员侧栏里有「用户管理」，且「识别记录」不再单独占一项',
+  text4.includes('用户管理') && !text4.includes('识别记录'), '');
 await p4.screenshot({ path: 'dsh-shots/editor-admin-sidebar.png' });
 
 await p4.goto(`${UI}/admin/content`, { waitUntil: 'domcontentloaded' });
@@ -270,6 +289,78 @@ const legacyQuery = await p4.evaluate(() => ({
 check('旧地址 /admin/forum?search=xx 的筛选参数被保留',
   legacyQuery.search === 'zz老链接' && legacyQuery.url.includes('tab=posts'),
   `${legacyQuery.url}｜输入框="${legacyQuery.search}"`);
+
+// ---------------------------------------------------------------------------
+// ⑤ 用户管理合并页（第 184 批）：两个页签 + `?tab=` 同步 + 旧地址重定向
+// ---------------------------------------------------------------------------
+// ⚠️ 页签用的是 Element Plus 的 `lazy` 页签：**打开过的**页签会一直留在 DOM 里
+//    （只是 `display:none`），所以"另一个页签没挂载"这条只能在**首次进入**时验 ——
+//    下面两处（默认进入、深链进入）都是刚 `goto` 过的全新页面，判据成立。
+await p4.goto(`${UI}/admin/users`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3500);
+const hubDefault = await p4.evaluate(() => ({
+  tabs: [...document.querySelectorAll('.el-tabs__item')]
+    .map((el) => el.innerText.replace(/\s+/g, ' ').trim()),
+  usersPanel: document.querySelectorAll('.admin-users').length,
+  detectionsPanel: document.querySelectorAll('.admin-page').length,
+  text: (document.querySelector('.admin-users')?.innerText || '').replace(/\s+/g, ' '),
+}));
+check('管理员 /admin/users 是带页签的合并页（用户 + 识别记录）',
+  hubDefault.tabs.includes('用户') && hubDefault.tabs.includes('识别记录'),
+  `页签=${JSON.stringify(hubDefault.tabs)}`);
+check('默认落在「用户」页签：用户管理在（用户总数），识别记录**未挂载**',
+  hubDefault.usersPanel === 1 && hubDefault.detectionsPanel === 0
+    && hubDefault.text.includes('用户总数'),
+  `users面板=${hubDefault.usersPanel}｜identify面板=${hubDefault.detectionsPanel}`);
+
+// 点「识别记录」页签：地址要带上 tab=detections，且识别记录页真的渲染出来
+await p4.locator('.el-tabs__item', { hasText: '识别记录' }).first().click();
+await p4.waitForTimeout(2500);
+const hubDetections = await p4.evaluate(() => ({
+  query: location.search,
+  detectionsPanel: document.querySelectorAll('.admin-page').length,
+  usersStillVisible: (document.body.innerText || '').includes('用户总数'),
+  text: (document.querySelector('.admin-page')?.innerText || '').replace(/\s+/g, ' '),
+}));
+check('点「识别记录」页签：地址带 tab=detections 且识别记录页渲染出来',
+  hubDetections.query.includes('tab=detections') && hubDetections.detectionsPanel === 1
+    && hubDetections.text.includes('记录总数'),
+  `query="${hubDetections.query}"｜${hubDetections.text.slice(0, 50)}`);
+check('切到识别记录后「用户」页签的内容不再显示（不是两页摞在一起）',
+  hubDetections.usersStillVisible === false, `页面上还有"用户总数"=${hubDetections.usersStillVisible}`);
+
+// 深链：直接打开 /admin/users?tab=detections —— 落在识别记录上，
+// 且**不挂载**用户页签（第 183 批的教训：两边都挂载 = 一次进页面打两倍的接口）
+await p4.goto(`${UI}/admin/users?tab=detections`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3500);
+const hubDeepLink = await p4.evaluate(() => ({
+  active: (document.querySelector('.el-tabs__item.is-active')?.innerText || '').replace(/\s+/g, ' ').trim(),
+  usersPanel: document.querySelectorAll('.admin-users').length,
+  detectionsPanel: document.querySelectorAll('.admin-page').length,
+}));
+check('深链 /admin/users?tab=detections 直接落在「识别记录」页签',
+  hubDeepLink.active.includes('识别记录') && hubDeepLink.detectionsPanel === 1,
+  `当前页签="${hubDeepLink.active}"｜identify面板=${hubDeepLink.detectionsPanel}`);
+check('深链进入时「用户」页签**没有**被挂载（只挂当前页签）',
+  hubDeepLink.usersPanel === 0, `users面板=${hubDeepLink.usersPanel}`);
+await p4.screenshot({ path: 'dsh-shots/admin-user-hub-detections.png' });
+
+// 旧地址：/admin/detection-history 重定向到新页的识别记录页签，且**参数不丢**
+// （第 98 批的约定：筛选/分页写在 URL 上，所以"打开一条带筛选的老链接"必须照旧能用）
+await p4.goto(`${UI}/admin/detection-history?x=1&page=2`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3000);
+const legacyHub = await p4.evaluate(() => ({
+  path: location.pathname,
+  search: location.search,
+  detectionsPanel: document.querySelectorAll('.admin-page').length,
+}));
+check('旧地址 /admin/detection-history 重定向到 /admin/users?tab=detections',
+  legacyHub.path === '/admin/users' && legacyHub.search.includes('tab=detections')
+    && legacyHub.detectionsPanel === 1,
+  `${legacyHub.path}${legacyHub.search}`);
+check('旧地址上的查询参数被保留（x=1 与 page=2 都还在）',
+  legacyHub.search.includes('x=1') && legacyHub.search.includes('page=2'),
+  `query="${legacyHub.search}"`);
 
 check('全程无 JS 报错', errors.length === 0, errors.slice(0, 2).join(' | '));
 
