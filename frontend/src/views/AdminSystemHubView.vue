@@ -11,11 +11,22 @@
     | `boards` 版块管理 | 全权管理员 **或** BROADCAST 能力 | `/api/forums/boards/` 写接口是 `IsBroadcastManager` |
 
     ⚠️ 第 186 批的核心就在这里：**只有 BROADCAST、不是全权管理员**的人（能发公告/
-    管版块的那一档）现在也进得来这一页 —— 但他**只看到「版块管理」一个页签**，
-    系统健康与操作日志**不画给他**。理由与第 183 批「举报页签」完全相同：
-    页签也是入口，点进去必然 403 的东西不该出现在界面上。
+    管版块的那一档）这一页**只给他「版块管理」一个页签**，系统健康与操作日志
+    **不画给他**。理由与第 183 批「举报页签」完全相同：页签也是入口，
+    点进去必然 403 的东西不该出现在界面上。
     反过来也一样：这两条接口是 `is_full_admin`，所以绝不能因为"他在这一页上"
     就顺手把 health/audit 画给 BROADCAST 的人。
+
+    ⚠️ 但这个档位**今天在真实环境里不可达**（第 186 批实测，**双重**不可达）：
+      ① 后端造不出这种账号（`is_full_admin` 一成立就三能力全给；EDITOR 只给 CONTENT；
+         没有按能力授权的表）—— 见 `api.tests.RoleMatrixTests
+         .test_no_account_can_hold_broadcast_without_being_a_full_admin`；
+      ② 前端守卫也不放行：管理区要 `requiresAdmin`，而每个后台落脚页还各有
+         capability/module（数据看板要 CONTENT + 内容模块、本页要 BROADCAST），
+         所以 BROADCAST-only 的身份**进不了任何一页**。
+    因此"按权限画页签"是**为将来"按能力授权"预留的防御性设计**，
+    而它由**纯函数单测**覆盖（`src/views/adminSystemTabs.js` +
+    `src/views/__tests__/admin-system-tabs.spec.js`）—— 不去浏览器里演一个进不来的人。
 
     设计取舍（与前两批的合并页一致）：
       本批**不拆分**三个既有页面的内部结构 —— Hub 只做"装进去"，
@@ -62,10 +73,9 @@ import AdminHealthView from '@/views/AdminHealthView.vue';
 import AdminAuditLogView from '@/views/AdminAuditLogView.vue';
 import AdminBoardsView from '@/views/AdminBoardsView.vue';
 import { useI18n } from '@/i18n';
-
-const TAB_HEALTH = 'health';
-const TAB_AUDIT = 'audit';
-const TAB_BOARDS = 'boards';
+// 页签**按权限怎么算**这一段刻意放在这个纯函数里（可单测，理由见该文件注释：
+// "BROADCAST-only"这个档位在浏览器里双重不可达 —— 后端造不出账号、守卫也不放行）
+import { TAB_AUDIT, TAB_BOARDS, TAB_HEALTH, adminSystemTabs } from '@/views/adminSystemTabs';
 
 export default {
   name: 'AdminSystemHubView',
@@ -76,17 +86,12 @@ export default {
     const router = useRouter();
     const authStore = useAuthStore();
 
-    /**
-     * 版块页签：全权管理员 **或** BROADCAST 能力
-     *
-     * 全权管理员三项能力全给（后端 `capabilities.has_capability` 对 `is_full_admin`
-     * 直接返回 True），所以这里写 `isAdmin || hasCapability(BROADCAST)` 与
-     * "BROADCAST 或全权管理员"是同一件事 —— 但仍然两个都写出来：
-     * 读的人一眼能看出这一档**不是**只有能力，避免下一个人以为漏判了管理员。
-     */
-    const canBoards = computed(
-      () => Boolean(authStore.isAdmin || authStore.hasCapability(authStore.CAP_BROADCAST)),
-    );
+    /** 页签名 → 文案 / 图标 / 面板组件（权限判定不在这里，在 adminSystemTabs()） */
+    const TAB_META = {
+      [TAB_HEALTH]: { labelKey: 'systemHub.tabHealth', icon: 'fas fa-heart-pulse', panel: AdminHealthView },
+      [TAB_AUDIT]: { labelKey: 'systemHub.tabAudit', icon: 'fas fa-clipboard-list', panel: AdminAuditLogView },
+      [TAB_BOARDS]: { labelKey: 'systemHub.tabBoards', icon: 'fas fa-table-columns', panel: AdminBoardsView },
+    };
 
     /**
      * 页签清单 —— **看不到的页签根本不在这里**（不是画出来再禁用）
@@ -94,29 +99,10 @@ export default {
      * 顺序即默认落点：全权管理员从「系统健康」进（与第 185 批一致），
      * 只有 BROADCAST 的人清单里就只剩「版块管理」，自然落在它上面。
      */
-    const tabs = computed(() => [
-      {
-        name: TAB_HEALTH,
-        labelKey: 'systemHub.tabHealth',
-        icon: 'fas fa-heart-pulse',
-        show: Boolean(authStore.isAdmin),
-        panel: AdminHealthView,
-      },
-      {
-        name: TAB_AUDIT,
-        labelKey: 'systemHub.tabAudit',
-        icon: 'fas fa-clipboard-list',
-        show: Boolean(authStore.isAdmin),
-        panel: AdminAuditLogView,
-      },
-      {
-        name: TAB_BOARDS,
-        labelKey: 'systemHub.tabBoards',
-        icon: 'fas fa-table-columns',
-        show: canBoards.value,
-        panel: AdminBoardsView,
-      },
-    ].filter((tab) => tab.show));
+    const tabs = computed(() => adminSystemTabs({
+      isAdmin: Boolean(authStore.isAdmin),
+      hasBroadcast: Boolean(authStore.hasCapability(authStore.CAP_BROADCAST)),
+    }).map((name) => ({ name, ...TAB_META[name] })));
 
     /** 有权看到的第一个页签（没有可见页签时是空串） */
     const firstTab = computed(() => tabs.value[0]?.name || '');
