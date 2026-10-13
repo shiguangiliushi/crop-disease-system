@@ -46,10 +46,10 @@ const navItems = [
     capability: authStore.CAP_CONTENT },
   { to: '/admin/users', icon: 'fas fa-users-gear', labelKey: 'manage.users',
     capability: authStore.CAP_USER_ADMIN },
-  // 第 172 批：识别记录（跨用户的全局视图）—— 与「用户管理」同档：
-  // 记录里带用户身份与用户上传的图片，所以走 USER_ADMIN 而不是内容能力。
-  // 第 184 批：识别记录已并入「用户管理」（/admin/users?tab=detections），不再单独占侧栏一项
-      
+  // 第 172 批：识别记录（跨用户的全局视图）原先**单独占一项** —— 记录里带用户身份
+  // 与用户上传的图片，所以走 USER_ADMIN 而不是内容能力。
+  // 第 184 批：它已并入「用户管理」页的第二个页签（`/admin/users?tab=detections`），
+  // 侧栏不再单列；能进这一页的人（USER_ADMIN）才能看到那个页签。
   // 第 183 批：「内容管理」—— 原来的「内容审核」「论坛管理」「评论管理」三项合并成一页
   // （页签：帖子 / 评论 / 举报）。三项本来就是同一件事的三个入口：都由
   // 「内容审核(review)」或「论坛交流(forum)」覆盖，用户在三个入口之间来回找。

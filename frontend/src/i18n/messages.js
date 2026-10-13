@@ -29,8 +29,6 @@ export const zhCN = {
     },
   },
 
-
-
   common: {
     refresh: '刷新',
     loading: '加载中...',

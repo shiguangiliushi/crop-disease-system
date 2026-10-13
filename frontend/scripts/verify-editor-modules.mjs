@@ -64,11 +64,11 @@ const seed = runDjango([
   "make('zz_editor_pests', 'pests')",
   "make('zz_editor_forum', 'forum')",
   "print('ZZ_ADMIN_TOKEN=' + Token.objects.get_or_create(user=admin)[0].key)",
-  # ⚠️ 第 184 批：`CustomUserSerializer` **不含** is_superuser / is_staff / capabilities /
-  #    content_modules（它只服务注册接口）。只注入它的输出时，"仅超级管理员"的那些按钮
-  #    与 hasCapability 判断都拿不到依据 —— 侧栏靠 role==='ADMIN' 的兜底还能显示，
-  #    但只要哪天兜底口径变了，这一支就会假绿。这里按
-  #    scripts/verify-editor-permission-preview.mjs 的同一套补法补齐四个字段。
+  // ⚠️ 第 184 批：`CustomUserSerializer` **不含** is_superuser / is_staff / capabilities /
+  //    content_modules（它只服务注册接口）。只注入它的输出时，"仅超级管理员"的那些按钮
+  //    与 hasCapability 判断都拿不到依据 —— 侧栏靠 role === 'ADMIN' 的兜底还能显示，
+  //    但只要哪天兜底口径变了，这一支就会假绿。这里按
+  //    scripts/verify-editor-permission-preview.mjs 的同一套补法补齐四个字段。
   'payload = dict(CustomUserSerializer(admin).data)',
   "payload.update({'is_superuser': admin.is_superuser, 'is_staff': admin.is_staff,",
   "                'capabilities': list(capabilities_of(admin)),",
