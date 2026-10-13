@@ -544,6 +544,56 @@ const CONTENT_MODULES = [
    * 与 `checkAuth()` 的区别：这个**会发请求**，返回 boolean，并在 401 时清掉本地登录态。
    * 断网（请求根本没发出去）时**不动登录态**，返回 true —— 离线模式仍然可用。
    */
+  /**
+   * 向后端**核对一次身份**，把权限相关字段刷新到本地（第 180 批）
+   * ------------------------------------------------------------------
+   * 为什么需要：`checkAuth()` 只看本地存储（有 token 就直接返回），于是
+   * 「管理员把某人的信息编辑员取消掉」之后，那个人**刷新页面也仍然看到「管理后台」**
+   * —— 浏览器里缓存的 `user.capabilities` / `content_modules` 还是旧的 ✗。
+   * 后端其实立刻收回了（`capabilities.py` 刻意不做缓存），
+   * 于是他点进去每个接口都 403：**入口还在、里面全拒**，最难排查的一种状态。
+   *
+   * 所以这里在**启动**与**标签页重新可见**时各核对一次（成本一个轻量请求）：
+   *   · 成功 → 用后端返回的 user 覆盖本地（角色/能力/内容模块立即生效）；
+   *   · 401 → 交给 `clearAuth()`（登录态确实失效了）；
+   *   · **断网/网络错误 → 什么都不做**（离线模式仍然可用，绝不清登录态）。
+   *
+   * @returns {Promise<boolean>} 是否成功取到最新身份
+   */
+  /**
+   * 核对身份并让权限变更立即生效（第 180 批）
+   * ------------------------------------------------------------------
+   * 场景：管理员在后台把某人的「信息编辑员」取消 → 那人浏览器里缓存的
+   * `user.capabilities` / `content_modules` 仍是旧的，`checkAuth()` 又只看本地存储，
+   * 于是**刷新页面也仍然看到「管理后台」** ✗，点进去每个接口却都 403
+   * —— "入口还在、里面全拒"，最难排查的一种状态。
+   *
+   * 所以：启动时与标签页重新可见时各核对一次。
+   *
+   * ⚠️ 这里**复用 `verifyToken()`**：它已经用 `unwrapAuthPayload()` 正确解开了后端
+   * `{status, message, data}` 那层包装并把 user 合并进内存。我自己再手写一份解析
+   * 就踩了坑（层级搞错、永远取不到最新身份，等于修复没生效）—— 解析只留一处。
+   *
+   * 核对后把**权限相关字段**写回存储，这样立刻刷新也别再退回旧值。
+   * 断网/5xx 时什么都不做（离线模式仍然可用），只有 401/403 才清登录态 —— 见 verifyToken。
+   */
+  async function refreshIdentity() {
+    if (!authToken.value) return false;
+    const ok = await verifyToken();
+    if (!ok) return false;
+    try {
+      const current = user.value || {};
+      const patch = {};
+      for (const key of ['role', 'capabilities', 'content_modules', 'is_staff', 'is_superuser']) {
+        if (current[key] !== undefined) patch[key] = current[key];
+      }
+      if (Object.keys(patch).length) patchStoredUser(patch);
+    } catch (error) {
+      console.warn('[auth] 权限字段写回存储失败（不影响本次会话）:', error?.message || error);
+    }
+    return true;
+  }
+
   async function verifyToken() {
     if (!authToken.value) return false;
     try {
@@ -593,6 +643,7 @@ const CONTENT_MODULES = [
     register,
     logout,
     checkAuth,
+    refreshIdentity,   // 第 180 批：核对身份，权限变更立即生效
     verifyToken,   // 第 123 批：主动向后端校验 token（会发请求，断网时不清登录态）
     setAuth,
     updateUser,

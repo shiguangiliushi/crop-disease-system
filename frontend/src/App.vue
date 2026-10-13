@@ -1,7 +1,7 @@
 <script setup>
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from './stores/auth';
-import { computed, onMounted, onBeforeUnmount, nextTick, ref, watch } from 'vue';
+import { computed, onMounted, onBeforeUnmount, nextTick, ref, watch, onUnmounted } from 'vue';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import enUs from 'element-plus/es/locale/lang/en';
 import { Setting, ArrowDown, HomeFilled, Document } from '@element-plus/icons-vue';
@@ -421,6 +421,27 @@ const currentYear = new Date().getFullYear();
  * -------------------------------------------------------------------------- */
 const isNavActive = (path) => navIsActive(route.path, path);
 
+/**
+ * 身份核对（第 180 批）
+ * ------------------------------------------------------------------
+ * · 启动时：`checkAuth()` 是从本地存储恢复（不发请求），之后必须**核对一次**，
+ *   否则"管理员刚取消了他的信息编辑员"这件事在本浏览器里要等重新登录才知道；
+ * · 标签页重新可见时：管理员改权限通常发生在这期间，回来一刷就生效，不用手动重登。
+ *
+ * 网络失败时不清登录态（离线模式仍然可用），见 auth.refreshIdentity 的注释。
+ */
+const refreshIdentitySafely = async () => {
+  try {
+    await authStore.refreshIdentity();
+  } catch (error) {
+    console.warn('身份核对失败（保持本地登录态）:', error?.message || error);
+  }
+};
+
+const onVisibilityChange = () => {
+  if (document.visibilityState === 'visible') refreshIdentitySafely();
+};
+
 onMounted(async () => {
   if (authStore.authToken) {
     try {
@@ -428,7 +449,13 @@ onMounted(async () => {
     } catch (error) {
       console.error('Failed to check auth on mount:', error);
     }
+    refreshIdentitySafely();
   }
+  document.addEventListener('visibilitychange', onVisibilityChange);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
 
