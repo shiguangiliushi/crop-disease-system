@@ -41,8 +41,10 @@
 #: 原来的 `/admin/review`（内容审核）、`/admin/forum`（论坛管理）、`/admin/comments`（评论管理）
 #: 三页合并成了 `/admin/content`「内容管理」（页内三个页签：帖子 / 评论 / 举报）。
 #: 这三个页签里，帖子与评论是 review **或** forum 任一即可（与后端 `is_moderator()` /
-#: `_reject_non_moderator` 同口径）；**举报只给全权管理员**（`is_full_admin`），
-#: 它不属于任何一个模块，所以在这一张表里没有对应的模块行。
+#: `_reject_non_moderator` 同口径）；**举报从第 189 批起也归这两个模块**
+#: （此前只给全权管理员），但只放开"看与处置"这一半 ——
+#: 举报人身份与"同时隐藏内容"仍只给全权管理员，见 ENDPOINT_RULES 里
+#: `/api/reports/` 那两行与 `views_report._can_see_reporter()`。
 MODULE_PAGES = {
     'review': ['/admin/content'],
     'forum': ['/admin/content'],
@@ -94,12 +96,23 @@ COMMON_PAGES = ['/admin/dashboard']
 FULL_ADMIN_PAGES = ['/admin/health']
 
 #: ★ 权限矩阵：`(method, path, allow, note)`
+#:
+#: ⚠️ 例外：`ANY_AUTHENTICATED` 里那几条**任何登录用户**都能拿到 200（只是数据范围不同），
+#: 所以它们不是"门禁"，`RoleMatrixTests` 也不会拿它们去验 403 —— 见下面那个常量的说明。
 ENDPOINT_RULES = (
     # -- 内容审核 / 论坛交流（这两个模块在"评论与帖子管理"上是**或**的关系）--
     ('GET', '/api/admin/comments/', ('review', 'forum'), '控制台评论列表（跨帖子）'),
     ('POST', '/api/admin/comments/bulk-delete/', ('review', 'forum'), '批量软删除评论'),
     ('POST', '/api/admin/comments/1/soft-delete/', ('review', 'forum'), '软删除单条评论（内容置为已删除）'),
     ('DELETE', '/api/admin/comments/1/', ('FULL_ADMIN',), '彻底删除评论（不可逆）'),
+
+    # -- 举报（第 189 批：从"仅全权管理员"改为 review/forum 也能管线索）--
+    #     ⚠️ 这两行给的是"看别人的举报 + 处置（改状态/备注）"，**不包括**：
+    #       · 举报人身份（`reporter.username` / `reporter.id` / `target_user_id`）→ 仅全权管理员；
+    #       · `hide_content=true`（下架内容，不可逆）→ 仅全权管理员，编辑员传了也不生效。
+    #     所以别把这两行读成"举报整块给编辑员了"。
+    ('GET', '/api/reports/', ('review', 'forum'), '举报列表与待处理计数（举报人身份仅全权管理员可见）'),
+    ('POST', '/api/reports/1/handle/', ('review', 'forum'), '处置举报（改状态 + 备注；同时隐藏内容仅全权管理员）'),
 
     # -- 新闻管理 --
     # ⚠️ `GET /api/news/` **不在**这张表里：它对所有人开放（农户端要读行业动态）。
@@ -144,6 +157,19 @@ ENDPOINT_RULES = (
     ('GET', '/api/admin/health/', ('FULL_ADMIN',), '系统健康（暴露服务器路径与部署细节）'),
     ('GET', '/api/admin/audit-logs/', ('FULL_ADMIN',), '操作日志（谁对谁做了什么）'),
 )
+
+#: **任何登录用户**都能拿到 200 的路径 —— 它们不是门禁，只是"返回的数据范围"不同
+#:
+#: 目前只有一条：`GET /api/reports/`（第 41 批口径，第 189 批沿用）
+#:   · 有 `review`/`forum` 模块的人 → 看**别人的**举报（列表 + 待处理计数）；
+#:   · 其他登录用户（含普通农户）→ 只看**自己提交的**举报（`count` 里不含别人的）。
+#:
+#: 为什么仍留在 `ENDPOINT_RULES` 里：这张表同时喂给**文档生成器**与**前端"编辑员能做什么"
+#: 对话框**，去掉它那两处就看不到举报了。但 `RoleMatrixTests` 的身份探测必须跳过它 ——
+#: 否则会得出"普通农户有举报权限"这种假结论（它拿到的其实是自己那条）。
+#: 真正的门禁在"能不能看别人的"上，由 `ReportTests` 与
+#: `ForumOnlyEditorTests.test_editor_can_see_and_handle_reports_but_not_reporter` 钉住。
+ANY_AUTHENTICATED_PATHS = ('/api/reports/',)
 
 #: 三个角色的一句话说明（文档与命令输出用）
 ROLE_NOTES = {

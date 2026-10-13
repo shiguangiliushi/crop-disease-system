@@ -43,7 +43,7 @@ from rest_framework import status  # 第 125 批：能力矩阵测试要断言�
 
 from .models import DetectionHistory, Feedback, News, PestInfo, PreventionMethod, SensitiveWord
 from .models import EditorModuleGrant  # 第 128 批：编辑员的模块授权（内容审核/新闻/百科/反馈）
-from .role_matrix import ENDPOINT_RULES, MODULE_PAGES
+from .role_matrix import ENDPOINT_RULES, MODULE_PAGES, ANY_AUTHENTICATED_PATHS
 from .capabilities import CONTENT_MODULES  # 第 178 批：角色矩阵测试要按模块遍历（**模块级**导入 ——
 # 局部导入会让"文件里有这个字符串"的检查失效，这个坑本项目吃过）
 from .models_forum import Comment, Favorite, ForumBoard, Like, Post
@@ -10750,6 +10750,10 @@ class ForumOnlyEditorTests(APITestCase):
         self.client_forum.force_authenticate(user=self.forum_editor)
         self.client_review = APIClient()
         self.client_review.force_authenticate(user=self.review_editor)
+        # 第 189 批：举报用例还要对比"全权管理员"这一档（举报人可见 + 能下架内容）
+        self.admin_user = self.superuser
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.superuser)
 
     # ---------- 模块口径本身 ----------
     def test_module_is_registered(self):
@@ -10827,15 +10831,19 @@ class ForumOnlyEditorTests(APITestCase):
         self.comment.refresh_from_db()
         self.assertTrue(self.comment.is_deleted)
 
-    # ---------- 不能做的：审核队列/举报/敏感词/用户管理/审计 ----------
-    def test_cannot_touch_review_queue_side(self):
+    # ---------- 举报：第 189 批起**能管线索，但看不到举报人** ----------
+    def test_editor_can_see_and_handle_reports_but_not_reporter(self):
         """
-        论坛编辑员**不**自动获得审核侧的其他东西（这正是这一批拆分的目的）
+        第 189 批改口径：编辑员**能**看别人的举报、**能**处置，但有两处仍然拿不到
 
-        ⚠️ 关于举报：`GET /api/reports/` 对**任何登录用户**都返回 200，这是**设计如此**
-        —— `_can_handle_reports()` 为假时只返回"自己提交的举报"（第 41 批的口径），
-        所以不能拿状态码当权限断言。真正的门禁在**处置**动作（`is_full_admin`）
-        与"能不能看到别人的举报"上，这里就断言这两条。
+        改的原因（用户反馈）：编辑员在「内容管理」里能管帖子与评论，却完全看不到举报页签，
+        "已经有人在举报"这件事他永远不知道。现在把举报当**线索入口**给他，但只放开一半：
+          · 能看别人的举报、拿到 pending 计数、能处置（handled/rejected）；
+          · **看不到举报人是谁**（回包匿名化：reporter.username=None + reporter_hidden）；
+          · **不能**"同时隐藏内容"（不可逆动作只给全权管理员），传了 true 也不生效，
+            并且响应里用 hide_denied 如实说明。
+
+        第 124 批的旧断言（看不见 + 403）在本次一并改掉 —— 那次的口径已被产品决策取代。
         """
         from .models_report import Report
 
@@ -10843,16 +10851,85 @@ class ForumOnlyEditorTests(APITestCase):
             username='zz_foe_other', password='pw12345678', role='USER')
         Report.objects.create(reporter=other, target_type='post', post=self.published,
                               reason='other', detail='zz别人的举报')
+
         listed = self.client_forum.get('/api/reports/')
         self.assertEqual(listed.status_code, status.HTTP_200_OK)
-        self.assertEqual(listed.data['count'], 0, '论坛编辑员看不到别人提交的举报')
-        self.assertEqual(listed.data['pending'], 0, '也拿不到"待处理"计数')
-        report = Report.objects.get(detail='zz别人的举报')
-        handled = self.client_forum.post(f'/api/reports/{report.id}/handle/',
-                                        {'status': 'handled'}, format='json')
-        self.assertEqual(handled.status_code, status.HTTP_403_FORBIDDEN,
-                         '举报处置仍只属于全权管理员（第 41 批口径）')
+        self.assertEqual(listed.data['count'], 1, '编辑员现在能看到别人提交的举报')
+        self.assertEqual(listed.data['pending'], 1, '也应拿到"待处理"计数')
 
+        row = listed.data['results'][0]
+        self.assertIsNone(row['reporter']['username'], '举报人用户名不该给编辑员')
+        self.assertIsNone(row['reporter']['id'], '举报人 id 同样不该给')
+        self.assertTrue(row['reporter_hidden'], '要有明确标记，前端据此显示"举报人已隐去"')
+        self.assertIsNone(row['target_user_id'], '被举报人 id 也不下发（可定位到人）')
+
+        report = Report.objects.get(detail='zz别人的举报')
+        handled = self.client_forum.post(
+            f'/api/reports/{report.id}/handle/',
+            # 故意带上 hide_content：编辑员勾了也不该生效
+            {'status': 'handled', 'note': '编辑员处置', 'hide_content': True}, format='json')
+        self.assertEqual(handled.status_code, status.HTTP_200_OK, handled.data)
+        self.assertFalse(handled.data['hidden_content'], '编辑员不能下架内容')
+        self.assertTrue(handled.data['hide_denied'], '要如实告知"没隐藏"，不能静默忽略')
+        self.published.refresh_from_db()
+        self.assertEqual(self.published.status, 'published', '帖子必须还在')
+
+    def test_editor_without_review_or_forum_still_cannot_handle_reports(self):
+        """只勾了别的模块（如新闻）的编辑员：举报与他无关（否则等于把 review 的活顺手给了所有人）"""
+        from .models_report import Report
+
+        other = get_user_model().objects.create_user(
+            username='zz_foe_other2', password='pw12345678', role='USER')
+        report = Report.objects.create(reporter=other, target_type='post', post=self.published,
+                                       reason='other', detail='zz别人的举报2')
+
+        news_editor = get_user_model().objects.create_user(
+            username='zz_foe_news', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=news_editor, module='news',
+                                         granted_by=self.admin_user)
+        client = APIClient()
+        client.force_authenticate(user=news_editor)
+
+        self.assertEqual(client.get('/api/reports/').data['count'], 0,
+                         '新闻编辑员看不到别人的举报')
+        self.assertEqual(client.post(f'/api/reports/{report.id}/handle/',
+                                     {'status': 'handled'}, format='json').status_code,
+                         status.HTTP_403_FORBIDDEN)
+
+    def test_admin_still_sees_reporter_and_can_hide(self):
+        """同一条路径上的全权管理员：举报人可见 + 隐藏内容生效（回归：别把编辑员的限制套到管理员头上）"""
+        from .models_report import Report
+
+        other = get_user_model().objects.create_user(
+            username='zz_foe_other3', password='pw12345678', role='USER')
+        report = Report.objects.create(reporter=other, target_type='post', post=self.published,
+                                       reason='other', detail='zz别人的举报3',
+                                       # 显式带上被举报人：`target_user_id` 是"能定位到人"的字段，
+                                       # 只有举报"用户"时才会由接口自动填，这里手填才能验证分权
+                                       target_user=self.author)
+
+        listed = self.client_admin.get('/api/reports/')
+        row = next(r for r in listed.data['results'] if r['id'] == report.id)
+        self.assertEqual(row['reporter']['username'], 'zz_foe_other3', '管理员应看到举报人')
+        self.assertFalse(row['reporter_hidden'])
+        self.assertEqual(row['target_user_id'], self.author.id, '管理员应拿到被举报人 id')
+
+        handled = self.client_admin.post(
+            f'/api/reports/{report.id}/handle/',
+            {'status': 'handled', 'note': '管理员处置', 'hide_content': True}, format='json')
+        self.assertEqual(handled.status_code, status.HTTP_200_OK, handled.data)
+        self.assertTrue(handled.data['hidden_content'])
+        self.assertFalse(handled.data['hide_denied'])
+        self.published.refresh_from_db()
+        self.assertEqual(self.published.status, 'hidden')
+
+    def test_cannot_touch_review_queue_side(self):
+        """
+        论坛编辑员**不**自动获得审核侧的其他东西（这正是这一批拆分的目的）
+
+        ⚠️ 关于举报：第 189 批起编辑员**能**看能处理（见上一条用例），所以这里不再断言
+        "看不到举报"，只断言剩下的三处：**敏感词 / 用户管理 / 操作日志**。
+        """
         # 敏感词（BROADCAST）
         self.assertEqual(self.client_forum.get('/api/sensitive-words/').status_code,
                          status.HTTP_403_FORBIDDEN)
@@ -11993,11 +12070,15 @@ class RoleMatrixTests(APITestCase):
 
         这条是"各自的功能"的核心 —— 勾了新闻的人不该能改百科词条。
         """
+        from .role_matrix import ANY_AUTHENTICATED_PATHS
+
         for module, user in self.editors.items():
             client = self._client(user)
             for method, path, allow, note in ENDPOINT_RULES:
                 if allow == ('FULL_ADMIN',):
                     continue          # 单独验（只给全权管理员）
+                if path in ANY_AUTHENTICATED_PATHS:
+                    continue          # 任何登录用户都 200（数据范围不同，不是门禁），见该常量说明
                 status = self._probe(client, method, path)
                 label = f'{module} → {method} {path}（{note}）'
                 if module in allow:
@@ -12017,11 +12098,29 @@ class RoleMatrixTests(APITestCase):
             self.assertNotEqual(status, 403, f'全权管理员被拦：{method} {path}（{note}）')
 
     def test_plain_user_is_rejected_everywhere(self):
-        """普通农户：管理端接口一条都不该给"""
+        """普通农户：管理端接口一条都不该给（`ANY_AUTHENTICATED_PATHS` 那几条除外）"""
+        from .role_matrix import ANY_AUTHENTICATED_PATHS
+
         client = self._client(self.plain)
         for method, path, _allow, note in ENDPOINT_RULES:
-            status = self._probe(client, method, path)
-            self.assertEqual(status, 403, f'普通用户拿到了 {status}：{method} {path}（{note}）')
+            if path in ANY_AUTHENTICATED_PATHS:
+                continue
+            # ⚠️ 循环变量别叫 status：那会把 DRF 的 `status` 模块盖掉，
+            #    下面 `status.HTTP_200_OK` 就变成 int.HTTP_200_OK（本批踩过）
+            code = self._probe(client, method, path)
+            self.assertEqual(code, 403, f'普通用户拿到了 {code}：{method} {path}（{note}）')
+
+        # 例外那一条要单独钉死：普通农户**只该看到自己提交的举报**，看不到别人的
+        from .models_report import Report
+
+        other = get_user_model().objects.create_user(
+            username='zz_matrix_reporter', password='pw12345678', role='USER')
+        Report.objects.create(reporter=other, target_type='user', target_user=self.admin,
+                              reason='other', detail='zz_matrix 别人的举报')
+        listed = client.get('/api/reports/')
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        self.assertEqual(listed.data['count'], 0, '普通农户只能看到自己提交的举报')
+        self.assertEqual(listed.data['pending'], 0, '也不该拿到全局"待处理"计数')
 
     def test_editor_with_no_module_gets_nothing(self):
         """
@@ -12037,6 +12136,8 @@ class RoleMatrixTests(APITestCase):
         for method, path, allow, note in ENDPOINT_RULES:
             if allow == ('FULL_ADMIN',):
                 continue
+            if path in ANY_AUTHENTICATED_PATHS:
+                continue   # 任何登录用户都能拿到 200（只是数据范围不同），不是"模块权限"
             self.assertEqual(self._probe(client, method, path), 403,
                              f'没勾模块的编辑员拿到了权限：{method} {path}')
 
