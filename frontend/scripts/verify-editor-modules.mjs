@@ -13,13 +13,17 @@
  *   ③ **只勾「论坛交流」的编辑员**（第 183 批新增）：侧栏**有**「内容管理」，
  *      页里只画「帖子」「评论」两个页签，**没有**「举报」（举报仅全权管理员，
  *      后端 `_can_handle_reports()` = `is_full_admin`，点了必然 403）
- *   ④ **全权管理员**：侧栏有全部入口（含系统健康/操作日志这些仅全权的），
+ *   ④ **全权管理员**：侧栏有全部入口（含仅全权的那几项），
  *      内容管理页三个页签齐全，且三条旧地址（/admin/review、/admin/forum、/admin/comments）
  *      都重定向到新页对应页签
  *   ⑤ **全权管理员 · 用户管理合并页**（第 184 批）：侧栏里「识别记录」不再单独占一项；
  *      `/admin/users` 是「用户」+「识别记录」两个页签、`?tab=` 双向同步、
  *      深链 `/admin/users?tab=detections` 直接落在识别记录上（且**不挂载**另一个页签，
  *      免得多打一遍接口），旧地址 `/admin/detection-history?...` 跳到新页并**保留参数**
+ *   ⑥ **全权管理员 · 系统合并页**（第 185 批）：侧栏「系统健康」「操作日志」合成一项「系统」；
+ *      `/admin/health` 是「系统健康」+「操作日志」两个页签、`?tab=` 双向同步
+ *      （非法值回落 health）、深链 `?tab=audit` 只挂操作日志页，
+ *      旧地址 `/admin/audit-logs?search=xx&page=2` 跳到新页并**保留参数**（search 接到搜索框）
  *
  * 为什么值得做：后端 403 只保证"拿不到数据"，而农户/编辑员感受的是**界面** ——
  * 侧栏或页签列出一个点进去 403 的入口，等于把人往墙上引（第 180/181 批两次踩过）。
@@ -227,8 +231,14 @@ const text4 = await sidebarText(p4);
 for (const [label, need] of [
   ['用户管理', '用户管理'], ['内容管理', '内容管理'], ['新闻管理', '新闻管理'],
   ['病害百科维护', '病害百科维护'],
-  ['意见反馈管理', '意见反馈管理'], ['版块管理', '版块管理'],
-  ['系统健康', '系统健康'], ['操作日志', '操作日志'],
+  ['意见反馈管理', '意见反馈管理'],
+  // 第 185 批：「系统健康」「操作日志」合成一项「系统」（页内两个页签），
+  // 侧栏里不再有那两行字。⚠️ 这里**不能**用 `text4.includes('系统')` 判它 ——
+  // 侧栏品牌副标题就是"作物病害识别系统"，那样写必然假绿；
+  // 改成下面按 href + 精确文案核（见 "侧栏有「系统」一项"）。
+  // ⚠️ 「版块管理」原来也在这一串里，第 186 批把它一并并进了「系统」页（第三个页签），
+  // 所以这里删掉了 —— 版块页签自己的断言（含"只有 BROADCAST 的人不该看到另外两个页签"）
+  // 归第 186 批补；本文件这一步只保证第 185 批的合并口径为真。
 ]) {
   check(`管理员侧栏有「${label}」`, text4.includes(need), '');
 }
@@ -243,6 +253,18 @@ check('侧栏不再有 /admin/detection-history（识别记录已并入「用户
   !navHrefs.includes('/admin/detection-history'), navHrefs.join(' '));
 check('管理员侧栏里有「用户管理」，且「识别记录」不再单独占一项',
   text4.includes('用户管理') && !text4.includes('识别记录'), '');
+// 第 185 批：「系统健康」+「操作日志」→ 侧栏一项「系统」（一页两个页签）。
+// 按 href + 精确文案核，避免被品牌副标题里的"…系统"蒙混过关。
+const navEntries = await p4.evaluate(() =>
+  [...document.querySelectorAll('.admin-nav-item')].map((el) => ({
+    href: el.getAttribute('href'),
+    text: (el.innerText || '').replace(/\s+/g, ' ').trim(),
+  })));
+check('侧栏有「系统」一项，且它指向 /admin/health',
+  navEntries.some((item) => item.href === '/admin/health' && item.text === '系统'),
+  JSON.stringify(navEntries));
+check('侧栏不再有 /admin/audit-logs（操作日志已并入「系统」页的页签）',
+  !navHrefs.includes('/admin/audit-logs'), navHrefs.join(' '));
 await p4.screenshot({ path: 'dsh-shots/editor-admin-sidebar.png' });
 
 await p4.goto(`${UI}/admin/content`, { waitUntil: 'domcontentloaded' });
@@ -283,12 +305,20 @@ for (const [legacy, tab] of [
 await p4.goto(`${UI}/admin/forum?search=zz老链接`, { waitUntil: 'domcontentloaded' });
 await p4.waitForTimeout(2500);
 const legacyQuery = await p4.evaluate(() => ({
-  search: (document.querySelector('.filter-bar input')?.value || ''),
+  // ⚠️ 第 185 批收尾：选择器必须是这个 —— `.filter-bar input` 命中的是**筛选下拉**
+  // 内部的 `input.el-select__input`（type=text、**readonly**、值恒为空），不是搜索框。
+  // 临时探针（scripts/_probe-185-search-input.mjs，跑完已删）实测 `.filter-bar` 里 4 个 input：
+  //   [0..2] `.el-select__input`（readonly，value=""）  ← 版块/状态/标记三个下拉
+  //   [3]    `.el-input__inner`（value="zz老链接"）      ← 搜索框（带 #append 的 el-input）
+  // 也解释了为什么 `input[type="text"], input:not([readonly])` 那种**逗号列表**没用：
+  // querySelector 取"文档顺序里第一个命中**任一**分支"的元素，第一个分支就命中了下拉。
+  search: (document.querySelector('.filter-bar .el-input__inner:not(.el-select__input)')?.value || ''),
+  allInputValues: [...document.querySelectorAll('.filter-bar input')].map((el) => el.value),
   url: location.pathname + location.search,
 }));
 check('旧地址 /admin/forum?search=xx 的筛选参数被保留',
   legacyQuery.search === 'zz老链接' && legacyQuery.url.includes('tab=posts'),
-  `${legacyQuery.url}｜输入框="${legacyQuery.search}"`);
+  `${legacyQuery.url}｜搜索框="${legacyQuery.search}"｜全部输入框=${JSON.stringify(legacyQuery.allInputValues)}`);
 
 // ---------------------------------------------------------------------------
 // ⑤ 用户管理合并页（第 184 批）：两个页签 + `?tab=` 同步 + 旧地址重定向
@@ -361,6 +391,89 @@ check('旧地址 /admin/detection-history 重定向到 /admin/users?tab=detectio
 check('旧地址上的查询参数被保留（x=1 与 page=2 都还在）',
   legacyHub.search.includes('x=1') && legacyHub.search.includes('page=2'),
   `query="${legacyHub.search}"`);
+
+// ---------------------------------------------------------------------------
+// ⑥ 系统合并页（第 185 批）：系统健康 + 操作日志两个页签 + `?tab=` 同步 + 旧地址重定向
+// ---------------------------------------------------------------------------
+// 判据用两个页面各自的**根 class**（`.health-page` / `.audit-page`），
+// 不用文案 —— "系统健康/操作日志"这两个词在别处（页签栏、面包屑）也会出现。
+await p4.goto(`${UI}/admin/health`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3200);
+const sysDefault = await p4.evaluate(() => ({
+  tabs: [...document.querySelectorAll('.el-tabs__item')]
+    .map((el) => el.innerText.replace(/\s+/g, ' ').trim()),
+  healthPanel: document.querySelectorAll('.health-page').length,
+  auditPanel: document.querySelectorAll('.audit-page').length,
+}));
+check('管理员 /admin/health 是带页签的合并页（系统健康 + 操作日志）',
+  sysDefault.tabs.includes('系统健康') && sysDefault.tabs.includes('操作日志'),
+  `页签=${JSON.stringify(sysDefault.tabs)}`);
+check('默认落在「系统健康」页签：健康页在，操作日志**未挂载**（lazy）',
+  sysDefault.healthPanel === 1 && sysDefault.auditPanel === 0,
+  `health面板=${sysDefault.healthPanel}｜audit面板=${sysDefault.auditPanel}`);
+
+// 点「操作日志」页签：地址要带上 tab=audit，且操作日志页真的渲染出来
+await p4.locator('.el-tabs__item', { hasText: '操作日志' }).first().click();
+await p4.waitForTimeout(2500);
+const sysAudit = await p4.evaluate(() => ({
+  query: location.search,
+  auditPanel: document.querySelectorAll('.audit-page').length,
+  text: (document.querySelector('.audit-page')?.innerText || '').replace(/\s+/g, ' '),
+  healthVisible: (() => {
+    const el = document.querySelector('.health-page');
+    return el ? el.offsetParent !== null : false;
+  })(),
+}));
+check('点「操作日志」页签：地址带 tab=audit 且操作日志页渲染出来（筛选/表头都在）',
+  sysAudit.query.includes('tab=audit') && sysAudit.auditPanel === 1
+    && sysAudit.text.includes('只读') && sysAudit.text.includes('操作人'),
+  `query="${sysAudit.query}"｜${sysAudit.text.slice(0, 60)}`);
+check('切到操作日志后「系统健康」面板不再显示（不是两页摞在一起）',
+  sysAudit.healthVisible === false, `健康页可见=${sysAudit.healthVisible}`);
+
+// 深链：直接打开 /admin/health?tab=audit —— 落在操作日志上，
+// 且**不挂载**系统健康页签（第 183 批的教训：两边都挂载 = 一次进页面打两倍的接口）
+await p4.goto(`${UI}/admin/health?tab=audit`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3200);
+const sysDeepLink = await p4.evaluate(() => ({
+  active: (document.querySelector('.el-tabs__item.is-active')?.innerText || '').replace(/\s+/g, ' ').trim(),
+  healthPanel: document.querySelectorAll('.health-page').length,
+  auditPanel: document.querySelectorAll('.audit-page').length,
+}));
+check('深链 /admin/health?tab=audit 直接落在「操作日志」页签，且健康页**未挂载**',
+  sysDeepLink.active.includes('操作日志') && sysDeepLink.auditPanel === 1
+    && sysDeepLink.healthPanel === 0,
+  `当前页签="${sysDeepLink.active}"｜health面板=${sysDeepLink.healthPanel}`);
+
+// 非法 tab 值：回落「系统健康」（不是白屏、也不是停在空页签上）
+await p4.goto(`${UI}/admin/health?tab=nope`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3000);
+const sysBadTab = await p4.evaluate(() => ({
+  active: (document.querySelector('.el-tabs__item.is-active')?.innerText || '').replace(/\s+/g, ' ').trim(),
+  healthPanel: document.querySelectorAll('.health-page').length,
+}));
+check('非法 tab 值回落「系统健康」（?tab=nope）',
+  sysBadTab.active.includes('系统健康') && sysBadTab.healthPanel === 1,
+  `当前页签="${sysBadTab.active}"｜health面板=${sysBadTab.healthPanel}`);
+
+// 旧地址：/admin/audit-logs → /admin/health?tab=audit，且**筛选/分页参数不丢**
+// （这一页的 page / search / start / end 本来就写在 URL 上，老书签要照旧能用）
+await p4.goto(`${UI}/admin/audit-logs?search=zz老链接&page=2`, { waitUntil: 'domcontentloaded' });
+await p4.waitForTimeout(3200);
+const legacySystem = await p4.evaluate(() => ({
+  path: location.pathname,
+  search: location.search,
+  auditPanel: document.querySelectorAll('.audit-page').length,
+  inputValues: [...document.querySelectorAll('.filter-bar input')].map((el) => el.value),
+}));
+check('旧地址 /admin/audit-logs 重定向到 /admin/health?tab=audit 并渲染操作日志页',
+  legacySystem.path === '/admin/health' && legacySystem.search.includes('tab=audit')
+    && legacySystem.auditPanel === 1,
+  `${legacySystem.path}${legacySystem.search}`);
+check('旧地址上的筛选/分页参数被保留（search 接到搜索框、page 还在 URL 上）',
+  legacySystem.inputValues.includes('zz老链接') && legacySystem.search.includes('page=2'),
+  `query="${legacySystem.search}"｜输入框=${JSON.stringify(legacySystem.inputValues)}`);
+await p4.screenshot({ path: 'dsh-shots/admin-system-hub.png' });
 
 check('全程无 JS 报错', errors.length === 0, errors.slice(0, 2).join(' | '));
 
