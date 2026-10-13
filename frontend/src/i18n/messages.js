@@ -1377,6 +1377,7 @@ export const zhCN = {
     saveFailed: '保存失败，请稍后重试',
   },
   newsMgmt: {
+    unpublish: '下架',   // 第 187 批：已发布新闻的「下架」按钮（原缺文案，界面显示原始 key）
     title: '新闻管理',
     // 第 84 批：正文长度校验
     contentMin: '新闻内容不能少于 10 个字符',
@@ -4315,6 +4316,7 @@ export const en = {
     saveFailed: 'Save failed, please try again later',
   },
   newsMgmt: {
+    unpublish: 'Unpublish',   // Batch 187: take a published news item down
     title: 'News management',
     // 第 84 批
     contentMin: 'The news content needs at least 10 characters',

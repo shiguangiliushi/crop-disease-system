@@ -702,7 +702,11 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
             # 无路可走：单条驳回只对待审显示、批量驳回静默跳过（用户反馈"点批量驳回没用"
             # 就是这个）。单条 reject 接口本来对已发布也生效（实测 200 → hidden），
             # 批量这里只是把口径对齐。**通过**仍然只认 pending：已发布的再"通过"没有意义。
-            allowed = ('pending',) if action_name == 'approve' else ('pending', 'published')
+            # 第 187 批：**对称化** —— 驳回能把 pending/published 变成 hidden，
+            # 那么通过就必须能把 hidden 变回 published（用户报的"批量驳回后批量通过没用"）。
+            # 上一版只有驳回放宽了，通过仍只认 pending，于是"下架容易、恢复无门"。
+            allowed = (('pending', 'hidden') if action_name == 'approve'
+                       else ('pending', 'published'))
             if post.status not in allowed:
                 detail = (f'不是待审状态（当前 {post.status}），已跳过'
                           if action_name == 'approve'

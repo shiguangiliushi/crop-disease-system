@@ -12383,3 +12383,74 @@ class PostUnpublishTests(APITestCase):
         self.assertIn(post.id, [p['id'] for p in guest.get('/api/forums/posts/').data['results']])
         self._bulk([post.id], 'reject')
         self.assertNotIn(post.id, [p['id'] for p in guest.get('/api/forums/posts/').data['results']])
+
+
+class PostRestoreAfterUnpublishTests(APITestCase):
+    """
+    "下架之后要能恢复"（第 187 批）
+
+    用户报：在内容管理的帖子页签把一条帖子**批量驳回**（状态变 hidden）后，
+    再点**批量通过**没有反应。根因是第 182 批只把**驳回**放宽到 published，
+    **通过**仍只认 pending —— 于是"下架容易、恢复无门"。这条把对称性钉死：
+      · 批量通过：待审 ✅、**已隐藏 ✅（= 恢复发布）**、已发布 ❌（无需再通过）。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.author = User.objects.create_user(
+            username='zz_rs_author', password='pw12345678', role='USER')
+        self.admin_user = User.objects.create_user(
+            username='zz_rs_admin', password='pw12345678', is_staff=True, role='ADMIN')
+        self.editor = User.objects.create_user(
+            username='zz_rs_editor', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=self.editor, module='forum',
+                                         granted_by=self.admin_user)
+        self.board = ForumBoard.objects.create(name='zz 恢复发布测试版块')
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+
+    def tearDown(self):
+        Post.objects.filter(title__startswith='zz 恢复').delete()
+        ForumBoard.objects.filter(name='zz 恢复发布测试版块').delete()
+        get_user_model().objects.filter(username__startswith='zz_rs_').delete()
+
+    def _post(self, status):
+        return Post.objects.create(author=self.author, board=self.board,
+                                   title=f'zz 恢复 {status}', content='内容', status=status)
+
+    def test_bulk_approve_restores_a_hidden_post(self):
+        """★ 用户遇到的那一步：驳回后（hidden）再批量通过 → 回到已发布"""
+        post = self._post('published')
+        self.client_editor.post('/api/forums/posts/bulk-review/',
+                                {'ids': [post.id], 'action': 'reject', 'reason': 'zz'},
+                                format='json')
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'hidden')
+
+        resp = self.client_editor.post('/api/forums/posts/bulk-review/',
+                                       {'ids': [post.id], 'action': 'approve'},
+                                       format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['succeeded'], 1, resp.data.get('results'))
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'published', '已隐藏的帖子应当能被通过（恢复发布）')
+
+    def test_bulk_approve_still_handles_pending(self):
+        post = self._post('pending')
+        resp = self.client_editor.post('/api/forums/posts/bulk-review/',
+                                       {'ids': [post.id], 'action': 'approve'},
+                                       format='json')
+        self.assertEqual(resp.data['succeeded'], 1)
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'published')
+
+    def test_bulk_approve_leaves_published_alone(self):
+        """已发布的再"通过"没有意义：跳过而不是报错"""
+        post = self._post('published')
+        resp = self.client_editor.post('/api/forums/posts/bulk-review/',
+                                       {'ids': [post.id], 'action': 'approve'},
+                                       format='json')
+        self.assertEqual(resp.data['succeeded'], 0)
+        post.refresh_from_db()
+        self.assertEqual(post.status, 'published')
