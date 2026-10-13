@@ -105,8 +105,22 @@ await login(page, token, userJson);
 await page.goto(`${UI}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.admin-sidebar, .admin-console, aside', { timeout: 30_000 });
 await page.waitForTimeout(2000);
-const sidebarText = await page.locator('body').innerText();
-check('侧栏有「识别记录」入口', sidebarText.includes('识别记录'), '');
+// ⚠️ 第 184 批：侧栏不再单列「识别记录」——它成了「用户管理」页的**第二个页签**
+//    （`/admin/users?tab=detections`）。原来这里查的是整页 `body.innerText`，
+//    连"页内页签/其它区块"里的字都会算进去（查文案必然假绿）；改成**按 href 精确核**。
+const navItems = await page.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('侧栏有「用户管理」一项且指向 /admin/users（识别记录是它的页签）',
+  navItems.some((item) => item.href === '/admin/users' && item.text === '用户管理'),
+  JSON.stringify(navItems));
+check('侧栏不再有独立的「识别记录」项（/admin/detection-history 已并入用户管理页签）',
+  !navItems.some((item) => item.href === '/admin/detection-history'), JSON.stringify(navItems));
+// 第 183/185/186 批并掉的旧入口：侧栏里一个都不该再有（它们都成了页内页签）
+const mergedHrefs = ['/admin/review', '/admin/forum', '/admin/comments',
+  '/admin/boards', '/admin/audit-logs'];
+check('侧栏不再有已并入页签的旧入口（/review、/forum、/comments、/boards、/audit-logs）',
+  !navItems.some((item) => mergedHrefs.includes(item.href)),
+  navItems.map((item) => item.href).join(' '));
 
 await page.goto(`${UI}/admin/detection-history`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.admin-table', { timeout: 30_000 });
@@ -202,8 +216,11 @@ const editorPage = await (await browser.newContext({ viewport: { width: 1500, he
 await login(editorPage, tokenEditor, userJsonEditor);
 await editorPage.goto(`${UI}/admin/dashboard`, { waitUntil: 'domcontentloaded' });
 await editorPage.waitForTimeout(3000);
-const editorSidebar = await editorPage.locator('body').innerText();
-check('内容编辑员侧栏里没有「识别记录」', !editorSidebar.includes('识别记录'), '');
+// 第 184 批：按 href 核（编辑员侧栏不该有 /admin/users —— 识别记录是它的页签）
+const editorNav = await editorPage.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => el.getAttribute('href')));
+check('内容编辑员侧栏里没有 /admin/users（识别记录是它的页签，他要 USER_ADMIN 才有）',
+  !editorNav.includes('/admin/users'), JSON.stringify(editorNav));
 await editorPage.goto(`${UI}/admin/detection-history`, { waitUntil: 'domcontentloaded' });
 await editorPage.waitForTimeout(3000);
 const editorUrl = new URL(editorPage.url()).pathname;

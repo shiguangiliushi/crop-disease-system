@@ -114,10 +114,20 @@ if (await confirmBtn.count()) {
 // ---------------------------------------------------------------------------
 // ① 侧栏 + 页面
 // ---------------------------------------------------------------------------
-const nav = await page.evaluate(
-  () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
-);
-check('全权管理员侧栏出现「操作日志」', nav.includes('操作日志'), nav);
+// ⚠️ 第 185 批：侧栏不再单列「操作日志」——它成了「系统」页的页签
+//    （`/admin/health?tab=audit`）。按 href 精确核，不查侧栏文案。
+const navItems = await page.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('全权管理员侧栏有「系统」一项且指向 /admin/health（操作日志是它的页签）',
+  navItems.some((item) => item.href === '/admin/health' && item.text === '系统'),
+  JSON.stringify(navItems));
+check('侧栏不再有独立的「操作日志」项（/admin/audit-logs 已重定向到系统页的页签）',
+  !navItems.some((item) => item.href === '/admin/audit-logs'), JSON.stringify(navItems));
+// 第 183/186 批并掉的旧入口：侧栏里一个都不该再有（它们都成了页内页签）
+const mergedHrefs = ['/admin/boards', '/admin/review', '/admin/forum', '/admin/comments'];
+check('侧栏不再有已并入页签的旧入口（/admin/boards、/review、/forum、/comments）',
+  !navItems.some((item) => mergedHrefs.includes(item.href)),
+  navItems.map((item) => item.href).join(' '));
 
 await page.goto(`${UI}/admin/audit-logs`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.el-table__row', { timeout: 25_000 });
@@ -227,10 +237,11 @@ await page.waitForTimeout(500);
 const editorCtx = await browser.newContext({ viewport: { width: 1700, height: 1000 }, locale: 'zh-CN' });
 const editorPage = await editorCtx.newPage();
 await loginAs(editorPage, editorName);
-const editorNav = await editorPage.evaluate(
-  () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
-);
-check('编辑员侧栏看不到「操作日志」', !editorNav.includes('操作日志'), editorNav);
+// 第 185 批：编辑员侧栏里没有「系统」这一项（操作日志是它的页签）
+const editorNav = await editorPage.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('编辑员侧栏没有 /admin/health（操作日志不给内容编辑员）',
+  !editorNav.some((item) => item.href === '/admin/health'), JSON.stringify(editorNav));
 
 await editorPage.goto(`${UI}/admin/audit-logs`, { waitUntil: 'domcontentloaded' });
 await editorPage.waitForTimeout(2500);

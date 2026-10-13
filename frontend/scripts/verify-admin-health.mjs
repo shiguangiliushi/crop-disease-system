@@ -89,10 +89,21 @@ await loginAs(page, superName);
 // ---------------------------------------------------------------------------
 // ① 侧栏 + 页面
 // ---------------------------------------------------------------------------
-const nav = await page.evaluate(
-  () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
-);
-check('全权管理员侧栏出现「系统健康」', nav.includes('系统健康'), nav);
+// ⚠️ 第 185 批：侧栏不再单列「系统健康」——它成了「系统」页的**第一个页签**
+//    （`/admin/health?tab=health`）。所以这里**按 href 精确核**，不查侧栏文案：
+//    "系统健康"四个字现在出现在页内页签上，查文案会假绿。
+const sysNav = await page.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('全权管理员侧栏有「系统」一项且指向 /admin/health（系统健康是它的页签）',
+  sysNav.some((item) => item.href === '/admin/health' && item.text === '系统'),
+  JSON.stringify(sysNav));
+check('侧栏不再有独立的「系统健康」「操作日志」项（两者都是系统页的页签）',
+  !sysNav.some((item) => item.href === '/admin/audit-logs'), JSON.stringify(sysNav));
+// 第 183/186 批并掉的旧入口：侧栏里一个都不该再有（它们都成了页内页签）
+const mergedHrefs = ['/admin/review', '/admin/forum', '/admin/comments', '/admin/boards'];
+check('侧栏不再有已并入页签的旧入口（/admin/review、/forum、/comments、/boards）',
+  !sysNav.some((item) => mergedHrefs.includes(item.href)),
+  sysNav.map((item) => item.href).join(' '));
 
 await page.goto(`${UI}/admin/health`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.overall', { timeout: 25_000 });
@@ -224,10 +235,11 @@ check('没记的那几天画成灰格子（本身就说明任务没跑）',
 const editorCtx = await browser.newContext({ viewport: { width: 1700, height: 1100 }, locale: 'zh-CN' });
 const editorPage = await editorCtx.newPage();
 await loginAs(editorPage, editorName);
-const editorNav = await editorPage.evaluate(
-  () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
-);
-check('编辑员侧栏看不到「系统健康」', !editorNav.includes('系统健康'), editorNav);
+// 第 185 批：编辑员看不到「系统」这一项（他是 content 能力，没有 BROADCAST，也不是全权管理员）
+const editorNav = await editorPage.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('编辑员侧栏没有 /admin/health（「系统」页不给内容编辑员）',
+  !editorNav.some((item) => item.href === '/admin/health'), JSON.stringify(editorNav));
 
 await editorPage.goto(`${UI}/admin/health`, { waitUntil: 'domcontentloaded' });
 await editorPage.waitForTimeout(2500);

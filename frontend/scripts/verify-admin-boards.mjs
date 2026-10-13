@@ -7,12 +7,13 @@
  * （它们也正是第 138 批接口可达性审计里"界面没调用"清单中的两条。）
  *
  * 覆盖：
- *   ① BROADCAST 管理员能看到侧栏「版块管理」并打开页面
+ *   ① BROADCAST 管理员能从「系统」页的**版块管理页签**打开本页（第 186 批起侧栏不再
+ *      单列「版块管理」；旧地址 `/admin/boards` 重定向到 `/admin/health?tab=boards`）
  *   ② 列表按 order 排好序，停用的版块也显示（带"已停用"标记）
  *   ③ 停用一个版块 → 农户端论坛**看不到**它，但管理页仍看得到（能再开回来）
  *   ④ 启用回来 → 农户端又能看到
  *   ⑤ 下移一格 → 顺序真的变了（接口收到的是一整份 orders），刷新后仍是新顺序
- *   ⑥ 信息编辑员（只有内容能力）看不到侧栏这一项，直连路由被弹回，接口 403
+ *   ⑥ 信息编辑员（只有内容能力）看不到侧栏入口，直连路由被弹回，接口 403
  *
  * 用法：node scripts/verify-admin-boards.mjs
  */
@@ -117,14 +118,36 @@ const rowOf = (name) => page.locator('.board-row').filter({ hasText: name }).fir
 // ---------------------------------------------------------------------------
 clearThrottle();
 await loginAsAdmin(page, adminName);
-const navText = await page.evaluate(
-  () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
-);
-check('侧栏出现「版块管理」', navText.includes('版块管理'), navText);
+// ⚠️ 第 186 批：版块管理并入了「系统」页的**第三个页签**（`/admin/health?tab=boards`），
+//    侧栏里不再有单独的「版块管理」一项 —— 所以这里**按 href 精确核**，
+//    而不是查侧栏文案（"版块管理"四个字现在出现在页内页签上，查文案会假绿）。
+const navItems = await page.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('管理员侧栏有「系统」一项且指向 /admin/health（版块管理已是它的页签）',
+  navItems.some((item) => item.href === '/admin/health' && item.text === '系统'),
+  JSON.stringify(navItems));
+check('侧栏不再有独立的「版块管理」项（href /admin/boards 已重定向到系统页的页签）',
+  !navItems.some((item) => item.href === '/admin/boards'), JSON.stringify(navItems));
+// 第 183/185 批并掉的旧入口：侧栏里一个都不该再有（它们都成了页内页签）
+const mergedHrefs = ['/admin/review', '/admin/forum', '/admin/comments', '/admin/audit-logs'];
+check('侧栏不再有已并入页签的旧入口（/admin/review、/forum、/comments、/audit-logs）',
+  !navItems.some((item) => mergedHrefs.includes(item.href)),
+  navItems.map((item) => item.href).join(' '));
 
 await page.goto(`${UI}/admin/boards`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.board-row', { timeout: 25_000 });
 await page.waitForTimeout(1200);
+// 旧地址重定向后仍要落在**版块页签**上（不是系统健康、也不是操作日志）
+const legacyEntry = await page.evaluate(() => ({
+  path: location.pathname,
+  search: location.search,
+  active: (document.querySelector('.el-tabs__item.is-active')?.innerText || '').replace(/\s+/g, ' ').trim(),
+  boardPanel: document.querySelectorAll('.board-admin').length,
+}));
+check('旧地址 /admin/boards 落到 /admin/health?tab=boards 的版块页签',
+  legacyEntry.path === '/admin/health' && legacyEntry.search.includes('tab=boards')
+    && legacyEntry.active.includes('版块管理') && legacyEntry.boardPanel === 1,
+  `${legacyEntry.path}${legacyEntry.search}｜页签="${legacyEntry.active}"`);
 
 // ---------------------------------------------------------------------------
 // ② 列表内容
@@ -214,15 +237,23 @@ const editorCtx = await browser.newContext({ viewport: { width: 1500, height: 10
 const editorPage = await editorCtx.newPage();
 clearThrottle();
 await loginAsAdmin(editorPage, editorName);
-const editorNav = await editorPage.evaluate(
-  () => [...document.querySelectorAll('.admin-nav-item')].map((el) => el.innerText.trim()).join(' | '),
-);
-check('编辑员的侧栏里没有「版块管理」', !editorNav.includes('版块管理'), editorNav);
+// 第 186 批：同样按 href 核（"版块管理"四个字在系统页里是页签文案，查文案不可靠）
+const editorNav = await editorPage.evaluate(() => [...document.querySelectorAll('.admin-nav-item')]
+  .map((el) => ({ href: el.getAttribute('href'), text: el.innerText.replace(/\s+/g, ' ').trim() })));
+check('编辑员的侧栏里没有 /admin/boards 项，也没有「系统」这一项（他要 BROADCAST/全权才有）',
+  !editorNav.some((item) => item.href === '/admin/boards')
+    && !editorNav.some((item) => item.href === '/admin/health'),
+  JSON.stringify(editorNav));
+check('编辑员侧栏里也没有已并入页签的旧入口（/review、/forum、/comments、/audit-logs）',
+  !editorNav.some((item) => ['/admin/review', '/admin/forum', '/admin/comments', '/admin/audit-logs']
+    .includes(item.href)),
+  editorNav.map((item) => item.href).join(' '));
 
 await editorPage.goto(`${UI}/admin/boards`, { waitUntil: 'domcontentloaded' });
 await editorPage.waitForTimeout(2000);
 check('编辑员直连 /admin/boards 被弹回（不渲染该页）',
-  !editorPage.url().includes('/admin/boards'), `落在 ${new URL(editorPage.url()).pathname}`);
+  !editorPage.url().includes('/admin/boards') && !editorPage.url().includes('tab=boards'),
+  `落在 ${new URL(editorPage.url()).pathname}${new URL(editorPage.url()).search}`);
 
 const editorApi = await editorPage.evaluate(async ({ api }) => {
   const token = sessionStorage.getItem('auth_token');
