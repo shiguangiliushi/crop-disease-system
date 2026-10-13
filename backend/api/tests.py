@@ -43,6 +43,9 @@ from rest_framework import status  # 第 125 批：能力矩阵测试要断言�
 
 from .models import DetectionHistory, Feedback, News, PestInfo, PreventionMethod, SensitiveWord
 from .models import EditorModuleGrant  # 第 128 批：编辑员的模块授权（内容审核/新闻/百科/反馈）
+from .role_matrix import ENDPOINT_RULES, MODULE_PAGES
+from .capabilities import CONTENT_MODULES  # 第 178 批：角色矩阵测试要按模块遍历（**模块级**导入 ——
+# 局部导入会让"文件里有这个字符串"的检查失效，这个坑本项目吃过）
 from .models_forum import Comment, Favorite, ForumBoard, Like, Post
 from .models_notify import Announcement, Notification  # 第 37 批：通知与公告
 from .models_social import Follow  # 第 40 批：关注关系
@@ -11911,3 +11914,155 @@ class AdminDetectionTests(APITestCase):
     def test_delete_missing_row_is_404(self):
         self.assertEqual(self.c_admin.delete('/api/admin/detections/99999999/').status_code,
                          status.HTTP_404_NOT_FOUND)
+
+
+class RoleMatrixTests(APITestCase):
+    """
+    权限矩阵：**拿 api/role_matrix.py 的表去真请求每个接口**（第 178 批）
+
+    为什么值得这么写：
+      · 权限判定散在 26 处视图体内，谁写错一个模块名（比如新闻接口写成 pests）
+        不会有人发现 —— 除非**真的去请求**一遍；
+      · 矩阵表一旦与代码不一致，这里立刻红：允许的必须不是 403，不允许的必须 403；
+      · 顺带防"路径腐烂"：先用 `django.urls.resolve()` 确认每个路径真的存在，
+        404 一律判为"表写错了路径"，不允许它伪装成"没权限"。
+
+    四种身份各跑一遍全表：五个**只勾一个模块**的编辑员 / 全权管理员 / 普通农户。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_matrix_admin', password='pw12345678', is_staff=True, role='ADMIN')
+        self.plain = User.objects.create_user(
+            username='zz_matrix_plain', password='pw12345678', role='USER')
+
+        # 五个"只勾一个模块"的编辑员 —— 这才验得出"互不干扰"
+        self.editors = {}
+        for module in CONTENT_MODULES:
+            user = User.objects.create_user(
+                username=f'zz_matrix_{module}', password='pw12345678', role='EDITOR')
+            EditorModuleGrant.objects.create(user=user, module=module, granted_by=self.admin)
+            self.editors[module] = user
+
+    def tearDown(self):
+        get_user_model().objects.filter(username__startswith='zz_matrix_').delete()
+
+    # -- 工具 ---------------------------------------------------------------
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def _probe(self, client, method, path):
+        """发一个请求，返回状态码（不带 body —— 权限判定在参数校验之前）"""
+        return getattr(client, method.lower())(path, {}, format='json').status_code
+
+    def test_every_path_in_the_table_actually_exists(self):
+        """
+        矩阵里的路径都真的存在（防"路径腐烂"）
+
+        404 有两种含义：路径不存在（表写错了）✗、对象不存在（正常）✓。
+        用 resolve() 才能把两者分开 —— 否则一条写错的路径会伪装成"没权限"，
+        测试照样绿，而矩阵已经烂了。
+        """
+        from django.urls import Resolver404, resolve
+        for method, path, _allow, _note in ENDPOINT_RULES:
+            try:
+                resolve(path)
+            except Resolver404:
+                self.fail(f'矩阵里的路径不存在：{method} {path}')
+
+    def test_single_module_editor_sees_exactly_its_own_functions(self):
+        """
+        只勾一个模块的编辑员：**该模块的接口放行、别的模块一律 403**
+
+        这条是"各自的功能"的核心 —— 勾了新闻的人不该能改百科词条。
+        """
+        for module, user in self.editors.items():
+            client = self._client(user)
+            for method, path, allow, note in ENDPOINT_RULES:
+                if allow == ('FULL_ADMIN',):
+                    continue          # 单独验（只给全权管理员）
+                status = self._probe(client, method, path)
+                label = f'{module} → {method} {path}（{note}）'
+                if module in allow:
+                    self.assertNotEqual(status, 403, f'{label}：该模块**应当**放行，却 403 了')
+                    # ⚠️ 这里**不**断言"不是 404"：全新测试库里 `comments/1/` 这类对象本来就不存在，
+                    #    404 是正常的。路径本身有没有写错由
+                    #    `test_every_path_in_the_table_actually_exists`（resolve 检查）负责 ——
+                    #    用状态码分辨"路径腐烂"会误报（第一版就误报了）。
+                else:
+                    self.assertEqual(status, 403, f'{label}：不该放行的接口给了 {status}')
+
+    def test_full_admin_passes_everything(self):
+        """全权管理员：整张表都该通过（含仅全权的那几条）"""
+        client = self._client(self.admin)
+        for method, path, _allow, note in ENDPOINT_RULES:
+            status = self._probe(client, method, path)
+            self.assertNotEqual(status, 403, f'全权管理员被拦：{method} {path}（{note}）')
+
+    def test_plain_user_is_rejected_everywhere(self):
+        """普通农户：管理端接口一条都不该给"""
+        client = self._client(self.plain)
+        for method, path, _allow, note in ENDPOINT_RULES:
+            status = self._probe(client, method, path)
+            self.assertEqual(status, 403, f'普通用户拿到了 {status}：{method} {path}（{note}）')
+
+    def test_editor_with_no_module_gets_nothing(self):
+        """
+        编辑员**一个模块都没勾**：内容接口全拒
+
+        这种账号在真实环境里出现过（开通了编辑员但忘了勾模块），
+        他的侧栏只剩"数据看板"，看起来像"后台坏了"。
+        """
+        User = get_user_model()
+        empty = User.objects.create_user(
+            username='zz_matrix_empty', password='pw12345678', role='EDITOR')
+        client = self._client(empty)
+        for method, path, allow, note in ENDPOINT_RULES:
+            if allow == ('FULL_ADMIN',):
+                continue
+            self.assertEqual(self._probe(client, method, path), 403,
+                             f'没勾模块的编辑员拿到了权限：{method} {path}')
+
+    def test_pages_match_the_frontend_nav(self):
+        """
+        矩阵里的"模块 → 页面"必须与前端侧栏一致
+
+        前端侧栏在 `frontend/src/components/AdminLayout.vue` 的 navItems 里，
+        它的 `capability` / `module` / `fullAdminOnly` 三项决定显示。
+        这里读那个文件做**文本级**比对：两边一旦不同步（比如新增了页面却忘了写进矩阵），
+        这条会红 —— 比"等用户发现侧栏少一项"强。
+        """
+        import pathlib
+        import re
+
+        layout = pathlib.Path(__file__).resolve().parent.parent.parent / 'frontend' / 'src' / 'components' / 'AdminLayout.vue'
+        if not layout.exists():
+            self.skipTest('前端文件不在（只跑后端时跳过）')
+        text = layout.read_text(encoding='utf-8')
+
+        # 侧栏每一项：{ to: '/admin/xxx', ... capability: ... module: ... }
+        entries = re.findall(r"\{\s*to:\s*'(/admin/[\w-]+)'(.*?)\}", text, re.S)
+        self.assertTrue(entries, '没能从 AdminLayout.vue 里解析出侧栏项 —— 结构变了？')
+
+        frontend_pages = {path for path, _ in entries}
+        from .role_matrix import (
+            CAPABILITY_PAGES, COMMON_PAGES, FULL_ADMIN_PAGES, MODULE_PAGES,
+        )
+        matrix_pages = set(COMMON_PAGES)
+        for pages in CAPABILITY_PAGES.values():
+            matrix_pages.update(pages)
+        for pages in MODULE_PAGES.values():
+            matrix_pages.update(pages)
+        matrix_pages.update(FULL_ADMIN_PAGES)
+
+        missing = frontend_pages - matrix_pages
+        self.assertFalse(missing, f'侧栏里有这些页面，矩阵里没写：{sorted(missing)}')
+        extra = matrix_pages - frontend_pages
+        # 农户端的 /admin/detection-history 是管理页但不在侧栏过滤里（它由路由守卫拦），
+        # 这里只提示，不算失败 —— 真正要求的是"侧栏有的，矩阵必须知道"
+        if extra:
+            print(f'  （矩阵里有、侧栏未列出：{sorted(extra)} —— 仅提示）')
