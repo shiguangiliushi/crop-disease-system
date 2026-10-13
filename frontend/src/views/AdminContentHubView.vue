@@ -134,7 +134,7 @@ watch(
     // 请求的页签这个人看不到（或不存在）：把地址栏修正成真正显示的那个，
     // 否则刷新/分享会一直带着一个无效的 tab。
     if (requested && requested !== next && next) {
-      router.replace({ query: { tab: next } });
+      router.replace({ query: { ...router.currentRoute.value.query, tab: next } });
     }
   },
   { immediate: true },
@@ -151,7 +151,7 @@ watch(activeTab, async (name) => {
   const requested = requestedTab();
   const hasOtherParams = Object.keys(route.query).some((key) => key !== 'tab');
   if (requested === name && !hasOtherParams) return;
-  router.replace({ query: { tab: name } });
+  router.replace({ query: { ...router.currentRoute.value.query, tab: name } });
 });
 </script>
 
