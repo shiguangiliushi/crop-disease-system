@@ -17,12 +17,17 @@
  * |---|---|---|
  * | 帖子 | `review` **或** `forum` | 后端 `is_moderator()`（views_forum） |
  * | 评论 | `review` **或** `forum` | 后端 `_reject_non_moderator`（views_comments_admin） |
- * | 举报 | **仅全权管理员** | 后端 `views_report._can_handle_reports()` = `is_full_admin()` |
+ * | 举报 | `review` **或** `forum`（第 189 批放开） | 后端 `views_report._can_handle_reports()` |
  *
- * ⚠️ 举报**不是**内容编辑员的活（第 124 批的决策、`api.tests.ForumOnlyEditorTests` 钉死）：
- * 回包里带举报人/被举报人标识，且"下架内容"不可逆。所以只勾了论坛的编辑员
- * **看不到举报页签** —— 与"按钮在、权限没有"那条教训同源：
- * 页签也是入口，点了会 403 的东西不该画出来。
+ * ⚠️ 举报在**第 189 批之前**是"仅全权管理员"（第 124 批的决策）。改的原因（用户反馈）：
+ * 编辑员在这一页里能管帖子与评论（能驳回/下架），却**完全看不到举报页签** ——
+ * 于是"已经有人在举报这件事"他永远不知道，只能自己去翻帖子发现问题。
+ * 现在把举报当**线索入口**给他，但**只放开一半**（与后端同一口径）：
+ *   · 能看别人的举报、能处置（handled/rejected + 备注）→ `review`/`forum` 模块；
+ *   · **看不到举报人是谁**（回包里 `reporter.username` 为 null、`target_user_id` 不下发，
+ *     另有 `reporter_hidden: true` 标记）—— 隐私；
+ *   · 「同时隐藏内容」这个**不可逆**动作仍只给全权管理员（按项目一贯口径，见
+ *     `capabilities.py`：不可逆动作只给全权管理员），编辑员勾了也不生效、且会明确告知。
  *
  * 一个相关模块都没有 → 侧栏里连「内容管理」都不显示（见 AdminLayout.vue 的 navItems）；
  * 手输网址则由路由守卫拦（`meta.modules`）。
@@ -37,15 +42,15 @@
  * ## 只挂载当前页签（v-if）的三个理由
  *
  * 1. 三个页签都自带 `onMounted` 加载：全挂载等于一进页面打 6+ 个请求；
- * 2. 编辑员不该去请求**举报**（他打开必然 403）与**敏感词**（BROADCAST）；
+ * 2. 编辑员不该去请求**敏感词**（那是 BROADCAST 的东西，他打开必然 403）——
+ *    举报从第 189 批起编辑员**有权**看，不再是"点了会 403"的页签；
  * 3. 帖子页签与评论页签的分页/筛选都写进 URL 且**同名**（page / page_size / search），
  *    同时挂载会互相覆盖 —— 只挂一个，再加上切页签时清参数，就不会串味。
  *
  * ## `?tab=` 的口径
  *
  * * `/admin/content?tab=posts|comments|reports` —— 主入口，可直接分享这个地址；
- *   `tab` 缺失或不可见（典型：编辑员从看板的「待处理举报」点进来）时落到
- *   他有权限的第一个页签，并**把地址栏修正过来**；
+ *   `tab` 缺失或不可见时落到他有权限的第一个页签，并**把地址栏修正过来**；
  * * 旧地址 `/admin/review`、`/admin/forum`、`/admin/comments` 全部重定向到
  *   对应页签（见 router/index.js），书签与外链不失效，且**保留原有查询参数**
  *   （`/admin/forum?search=xx` 这类老链接照样能用）；
@@ -83,8 +88,10 @@ const canModeratePosts = computed(() => Boolean(
   || authStore.user?.is_superuser,
 ));
 
-/** 举报页签：**仅全权管理员**（后端 `_can_handle_reports()` = `is_full_admin()`） */
-const canHandleReports = computed(() => Boolean(authStore.isAdmin));
+/** 举报页签：**有 review/forum 模块的人**（第 189 批放开）+ 全权管理员 */
+const canHandleReports = computed(() => Boolean(
+  canModeratePosts.value || authStore.isAdmin,
+));
 
 const tabs = computed(() => [
   {

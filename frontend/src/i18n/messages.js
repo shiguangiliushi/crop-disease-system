@@ -242,7 +242,9 @@ export const zhCN = {
     tabPosts: '帖子',
     tabComments: '评论',
     tabReports: '举报',
-    reportsSubtitle: '用户提交的举报与处置（仅全权管理员：回包里带举报人标识，且"下架内容"不可逆）',
+    // 第 189 批：举报对有 review/forum 模块的编辑员开放（只放开"看与处置"那一半）——
+    // 副标题原来写"仅全权管理员"，会让编辑员以为自己看到的是别人的东西，必须改
+    reportsSubtitle: '用户提交的举报与处置（编辑员可处理；举报人身份与"下架内容"仅全权管理员）',
     noAccess: '你的账号没有「内容审核 / 论坛交流」权限，这一页没有可显示的内容。',
   },
   // ==========================================================================
@@ -1483,6 +1485,10 @@ export const zhCN = {
     emptyReports: '没有待处理的举报',
     handle: '处理',
     hideContent: '同时隐藏内容',
+    // 第 189 批：举报按两档分权 —— 编辑员能处理举报，但看不到举报人、也不能下架内容
+    reporterHidden: '举报人已隐去（仅全权管理员可见）',
+    hideContentAdminOnly: '下架内容仅全权管理员可操作',
+    hideContentDenied: '举报已处理，但「隐藏内容」未生效：该操作仅全权管理员可执行',
     wordsTitle: '敏感词词库',
     // 第 135 批：敏感词的"英文对照"（只用于显示，不参与拦截）
     wordEnPlaceholder: '英文对照（选填，例如 fake invoices）',
@@ -3234,7 +3240,7 @@ export const en = {
     tabPosts: 'Posts',
     tabComments: 'Comments',
     tabReports: 'Reports',
-    reportsSubtitle: 'Reports submitted by users (full admins only: the payload identifies the reporter, and hiding content cannot be undone)',
+    reportsSubtitle: 'Reports submitted by users (editors can handle them; the reporter identity and hiding content stay admin-only)',
     noAccess: 'Your account has no Content review / Forum management permission, so this page has nothing to show.',
   },
   // 第 128 批：内容模块名（见中文侧说明）
@@ -4425,6 +4431,11 @@ export const en = {
     emptyReports: 'No pending reports',
     handle: 'Handle',
     hideContent: 'Also hide the content',
+    // Batch 189: reports are split into two tiers — editors can handle reports but
+    // cannot see who reported, and cannot take content down
+    reporterHidden: 'Reporter hidden (full admins only)',
+    hideContentAdminOnly: 'Hiding content is reserved for full admins',
+    hideContentDenied: 'Report handled, but the content was NOT hidden: only full admins can do that',
     wordsTitle: 'Sensitive words',
     // 第 135 批：English gloss for a sensitive word (display only, never matched)
     wordEnPlaceholder: 'English gloss (optional, e.g. fake invoices)',

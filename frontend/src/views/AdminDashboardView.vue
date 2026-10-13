@@ -37,9 +37,10 @@
       <RouterLink v-if="totals.feedback_pending" to="/admin/feedback">
         {{ t('dashboard.pendingFeedback') }} {{ totals.feedback_pending }}
       </RouterLink>
-      <!-- 第 187 批：举报页签**仅全权管理员**可见（后端 _can_handle_reports = is_full_admin），
-                 而这条待办原先无门禁 —— 内容编辑员点进去只会落到帖子页签，属于"入口在、权限没有"。 -->
-              <RouterLink v-if="totals.reports_pending && authStore.isAdmin" to="/admin/content?tab=reports">
+      <!-- 第 187 批：举报页签原先**仅全权管理员**可见，这条待办无门禁会让编辑员白点；
+               第 189 批举报已对有 review/forum 模块的编辑员开放（只看得到"能管线索"那一半），
+               所以门禁改成与页签同一口径 canHandleReports。 -->
+      <RouterLink v-if="totals.reports_pending && canHandleReports" to="/admin/content?tab=reports">
         {{ t('dashboard.pendingReports') }} {{ totals.reports_pending }}
       </RouterLink>
     </div>
@@ -293,6 +294,19 @@ export default {
       () => data.value.includes_user_detail === true,
     );
 
+    /**
+     * 「待处理举报」这条待办能不能点（第 189 批）
+     *
+     * 举报页签从第 189 批起对 `review`/`forum` 模块的编辑员开放（他们能看能处置，
+     * 只是看不到举报人、也不能下架内容），所以这条链接的门禁要跟页签同一口径 ——
+     * 第 187 批写的 `authStore.isAdmin` 现在会把编辑员挡在一条**他其实能进**的路上。
+     */
+    const canHandleReports = computed(() => Boolean(
+      authStore.hasContentModule?.('review')
+      || authStore.hasContentModule?.('forum')
+      || authStore.isAdmin,
+    ));
+
     const todoCount = computed(
       () =>
         (totals.value.pending_posts || 0) +
@@ -424,6 +438,7 @@ export default {
       topContributors,
       recentUsers,
       includesUserDetail,   // 第 126 批：用户明细两块是否渲染
+      canHandleReports,     // 第 189 批：「待处理举报」待办的门禁（与举报页签同一口径）
       todoCount,
       kpis,
       detectionChart,
