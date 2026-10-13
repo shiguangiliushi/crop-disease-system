@@ -84,6 +84,13 @@ COMMON_PAGES = ['/admin/dashboard']
 #: 两者本来就是同一档：系统健康会暴露服务器路径与部署细节，操作日志显示"谁对谁做了什么"。
 #: `/admin/audit-logs` 仍是**保留下来的旧地址**（前端重定向到 `?tab=audit`），
 #: 但它不再是侧栏入口，所以不在这张"页面"表里（与第 183/184 批对旧地址的处理一致）。
+#:
+#: ⚠️ 第 186 批：`/admin/health` **同时**出现在 `CAPABILITY_PAGES['BROADCAST']` 里 ——
+#: 同一页被两档共用（BROADCAST 的人只为「版块管理」页签而来）。所以这一行**不能**读成
+#: "整页都给全权管理员"：它说的是"这一页里**有**仅全权管理员能用的东西"
+#: （系统健康与操作日志两个页签、以及 `/api/admin/health/`、`/api/admin/audit-logs/`
+#: 两条接口）；反过来，BROADCAST 的人在这一页只画「版块管理」一个页签。
+#: 两条边界由 `RoleMatrixTests.test_broadcast_capability_unlocks_the_system_page` 钉住。
 FULL_ADMIN_PAGES = ['/admin/health']
 
 #: ★ 权限矩阵：`(method, path, allow, note)`
