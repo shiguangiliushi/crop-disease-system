@@ -1389,7 +1389,6 @@ export const zhCN = {
     scheduledNote: '设成未来的时间：到点之前只有管理员能看到这条新闻，用户端不显示。',
     sourceLabel: '来源：{source}',
     systemAdmin: '系统管理员',
-    unpublish: '下架',
     updatedOk: '新闻已更新',
     createdOk: '新闻已创建',
     publishToggled: '已{action}新闻',
@@ -1399,6 +1398,7 @@ export const zhCN = {
     loadFailed: '加载新闻列表失败',
   },
   review: {
+    unpublish: '下架',   // 第 182 批：撤回已发布的内容（可再次通过恢复）
     title: '内容审核',
     // 第 84 批：审核操作后的备注与文案（脚本里拼中文）
     noContent: '（无正文）',
@@ -4297,7 +4297,6 @@ export const en = {
     scheduledNote: 'Set a future time: until then only admins can see this news.',
     sourceLabel: 'Source: {source}',
     systemAdmin: 'System administrator',
-    unpublish: 'Unpublish',
     updatedOk: 'News updated',
     createdOk: 'News created',
     publishToggled: 'News {action}',
@@ -4307,6 +4306,7 @@ export const en = {
     loadFailed: 'Failed to load the news list',
   },
   review: {
+    unpublish: 'Unpublish',   // Batch 182: take a published post down (reversible)
     title: 'Content review',
     // 第 84 批
     noContent: '(no text)',
