@@ -37,7 +37,9 @@
       <RouterLink v-if="totals.feedback_pending" to="/admin/feedback">
         {{ t('dashboard.pendingFeedback') }} {{ totals.feedback_pending }}
       </RouterLink>
-      <RouterLink v-if="totals.reports_pending" to="/admin/content?tab=reports">
+      <!-- 第 187 批：举报页签**仅全权管理员**可见（后端 _can_handle_reports = is_full_admin），
+                 而这条待办原先无门禁 —— 内容编辑员点进去只会落到帖子页签，属于"入口在、权限没有"。 -->
+              <RouterLink v-if="totals.reports_pending && authStore.isAdmin" to="/admin/content?tab=reports">
         {{ t('dashboard.pendingReports') }} {{ totals.reports_pending }}
       </RouterLink>
     </div>
