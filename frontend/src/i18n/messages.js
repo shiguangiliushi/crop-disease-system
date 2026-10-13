@@ -9,6 +9,11 @@
  * 其余页面用 `docs/tools/check_i18n_coverage.py` 统计剩余量，按批推进。
  */
 export const zhCN = {
+  // 第 185 批：系统合并页的页签（系统健康 + 操作日志）
+  systemHub: {
+    tabHealth: '系统健康',
+    tabAudit: '操作日志',
+  },
   // 第 184 批：用户管理合并页的页签
   userHub: {
     tabUsers: '用户',
@@ -208,8 +213,9 @@ export const zhCN = {
     feedback: '意见反馈管理',
     forum: '论坛管理',
     comments: '评论管理',
-    auditLogs: '操作日志',
-    health: '系统健康',
+    // 第 185 批：系统健康 + 操作日志合并成侧栏的一项「系统」（页内两个页签）。
+    // 原来的 manage.health / manage.auditLogs 两个键随之删除 —— 页签文案在 systemHub 里。
+    system: '系统',
     users: '用户管理',
     detections: '识别记录',
     pests: '病害百科维护',
@@ -3005,6 +3011,11 @@ export const zhCN = {
 };
 
 export const en = {
+  // Batch 185: tabs of the merged system page (system health + audit log)
+  systemHub: {
+    tabHealth: 'System health',
+    tabAudit: 'Audit log',
+  },
   // Batch 184: tabs of the merged user-management page
   userHub: {
     tabUsers: 'Users',
@@ -3190,8 +3201,10 @@ export const en = {
     feedback: 'Feedback management',
     forum: 'Forum management',
     comments: 'Comment management',
-    auditLogs: 'Audit log',
-    health: 'System health',
+    // Batch 185: system health + audit log merged into the sidebar's "System" entry
+    // (two tabs inside the page); the old manage.health / manage.auditLogs keys are gone
+    // and the tab labels now live in the systemHub namespace.
+    system: 'System',
     users: 'User management',
     // 第 172 批：侧栏这一条与页面 H1 / 标签页同名（内容口径见 detections 命名空间）
     detections: 'Diagnosis records',

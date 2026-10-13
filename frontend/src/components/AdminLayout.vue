@@ -57,11 +57,12 @@ const navItems = [
   { to: '/admin/content', icon: 'fas fa-layer-group', labelKey: 'manage.content',
     capability: authStore.CAP_CONTENT,
     modules: [authStore.MODULE_REVIEW, authStore.MODULE_FORUM] },
-  // 第 157 批：系统健康（**仅全权管理员** —— 会暴露服务器路径与部署细节）
-  { to: '/admin/health', icon: 'fas fa-heart-pulse', labelKey: 'manage.health',
-    capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },
-  // 第 148 批：操作日志（**仅全权管理员** —— 显示"谁对谁做了什么"，编辑员不该看到）
-  { to: '/admin/audit-logs', icon: 'fas fa-clipboard-list', labelKey: 'manage.auditLogs',
+  // 第 185 批：「系统」—— 第 157 批的「系统健康」与第 148 批的「操作日志」合并成
+  // **一项 + 两个页签**（`/admin/health?tab=health|audit`）。两项本来就是同一档：
+  // 系统健康会暴露服务器路径与部署细节，操作日志显示"谁对谁做了什么"，
+  // 都**仅全权管理员**可见（后端 `is_full_admin`，见 role_matrix.py 的 FULL_ADMIN_PAGES）。
+  // `fullAdminOnly` 保留：编辑员既看不到这个入口，路由守卫也会把他弹回。
+  { to: '/admin/health', icon: 'fas fa-heart-pulse', labelKey: 'manage.system',
     capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },
   { to: '/admin/news', icon: 'fas fa-newspaper', labelKey: 'manage.news',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_NEWS },

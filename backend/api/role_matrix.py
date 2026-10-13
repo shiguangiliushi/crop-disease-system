@@ -70,7 +70,13 @@ CAPABILITY_PAGES = {
 COMMON_PAGES = ['/admin/dashboard']
 
 #: 仅全权管理员能看的页面
-FULL_ADMIN_PAGES = ['/admin/health', '/admin/audit-logs']
+#:
+#: 第 185 批：这一档原来有两页（`/admin/health` 系统健康、`/admin/audit-logs` 操作日志），
+#: 现在合并成**一页两页签**（`/admin/health?tab=health|audit`，侧栏一项「系统」）——
+#: 两者本来就是同一档：系统健康会暴露服务器路径与部署细节，操作日志显示"谁对谁做了什么"。
+#: `/admin/audit-logs` 仍是**保留下来的旧地址**（前端重定向到 `?tab=audit`），
+#: 但它不再是侧栏入口，所以不在这张"页面"表里（与第 183/184 批对旧地址的处理一致）。
+FULL_ADMIN_PAGES = ['/admin/health']
 
 #: ★ 权限矩阵：`(method, path, allow, note)`
 ENDPOINT_RULES = (

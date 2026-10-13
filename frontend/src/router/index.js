@@ -503,9 +503,14 @@ const router = createRouter({
       // 把 manage.py check_env 的检查搬到界面上（依赖/迁移/模型文件/目录可写/
       // 注销到期任务/备份新鲜度/生产开关），外加数据量概览。**仅全权管理员**：
       // 它会暴露服务器路径与部署细节。
+      // 第 185 批：与「操作日志」合并成**一个入口、两个页签**（`AdminSystemHubView`，
+      // `?tab=health|audit`）。两项本来就同属"仅全权管理员"那一档
+      // （后端 `is_full_admin`，见 backend/api/role_matrix.py 的 FULL_ADMIN_PAGES），
+      // 侧栏因此从两项收成一项「系统」。
+      // 路由名 / 路径 / 权限 meta 全部保留：书签、外链、`docTitle.admin-health` 照旧。
       path: '/admin/health',
       name: 'admin-health',
-      component: () => import('@/views/AdminHealthView.vue'),
+      component: () => import('@/views/AdminSystemHubView.vue'),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
@@ -539,9 +544,12 @@ const router = createRouter({
       // 第 148 批：管理端「操作日志」
       // 第 146 批把管理动作落进了 AdminAuditLog 表并给了只读接口，但只能在 Django admin 里看。
       // 这一页把它接进控制台：按动作/操作人/时间/关键字筛选。**仅全权管理员**。
+      // 第 185 批：它成为「系统」页的**第二个页签**（`/admin/health?tab=audit`），
+      // 这条地址改为重定向。`...to.query` 必须带上：这一页的筛选与分页本来就写在
+      // URL 上（第 98 批的约定），丢掉参数会让"打开一条带筛选的老链接"变成"打开一个空列表"。
       path: '/admin/audit-logs',
       name: 'admin-audit-logs',
-      component: () => import('@/views/AdminAuditLogView.vue'),
+      redirect: (to) => ({ path: '/admin/health', query: { ...to.query, tab: 'audit' } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
