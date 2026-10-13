@@ -512,7 +512,6 @@
 
 <script>
 import { ref, onMounted, computed, watch, nextTick, getCurrentInstance, onBeforeUnmount } from 'vue';
-import { goBackOr } from '@/utils/navigation';  // 第 165 批：返回兜底
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { 
@@ -1487,10 +1486,29 @@ export default {
       router.push({ name: 'edit-post', params: { id: postId.value } });
     };
 
-    // 返回上一页
+    /**
+     * 「返回列表」—— 回到这篇帖子**所在的列表**，而不是回放浏览器历史
+     *
+     * ⚠️ 原来这里调的是 `goBackOr({ name: 'forum' })` → `router.back()`，于是有一条
+     *    很容易踩、且很让人困惑的路径（用户反馈，实测复现）：
+     *
+     *      个人资料/我的草稿 → 点「编辑」进编辑页 → 点「更新帖子」
+     *      → 保存成功后前端跳转到详情页（`/forum/post/<id>?updated=true`）
+     *      → 在详情页点「返回列表」→ `router.back()` 回到的**上一页正是编辑页**
+     *      → 用户以为自己"从列表点进来又回到了列表"，结果又被丢进编辑器，
+     *        看起来像"返回列表把我送回了编辑帖子"。
+     *
+     *    按钮写的是「返回列表」，就该**确定性地去列表**：帖子属于哪个版块就回哪个版块
+     *    （农户通常是从版块列表点进来的），没有版块信息时回落论坛首页。
+     *    这也顺带甩掉了对历史栈的依赖 —— 从分享链接直接打开时同样可用。
+     */
     const goBack = () => {
-      // 第 165 批：没有上一页时兜底回论坛列表，而不是什么都不做
-      goBackOr({ name: 'forum' });
+      const boardId = post.value?.board?.id;
+      if (boardId) {
+        router.push({ name: 'forum-board', params: { id: boardId } });
+        return;
+      }
+      router.push({ name: 'forum' });
     };
 
     // 滚动到评论区域

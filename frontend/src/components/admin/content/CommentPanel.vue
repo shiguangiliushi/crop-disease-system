@@ -86,7 +86,22 @@ const resetFilters = () => {
 };
 
 const onSelectionChange = (rows) => { selectedIds.value = rows.map((row) => row.id); };
-const clearSelection = () => { selectedIds.value = []; };
+
+/**
+ * 评论表格实例 —— 清空选中时要连 **el-table 的内部选中态一起清**。
+ *
+ * ⚠️ 只写 `selectedIds = []` 是不够的：el-table 内部另存一份选中行，且按 `row-key`（id）
+ * 比对。列表重新加载后，同 id 的新行对象仍被当成"已选中"→ 再点复选框时
+ * 它认为"已经在里面了"，不加入、也不派发 `selection-change`：
+ * 勾选框看着勾上了，批量条却还是"未选"、批量删除按钮一直 `disabled`、点了没有请求。
+ * （同一个坑在「帖子」页签的论坛管理列表上被用户报过，见 PostPanel 的 forumTableRef）。
+ */
+const commentTableRef = ref(null);
+
+const clearSelection = () => {
+  selectedIds.value = [];
+  commentTableRef.value?.clearSelection?.();
+};
 
 const softRemove = async (row) => {
   try {
@@ -262,6 +277,7 @@ watch(queryReady, (ready) => {
     </div>
 
     <el-table
+      ref="commentTableRef"
       v-loading="loading"
       :data="items"
       row-key="id"

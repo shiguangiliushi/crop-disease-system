@@ -1436,6 +1436,9 @@ export const zhCN = {
   },
   review: {
     unpublish: '下架',   // 第 182 批：撤回已发布的内容（可再次通过恢复）
+    // 第 188 批：把**已隐藏**的帖子重新发布。与「通过」区分文案 —— 对一条已隐藏的
+    // 帖子显示"通过"，管理员会以为自己点的是待审队列那种动作（第 187 批遗留的入口缺口）
+    restore: '恢复发布',
     title: '内容审核',
     // 第 84 批：审核操作后的备注与文案（脚本里拼中文）
     noContent: '（无正文）',
@@ -2423,7 +2426,8 @@ export const zhCN = {
     back: '返回',
     titleEdit: '编辑帖子',
     titleNew: '新建帖子',
-    debugSummary: '开发信息（仅开发模式显示，点开查看）',
+    // 第 188 批：这块默认不再显示（原来开发模式恒显示），文案改成"手动开启才有"
+    debugSummary: '开发信息（默认关闭，排查问题时手动开启）',
     debugStatus: '当前状态',
     debugPostId: '帖子 ID',
     debugContentLength: '内容长度',
@@ -4375,6 +4379,8 @@ export const en = {
   },
   review: {
     unpublish: 'Unpublish',   // Batch 182: take a published post down (reversible)
+    // Batch 188: re-publish a post that is currently hidden (label distinct from "Approve")
+    restore: 'Restore',
     title: 'Content review',
     // 第 84 批
     noContent: '(no text)',
@@ -5343,7 +5349,7 @@ export const en = {
     back: 'Back',
     titleEdit: 'Edit post',
     titleNew: 'New post',
-    debugSummary: 'Developer info (dev mode only — click to expand)',
+    debugSummary: 'Developer info (off by default — turn it on to debug)',
     debugStatus: 'Status',
     debugPostId: 'Post ID',
     debugContentLength: 'Content length',

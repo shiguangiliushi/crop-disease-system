@@ -214,13 +214,19 @@ const reportBulkResult = (result, successKey) => {
   }
 };
 
+/* 审核队列的选中态由上面的 el-checkbox + selectedIds 驱动，清空只清数组即可
+   （坑在「帖子管理」那一半的 el-table 上，见那里的 clearSelection） */
+const clearSelected = () => {
+  selectedIds.value = [];
+};
+
 const bulkApprove = async () => {
   if (!selectedIds.value.length) return;
   bulkActing.value = true;
   try {
     const result = await bulkReviewPosts(selectedIds.value, 'approve');
     reportBulkResult(result, 'review.bulkApproveOk');
-    selectedIds.value = [];
+    clearSelected();
     // 本页可能被清空 → 回到第 1 页（否则停在空白页）
     pendingPage.value = 1;
     await Promise.all([loadPending(), loadPublishedCount()]);
@@ -241,7 +247,7 @@ const bulkReject = async () => {
     reportBulkResult(result, 'review.bulkRejectOk');
     bulkRejectVisible.value = false;
     bulkRejectReason.value = '';
-    selectedIds.value = [];
+    clearSelected();
     pendingPage.value = 1;
     await loadPending();
   } catch (error) {
@@ -523,6 +529,34 @@ const { isReady: queryReady } = useQueryState({
 });
 
 // -- 选择 ---------------------------------------------------------------
+/**
+ * 帖子表格的实例 —— 只为一件事：清空选中时把 **el-table 的内部选中态一起清掉**。
+ *
+ * ⚠️ 这个坑很难查，值得写清楚（用户报的就是"点批量通过没反应，F12 里一个请求都没有"）：
+ *
+ *   el-table 的选中态有**两份**：
+ *     ① 它内部的 `selection` 数组（勾选框的"视觉"状态由它驱动）；
+ *     ② 本组件拿到的 `forumSelectedIds`（`selection-change` 同步过来的，按钮的
+ *        `:disabled` 看的是它）。
+ *
+ *   下面原来只写 `forumSelectedIds.value = []` —— **只清了 ②，没清 ①**。
+ *   而 el-table 判"某行是否已选中"按 `row-key`（id）比对，列表重新加载后
+ *   同 id 的新行对象照样命中 ① 里的旧对象 → 再点行/表头复选框时
+ *   `toggleRowStatus` 认为"已经在里面了"，**不加入、也不派发 selection-change**：
+ *   · 复选框看着勾上了（① 仍是选中），
+ *   · 批量条却一直停在"勾选左侧复选框可批量处理"，
+ *   · 「批量通过」永远 `disabled` —— 点它浏览器**根本不会触发 click**，
+ *     所以 Network 里连一条请求都没有（这就是"没反应"的真相）。
+ *
+ *   最典型的复现路径：**批量驳回（帖子变已隐藏）→ 列表重载 → 再全选想批量通过（恢复）**，
+ *   第二次勾选全部失效；其它"批量操作后再勾选"的路径同样中招。
+ *
+ *   修法：调用 el-table 自己的 `clearSelection()`。它除了清内部数组，还会复位
+ *   `isAllSelected`、并派发一次空的 `selection-change`（onSelectionChange 收到后
+ *   ② 也归零），两份状态就重新对齐了。
+ */
+const forumTableRef = ref(null);
+
 const onSelectionChange = (rows) => {
   forumSelectedRows.value = rows;
   forumSelectedIds.value = rows.map((row) => row.id);
@@ -530,6 +564,8 @@ const onSelectionChange = (rows) => {
 const clearSelection = () => {
   forumSelectedIds.value = [];
   forumSelectedRows.value = [];
+  // ⚠️ 必须连 el-table 的内部选中态一起清，否则勾选会"失灵"（见上面 forumTableRef 的说明）
+  forumTableRef.value?.clearSelection?.();
 };
 
 // -- 行内动作 -----------------------------------------------------------
@@ -1066,6 +1102,8 @@ onMounted(loadAll);
 
       <!-- 列表 -->
       <el-table
+        ref="forumTableRef"
+        data-testid="forum-table"
         v-loading="forumLoading"
         :data="forumItems"
         row-key="id"
@@ -1110,10 +1148,20 @@ onMounted(loadAll);
             <el-button size="small" text @click="forumPreview(row)">
               {{ t('review.view') }}
             </el-button>
-            <el-button v-if="row.status === 'pending'" size="small" type="primary" link
+            <!--
+              第 188 批：**已隐藏**的帖子也要能在行内恢复发布。
+              后端从第 187 批起就让"通过"接受 hidden（`pending`/`hidden` → published），
+              但这里原先判的是 `row.status === 'pending'` —— 于是"批量能恢复、单条没入口"，
+              管理员点开一条已隐藏的帖子，行内只有「置顶/加精/删除」，没有恢复的办法。
+              文案也分开：对待审叫「通过」，对已隐藏叫「恢复发布」，别让人以为
+              自己在处理一条待审帖。
+            -->
+            <el-button v-if="row.status === 'pending' || row.status === 'hidden'"
+                       size="small" type="primary" link
                        :loading="forumActing === row.id" @click="forumApprove(row)">
-              {{ t('review.approve') }}
+              {{ row.status === 'hidden' ? t('review.restore') : t('review.approve') }}
             </el-button>
+            <!-- 驳回只对待审显示：已隐藏的再"驳回"是重复操作（后端也会跳过并说明原因） -->
             <el-button v-if="row.status === 'pending'" size="small" type="danger" link
                        @click="forumOpenReject(row)">
               {{ t('review.reject') }}

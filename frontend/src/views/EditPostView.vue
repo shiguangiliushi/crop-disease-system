@@ -4,13 +4,19 @@
       <h2>{{ currentRoute.params.id ? t('post.titleEdit') : t('post.titleNew') }}</h2>
       
       <!--
-        开发信息（第 161 批：改成**默认折叠**，并说明只在开发模式出现）
+        开发信息（第 161 批折叠，第 188 批改成**默认不显示**）
         ----------------------------------------------------------------
         这块是当年排查"编辑页整体不可用"时留下的：它把加载状态、帖子 ID、内容长度、
         草稿保存状态摊在页面最上方，占掉一整屏 —— 截个图、给用户看都显得没做完。
-        信息本身有用（自测时一眼看出加载到没有），所以保留，但收进 <details> 里。
+        第 161 批收进了 <details>，但判定用的是 `import.meta.env.DEV`：**只要用
+        npm run dev 打开页面它就一定在**，而本项目日常就是用 dev server 跑的，
+        于是用户每次编辑帖子都看到一条"开发信息"（用户反馈点名的就是它）。
+
+        现在改成显式开关（见 `@/utils/debugFlags`）：默认不显示，
+        要排查时用 `VITE_SHOW_DEBUG_PANEL=true` 或
+        `localStorage.setItem('dsh_debug_panel','1')` 打开。
       -->
-      <details v-if="isDev" class="debug-info">
+      <details v-if="showDebugPanel" class="debug-info">
         <summary>{{ t('post.debugSummary') }}</summary>
         <p>{{ t('post.debugStatus') }}: {{ loading ? t('post.loadingState') : t('post.loadedState') }}</p>
         <p>{{ t('post.debugPostId') }}: {{ currentRoute.params.id || t('post.newPost') }}</p>
@@ -218,6 +224,8 @@ import { timeAgo } from '@/utils/date';  // 第 84 批：相对时间跟随语�
 import { useI18n } from '@/i18n';
 import { useLocalized } from '@/utils/localized';  // 第 55 批：多语言（第 72 批起也用于版块名等内容数据）
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges';  // 第 97 批：离开前提醒（含站内导航）
+// 第 188 批：调试面板的显式开关（默认关，见文件头；原来用 import.meta.env.DEV 恒显示）
+import { showDebugPanel as showDebugPanelFlag } from '@/utils/debugFlags';
 
 // 第 161 批：原来这里有一段 `marked.setOptions({...})` —— 预览已改用 sanitizeRichText
 // （与详情页同一口径），marked 不再参与渲染，这段配置随之删除。
@@ -254,8 +262,11 @@ export default {
 
     // 第 16 批修复：模板里 `v-if="isDev"` 的调试信息块引用了从未声明的 isDev，
     // 该属性恒为 undefined → 整块调试信息永远不会显示（本意是"开发环境显示"）。
-    // 现按原意声明为开发环境开关。
-    const isDev = import.meta.env.DEV;
+    //
+    // 第 188 批：**"开发环境就显示"本身就是问题** —— 本项目日常用 `npm run dev` 跑，
+    // 于是用户每次编辑帖子都看到一条"开发信息"（用户反馈）。现在改为显式开关，
+    // 默认不显示，要排查时开（两种开法见 utils/debugFlags.js 的文件头）。
+    const showDebugPanel = showDebugPanelFlag;
     
     const form = ref({
       board: '',
@@ -1061,7 +1072,7 @@ export default {
       isSaving,
       saveStatus,
       currentRoute,
-      isDev,
+      showDebugPanel,
       wordCount
     };
   }
