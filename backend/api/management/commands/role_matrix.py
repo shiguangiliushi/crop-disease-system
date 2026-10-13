@@ -42,6 +42,14 @@ User = get_user_model()
 DOC_PATH = settings.BASE_DIR.parent / 'docs' / '角色与权限矩阵.md'
 
 
+def _display_path():
+    """输出用的相对路径；DOC_PATH 被指到仓库外时（测试/预演会这么干）退回绝对路径"""
+    try:
+        return DOC_PATH.relative_to(settings.BASE_DIR.parent)
+    except ValueError:
+        return DOC_PATH
+
+
 class Command(BaseCommand):
     help = '打印/自查权限矩阵（信息编辑员各自能做什么）；--write-docs 生成文档'
 
@@ -211,4 +219,4 @@ class Command(BaseCommand):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('\n'.join(lines), encoding='utf-8', newline='\n')
         self.stdout.write(self.style.SUCCESS(
-            f'已写入 {DOC_PATH.relative_to(settings.BASE_DIR.parent)}（{len(lines)} 行）'))
+            f'已写入 {_display_path()}（{len(lines)} 行）'))
