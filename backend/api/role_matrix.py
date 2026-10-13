@@ -61,9 +61,17 @@ MODULE_LABELS = {
 }
 
 #: 三个能力各自解锁的页面（内容页由模块决定，所以这里只列非内容的）
+#:
+#: 第 186 批：`BROADCAST` 从 `/admin/boards` 改成 `/admin/health` —— 版块管理并入了
+#: 「系统」页（`/admin/health?tab=boards`，旧地址 `/admin/boards` 前端重定向过来）。
+#: ⚠️ 这一行说的是"**这一页有他能用的东西**"，不是"整页都给他"：
+#: BROADCAST 的人进「系统」页**只看到「版块管理」一个页签**，系统健康与操作日志
+#: 两个页签不画给他（那两条接口是仅全权管理员，见 FULL_ADMIN_PAGES 与 ENDPOINT_RULES）。
+#: 页签按权限显示这件事由 `AdminSystemHubView.vue` 的 tabs 负责，
+#: 后端对应的是 `/api/admin/health/` 与 `/api/admin/audit-logs/` 的 `IsFullAdmin` 门禁。
 CAPABILITY_PAGES = {
     'USER_ADMIN': ['/admin/users'],   # 第 184 批：识别记录并入用户管理页的页签
-    'BROADCAST': ['/admin/boards'],
+    'BROADCAST': ['/admin/health'],   # 第 186 批：版块管理成为「系统」页的页签
 }
 
 #: 任何能进后台的人都能看的页面（只读聚合，没有他人明细）

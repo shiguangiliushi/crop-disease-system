@@ -61,9 +61,15 @@ const navItems = [
   // **一项 + 两个页签**（`/admin/health?tab=health|audit`）。两项本来就是同一档：
   // 系统健康会暴露服务器路径与部署细节，操作日志显示"谁对谁做了什么"，
   // 都**仅全权管理员**可见（后端 `is_full_admin`，见 role_matrix.py 的 FULL_ADMIN_PAGES）。
-  // `fullAdminOnly` 保留：编辑员既看不到这个入口，路由守卫也会把他弹回。
+  // 第 186 批：第 140 批单独占一项的「版块管理」也并进这一页（第三个页签），侧栏
+  // 不再单列 —— 于是这一项的可见条件从 `fullAdminOnly` 放宽成
+  // "**全权管理员 或 BROADCAST**"。
+  // 怎么表达的：`capability: CAP_BROADCAST` —— 后端 `capabilities.has_capability()`
+  // 对全权管理员**恒返回 True**（三项能力全给），所以它对管理员同样成立；
+  // 而页签级别仍按权限画（BROADCAST 的人只看得到「版块管理」，
+  // 系统健康 / 操作日志两个页签不画给他，见 AdminSystemHubView 的 tabs）。
   { to: '/admin/health', icon: 'fas fa-heart-pulse', labelKey: 'manage.system',
-    capability: authStore.CAP_USER_ADMIN, fullAdminOnly: true },
+    capability: authStore.CAP_BROADCAST },
   { to: '/admin/news', icon: 'fas fa-newspaper', labelKey: 'manage.news',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_NEWS },
   // 第 122 批：病害百科维护（原来长在农户端百科页上，现在归这里）
@@ -71,10 +77,10 @@ const navItems = [
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_PESTS },
   { to: '/admin/feedback', icon: 'fas fa-comment-dots', labelKey: 'manage.feedback',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_FEEDBACK },
-  // 第 140 批：版块管理 —— BROADCAST（"对全体发声与系统开关"：公告/预警/敏感词/版块）。
-  // 信息编辑员只有内容能力，看不到这一项（后端接口也会 403）。
-  { to: '/admin/boards', icon: 'fas fa-table-columns', labelKey: 'manage.boards',
-    capability: authStore.CAP_BROADCAST },
+  // 第 140 批的「版块管理」原先是这里的一项（BROADCAST）。
+  // 第 186 批：它已成为「系统」页的**版块管理页签**（`/admin/health?tab=boards`），
+  // 侧栏不再单列 —— 与第 183/184 批对「内容管理」「用户管理」的处理一致：
+  // 一个功能只留一个入口。旧地址 `/admin/boards` 仍可访问（路由重定向到该页签）。
 ];
 
 /**

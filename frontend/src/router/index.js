@@ -507,14 +507,24 @@ const router = createRouter({
       // `?tab=health|audit`）。两项本来就同属"仅全权管理员"那一档
       // （后端 `is_full_admin`，见 backend/api/role_matrix.py 的 FULL_ADMIN_PAGES），
       // 侧栏因此从两项收成一项「系统」。
-      // 路由名 / 路径 / 权限 meta 全部保留：书签、外链、`docTitle.admin-health` 照旧。
+      // 第 186 批：再加一个**版块管理页签**（旧的 `/admin/boards` 改为重定向过来）。
+      // 权限因此从"仅全权"放宽成"**全权管理员 或 BROADCAST**"：
+      // 路由守卫支持的 meta 只有 requireAuth / requiresAdmin / capability / module(s) /
+      // fullAdminOnly（见下方守卫代码），没有"能力 A 或 B"的写法，而
+      // `capabilities.has_capability()` 对全权管理员恒返回 True —— 所以
+      // **写成 `capability: 'BROADCAST'` 就是"全权管理员或 BROADCAST"**，
+      // 因此这里删掉 `fullAdminOnly`。
+      // ⚠️ 放行的只是这一页的**外壳**：页里只有「版块管理」一个页签会给 BROADCAST 的人看，
+      // 系统健康与操作日志两个页签仍按 `is_full_admin` 画（见 AdminSystemHubView 的 tabs），
+      // 两个接口本身也仍是仅全权管理员（`/api/admin/health/`、`/admin/audit-logs/`）。
+      // 路由名 / 路径 / docTitle 全部保留：书签、外链照旧。
       path: '/admin/health',
       name: 'admin-health',
       component: () => import('@/views/AdminSystemHubView.vue'),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
-        fullAdminOnly: true,   // 与操作日志同档
+        capability: 'BROADCAST',   // 第 186 批：全权管理员或 BROADCAST（见上）
         adminArea: true,
         title: '系统健康',
         breadcrumb: ['管理', '系统健康']
@@ -585,9 +595,14 @@ const router = createRouter({
       // 第 140 批：管理端「版块管理」
       // 补的是一个空档：后端 `boards/<id>/set_status/`（启停）与 `boards/update_order/`
       // （排序）接口早就有，但控制台没有任何入口 —— 版块启停与排序只能进 Django admin。
+      // 第 186 批：它成为「系统」页的**版块管理页签**（`/admin/health?tab=boards`），
+      // 这条地址改为重定向。`...to.query` 必须带上：老链接（含版块页自己的筛选/分页，
+      // 见第 98 批的约定）不该因为换了入口就变成空列表；`tab` 放在展开之后，
+      // 与 `/admin/audit-logs` 的处理一致 —— 老地址指向哪个页签是它自己的语义。
+      // 路由名保留：`docTitle.admin-boards` 与 check-doc-titles 都按名字对账。
       path: '/admin/boards',
       name: 'admin-boards',
-      component: () => import('@/views/AdminBoardsView.vue'),
+      redirect: (to) => ({ path: '/admin/health', query: { ...to.query, tab: 'boards' } }),
       meta: {
         requiresAuth: true,
         requiresAdmin: true,
@@ -596,7 +611,7 @@ const router = createRouter({
         capability: 'BROADCAST',
         adminArea: true,   // 第 117 批：管理后台外壳
         title: '版块管理',
-        breadcrumb: ['管理', '版块管理']
+        breadcrumb: ['管理', '系统', '版块管理']
       }
     },
 

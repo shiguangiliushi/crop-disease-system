@@ -10,9 +10,13 @@
  */
 export const zhCN = {
   // 第 185 批：系统合并页的页签（系统健康 + 操作日志）
+  // 第 186 批：加上「版块管理」页签 —— 它是 BROADCAST 那一档（全权管理员或
+  // 版块管理者），页签按权限画：只有 BROADCAST 的人只看到这一个页签。
   systemHub: {
     tabHealth: '系统健康',
     tabAudit: '操作日志',
+    tabBoards: '版块管理',
+    noAccess: '你的账号既不是全权管理员、也没有「公告与版块」（对全体发声）权限，这一页没有可显示的内容。',
   },
   // 第 184 批：用户管理合并页的页签
   userHub: {
@@ -3012,9 +3016,14 @@ export const zhCN = {
 
 export const en = {
   // Batch 185: tabs of the merged system page (system health + audit log)
+  // Batch 186: added the Boards tab — that one belongs to the BROADCAST tier
+  // (full admin or board manager); tabs are drawn per permission, so someone
+  // with BROADCAST only sees this single tab.
   systemHub: {
     tabHealth: 'System health',
     tabAudit: 'Audit log',
+    tabBoards: 'Board management',
+    noAccess: 'Your account is neither a full admin nor holds the announce-to-everyone (announcements and boards) permission, so this page has nothing to show.',
   },
   // Batch 184: tabs of the merged user-management page
   userHub: {
