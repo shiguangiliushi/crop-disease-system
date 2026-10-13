@@ -160,6 +160,47 @@ def pages_of(capabilities, modules, is_full_admin=False):
     return pages
 
 
+def module_functions(module):
+    """
+    某个模块"能做的动作"清单（第 179 批）
+
+    直接从矩阵表的 `note` 派生，**不手抄第二份** —— 表改了这里跟着变。
+    给控制台"开通编辑员"的对话框用：勾了「新闻管理」，旁边就列出他能做哪几件事，
+    授权的人不必凭记忆猜。
+    """
+    seen = []
+    for _method, _path, allow, note in ENDPOINT_RULES:
+        if module in allow and note not in seen:
+            seen.append(note)
+    return seen
+
+
+def matrix_payload():
+    """
+    矩阵的 JSON 形态（第 179 批）
+
+    控制台的"开通编辑员 / 改角色"对话框与 `role_matrix` 命令用的是**同一份数据**：
+    命令给人看，接口给界面用，测试盯着两边一致。
+    """
+    from .capabilities import CONTENT_MODULES
+
+    return {
+        'roles': [{'key': key, 'note': note} for key, note in ROLE_NOTES.items()],
+        'modules': [
+            {
+                'key': module,
+                'label': MODULE_LABELS.get(module, module),
+                'pages': MODULE_PAGES.get(module, []),
+                'functions': module_functions(module),
+            }
+            for module in CONTENT_MODULES
+        ],
+        'capability_pages': CAPABILITY_PAGES,
+        'common_pages': COMMON_PAGES,
+        'full_admin_pages': FULL_ADMIN_PAGES,
+    }
+
+
 def describe_user(user):
     """
     给一个账号算出"他是谁、能干什么"（`manage.py role_matrix <username>` 用）

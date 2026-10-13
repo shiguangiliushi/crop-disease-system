@@ -24,6 +24,18 @@ import http from './http';
  *          include_deleted?: boolean}} params
  * @returns {Promise<{count: number, next: string|null, previous: string|null, results: object[]}>}
  */
+/**
+ * 权限矩阵（第 179 批）
+ *
+ * 给"开通编辑员 / 改角色"的对话框用：勾了哪几个模块，旁边实时列出来他能做什么。
+ * 与后端自查命令 `manage.py role_matrix` 是**同一份表**。
+ *
+ * @returns {Promise<{roles:Array, modules:Array, capability_pages:object}>}
+ */
+export function fetchRoleMatrix() {
+  return http.get('/admin/role-matrix/').then((res) => res.data);
+}
+
 export function fetchAdminUsers(params = {}) {
   return http.get('admin/users/', { params }).then((res) => res.data);
 }

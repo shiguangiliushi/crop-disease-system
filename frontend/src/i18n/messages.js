@@ -9,6 +9,21 @@
  * 其余页面用 `docs/tools/check_i18n_coverage.py` 统计剩余量，按批推进。
  */
 export const zhCN = {
+  // 第 179 批：开通/修改编辑员时的"他能做什么"预览
+  editorPerms: {
+    title: '勾了这几项，他就能做这些：',
+    hint: '编辑员只能碰被勾选的这几块；用户账号、系统公告与版块、系统健康、操作日志都不在其中。',
+    empty: '一个模块都没勾 —— 他登录后侧栏只有一个「数据看板」，做不了任何内容工作。',
+    unknownModule: '（该模块的说明待补充）',
+    functions: {
+      review: '审核帖子（通过/驳回）、处置评论、置顶与加精',
+      forum: '管理帖子与评论：审核、置顶加精、删除与恢复评论',
+      news: '发布、修改、删除行业动态；上下架',
+      pests: '维护病害词条（含批量导入）与农事任务',
+      feedback: '查看全部反馈、回复、批量流转状态',
+    },
+  },
+
   common: {
     refresh: '刷新',
     loading: '加载中...',
@@ -2964,6 +2979,21 @@ export const zhCN = {
 };
 
 export const en = {
+  // Batch 179: "what can they do" preview when granting editor modules
+  editorPerms: {
+    title: 'With these checked, they can:',
+    hint: 'An editor only touches the checked areas — never user accounts, announcements, boards, system health or the audit log.',
+    empty: 'No module checked — after signing in their sidebar shows only the dashboard, and they cannot do any content work.',
+    unknownModule: '(no description yet)',
+    functions: {
+      review: 'Review posts (approve/reject), handle comments, pin and feature',
+      forum: 'Manage posts and comments: review, pin, feature, delete and restore comments',
+      news: 'Create, edit and delete news posts; publish or unpublish',
+      pests: 'Maintain disease entries (including bulk import) and farming tasks',
+      feedback: 'See all feedback, reply, and move items through statuses in bulk',
+    },
+  },
+
   common: {
     refresh: 'Refresh',
     loading: 'Loading...',

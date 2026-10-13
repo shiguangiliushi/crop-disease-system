@@ -493,6 +493,8 @@
             </el-checkbox>
           </el-checkbox-group>
           <p class="field-hint">{{ t('adminUsers.roleModulesHint') }}</p>
+          <!-- 第 179 批：勾了这几项 = 他能做什么（与「修改角色」对话框共用同一个组件） -->
+          <EditorPermissionPreview :modules="createEditorModules" />
         </el-form-item>
       </el-form>
 
@@ -583,6 +585,8 @@
           </el-checkbox>
         </el-checkbox-group>
         <p class="role-modules-hint">{{ t('adminUsers.roleModulesHint') }}</p>
+        <!-- 第 179 批：同上 —— 改角色时也实时告诉他"这个人将能做什么" -->
+        <EditorPermissionPreview :modules="moduleDraft" />
       </div>
 
       <el-alert type="info" :closable="false" show-icon class="role-note">
@@ -738,12 +742,14 @@
  * 不含角色中文名、专家身份、活跃度等管理端字段，且被"授予专家"的用户搜索复用，
  * 改它的返回结构会牵连咨询页。所以另开 /api/admin/users/。
  */
-import { computed, ref, watch } from 'vue';import { ElMessage, ElMessageBox } from 'element-plus';
+import { computed, ref, watch } from 'vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   bulkDeleteAdminUsers, createAdminResetLink, createEditorAccount, deleteAdminUser,
   fetchAdminUser, fetchAdminUsers, updateUserRole,
   updateUserStatus,   // 第 137 批：停用 / 恢复账号
 } from '@/api/adminUser';
+import EditorPermissionPreview from '@/components/EditorPermissionPreview.vue';  // 第 179 批：勾了模块=他能做什么
 import { grantExpert, revokeExpert } from '@/api/consult';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
@@ -752,6 +758,7 @@ import { useI18n } from '@/i18n';
 import { useQueryState } from '@/composables/useQueryState';  // 第 98 批：筛选/分页进 URL
 
 export default {
+  components: { EditorPermissionPreview },
   name: 'AdminUsersView',
   setup() {
     const { t } = useI18n();

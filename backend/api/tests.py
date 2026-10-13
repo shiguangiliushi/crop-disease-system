@@ -12066,3 +12066,77 @@ class RoleMatrixTests(APITestCase):
         # 这里只提示，不算失败 —— 真正要求的是"侧栏有的，矩阵必须知道"
         if extra:
             print(f'  （矩阵里有、侧栏未列出：{sorted(extra)} —— 仅提示）')
+
+
+class RoleMatrixEndpointTests(APITestCase):
+    """
+    权限矩阵只读接口（第 179 批）
+
+    给控制台"开通编辑员"的对话框用。这里钉住三件事：
+      · **谁能看**：与"能给人授权"的那档人一致（USER_ADMIN）；普通用户/编辑员都拿不到；
+      · **内容与命令一致**：接口返回的模块清单与 `role_matrix` 命令**同一份来源**
+        （表改了这里跟着变，不会各说各话）；
+      · **功能清单不是空的**：每个模块都要能列出"能做什么"，否则对话框里会是空白。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_rm_admin', password='pw12345678', is_staff=True, role='ADMIN')
+        self.plain = User.objects.create_user(
+            username='zz_rm_plain', password='pw12345678', role='USER')
+        self.editor = User.objects.create_user(
+            username='zz_rm_editor', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=self.editor, module='news', granted_by=self.admin)
+
+        self.c_admin = APIClient(); self.c_admin.force_authenticate(user=self.admin)
+        self.c_plain = APIClient(); self.c_plain.force_authenticate(user=self.plain)
+        self.c_editor = APIClient(); self.c_editor.force_authenticate(user=self.editor)
+
+    def tearDown(self):
+        get_user_model().objects.filter(username__startswith='zz_rm_').delete()
+
+    def test_permissions(self):
+        self.assertEqual(self.c_admin.get('/api/admin/role-matrix/').status_code, 200)
+        # 与"能给人授权"同档：编辑员自己看不到这张表（他也没有授权能力）
+        self.assertEqual(self.c_editor.get('/api/admin/role-matrix/').status_code, 403)
+        self.assertEqual(self.c_plain.get('/api/admin/role-matrix/').status_code, 403)
+
+    def test_payload_matches_the_single_source_table(self):
+        """接口内容 = 矩阵表内容（不重写一份）"""
+        from .role_matrix import matrix_payload
+
+        data = self.c_admin.get('/api/admin/role-matrix/').data
+        expected = matrix_payload()
+        self.assertEqual([m['key'] for m in data['modules']],
+                         [m['key'] for m in expected['modules']])
+        self.assertEqual([r['key'] for r in data['roles']],
+                         [r['key'] for r in expected['roles']])
+
+    def test_every_module_lists_functions(self):
+        """
+        每个模块都要有"能做什么"的清单
+
+        对话框靠它渲染；某天加了模块却忘了往表里加接口，这里会红。
+        """
+        data = self.c_admin.get('/api/admin/role-matrix/').data
+        self.assertTrue(data['modules'])
+        for module in data['modules']:
+            self.assertTrue(module['label'], f"{module['key']} 缺中文名")
+            self.assertTrue(module['pages'], f"{module['key']} 缺能进的页面")
+            self.assertTrue(module['functions'], f"{module['key']} 没列出能做的事")
+
+    def test_payload_carries_the_two_irreversible_actions(self):
+        """
+        不可逆动作在表里明确标成仅全权管理员
+
+        它们是本项目特意**不塞进任何模块**的两处（删反馈、硬删评论），
+        接口要把这个口径带出去，前端才有得展示。
+        """
+        from .role_matrix import ENDPOINT_RULES
+
+        full_only = [note for _m, _p, allow, note in ENDPOINT_RULES if allow == ('FULL_ADMIN',)]
+        self.assertTrue(full_only, '矩阵里应当有仅全权管理员的动作')
+        data = self.c_admin.get('/api/admin/role-matrix/').data
+        self.assertIn('full_admin_pages', data)

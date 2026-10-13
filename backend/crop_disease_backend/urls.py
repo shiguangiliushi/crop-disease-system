@@ -71,6 +71,8 @@ AdminAuditLogListView = import_view('api.views_audit', 'AdminAuditLogListView')
 AdminAuditLogActionsView = import_view('api.views_audit', 'AdminAuditLogActionsView')
 # 第 157 批：系统健康（复用 check_env 的检查，仅全权管理员）
 AdminHealthView = import_view('api.views_system_health', 'AdminHealthView')
+# 第 179 批：权限矩阵（给"开通编辑员"对话框用，与自查命令同一份数据）
+AdminRoleMatrixView = import_view('api.views_role_matrix', 'AdminRoleMatrixView')
 # 第 149 批：控制台的评论管理（全局列表 + 软删/硬删/批量软删）
 AdminCommentListView = import_view('api.views_comments_admin', 'AdminCommentListView')
 AdminCommentSoftDeleteView = import_view('api.views_comments_admin', 'AdminCommentSoftDeleteView')
@@ -357,6 +359,7 @@ api_urlpatterns = [
     # 第 146 批：管理操作日志（只读，仅全权管理员）
     # 第 157 批：系统健康（与操作日志同档：会暴露部署细节，仅全权管理员）
     path('admin/health/', AdminHealthView.as_view(), name='admin-health'),
+    path('admin/role-matrix/', AdminRoleMatrixView.as_view(), name='admin-role-matrix'),
     # 第 172 批：控制台「识别记录」—— 跨用户看识别历史（USER_ADMIN 能力；
     # 删除不可逆，仅全权管理员）。注意路径与农户端的 `history/` 不是一回事：
     # 那边只看自己的记录。
