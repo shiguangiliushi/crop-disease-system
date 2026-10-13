@@ -68,8 +68,8 @@
 ## 技术栈与结构
 
 ```
-backend/    Django 5.2 + DRF（SQLite，YOLOv8 推理，155 个 Python 文件 / 约 3.4 万行）
-frontend/   桌面端 Vue 3 + Element Plus + Vite（:5173，71 个 .vue 文件 / 约 4.1 万行）
+backend/    Django 5.2 + DRF（SQLite，YOLOv8 推理，150 个 Python 文件 / 约 3.4 万行）
+frontend/   桌面端 Vue 3 + Element Plus + Vite（:5173，68 个 .vue 文件 / 约 4.2 万行）
 mobile/     移动端 Vue 3 + Vant + Vite（:5174，独立应用，与桌面端零代码共享）
 docs/       设计与运维文档、README 配图、工具脚本
 tools/      开发辅助脚本（注释覆盖审计等）
@@ -103,7 +103,11 @@ cd mobile && npm install && npm run dev        # http://127.0.0.1:5174
 > 它写清了 `pip install -r requirements.txt` **照原样装不出能跑的环境**这件事，
 > 以及生产启动（gunicorn + WhiteNoise）、环境变量、必须挂的几个定时任务。
 > 演示数据可用 `add_sample_news` / `add_popular_pests` / `add_detailed_pests` 等管理命令灌入
-> （共 **21 个**管理命令，`python manage.py help` 可查）。
+> （共 **22 个**管理命令，`python manage.py help` 可查）。
+
+> 🔧 编辑帖子页顶部那块「开发信息」面板**默认不显示**；要排查问题时用
+> `.env.development` 里的 `VITE_SHOW_DEBUG_PANEL=true`，或控制台
+> `localStorage.setItem('dsh_debug_panel','1')` 后刷新（见 `frontend/src/utils/debugFlags.js`）。
 
 ---
 
@@ -113,12 +117,12 @@ cd mobile && npm install && npm run dev        # http://127.0.0.1:5174
 # 后端：667 条测试（权限矩阵、限流、注销冷静期、备份恢复、审计日志……）
 cd backend && python manage.py test api.tests
 
-# 桌面端：82 条单元测试 + 类型检查 + 4 个一致性检查脚本
+# 桌面端：104 条单元测试 + 类型检查 + 4 个一致性检查脚本
 cd frontend && npm run test:unit && npm run type-check && npm run check
 
-# 端到端（真实后端 + 真实浏览器）：5 个 Playwright spec + 24 个按批留证的验证脚本
+# 端到端（真实后端 + 真实浏览器）：5 个 Playwright spec + 41 个按批留证的验证脚本
 cd frontend && npm run e2e                     # Playwright 用例（5 个 spec）
-cd frontend && node scripts/verify-forum-module.mjs   # 按批留证的验证脚本（24 个）
+cd frontend && node scripts/verify-forum-module.mjs   # 按批留证的验证脚本（41 个）
 ```
 
 `npm run check` 串了 **4 个检查脚本**（其中一致性检查内部再细分 A/B/C 三小项），都是**踩过坑之后加的**：
