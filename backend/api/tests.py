@@ -12080,6 +12080,79 @@ class RoleMatrixTests(APITestCase):
         if extra:
             print(f'  （矩阵里有、侧栏未列出：{sorted(extra)} —— 仅提示）')
 
+    def test_broadcast_capability_unlocks_the_system_page(self):
+        """
+        `BROADCAST` 解锁的是 **`/admin/health`**（第 186 批：版块管理成了「系统」页的页签）
+
+        为什么单写一条：这一批把 `CAPABILITY_PAGES['BROADCAST']` 从 `/admin/boards`
+        改成了 `/admin/health`，而 `/admin/health` 同时在 `FULL_ADMIN_PAGES` 里
+        （系统健康 / 操作日志两个页签仍是仅全权）。也就是**同一页被两档共用** ——
+        最容易出的错正是"以为整页都给 BROADCAST 的人"，所以这里把两件事都钉住：
+
+        · 只有 BROADCAST 的人：能进的页面里**有** `/admin/health`（他能管版块）；
+        · 全权管理员：`/admin/health` 只出现**一次**（两档命中同一页，`pages_of` 保序去重）；
+        · 两个接口的**档位没有跟着放宽**：`/api/admin/health/`（系统健康）与
+          `/api/admin/audit-logs/`（操作日志）在矩阵里仍然只认 `FULL_ADMIN` ——
+          页签"按权限画"的另一半就靠这三条钉住（前端 tabs 是体验，边界在后端）。
+        """
+        from .role_matrix import CAPABILITY_PAGES, ENDPOINT_RULES, pages_of
+
+        self.assertEqual(CAPABILITY_PAGES['BROADCAST'], ['/admin/health'])
+        self.assertNotIn('/admin/boards', CAPABILITY_PAGES['BROADCAST'])
+
+        broadcast_only = pages_of(['BROADCAST'], [], is_full_admin=False)
+        self.assertIn('/admin/health', broadcast_only)
+        self.assertNotIn('/admin/users', broadcast_only)
+
+        full_admin = pages_of(['BROADCAST', 'CONTENT', 'USER_ADMIN'], [], is_full_admin=True)
+        self.assertEqual(full_admin.count('/admin/health'), 1,
+                         f'同一页被两档命中时不该重复：{full_admin}')
+
+        full_admin_only = {
+            path for _method, path, allow, _note in ENDPOINT_RULES if allow == ('FULL_ADMIN',)
+        }
+        self.assertIn('/api/admin/health/', full_admin_only)
+        self.assertIn('/api/admin/audit-logs/', full_admin_only)
+
+    def test_no_account_can_hold_broadcast_without_being_a_full_admin(self):
+        """
+        ⚠️ 如实记录一条**能力模型的现状**（第 186 批实测，不是本批引入的）：
+
+        `capabilities.has_capability()` 里，`is_full_admin(user)` 一成立就**三项能力全给**；
+        而 `EDITOR` 无论被授予什么都不给 BROADCAST。于是
+        "**有 BROADCAST、但不是全权管理员**"这种账号在当前模型下**造不出来**：
+
+        · 普通 `role='EDITOR'`（哪怕勾满五个模块）→ 没有 BROADCAST，被 `/admin/health` 的
+          路由守卫弹回（`capability: 'BROADCAST'`）；
+        · 任何 `is_staff` / `is_superuser` / `role='ADMIN'` → `is_full_admin` 为真，
+          三个页签全看得见。
+
+        这条测试的用处是**别让下一个人反过来写**：它是"现状的护栏"，不是"期望的行为"。
+        真要出现"只发公告/只管版块"的账号，得先给后端加按能力授权（现在只有内容模块
+        有授权表 `EditorModuleGrant`），那时这条会红，正好提醒一起改前端页签与矩阵。
+        """
+        from .capabilities import capabilities_of, content_modules_of, is_full_admin
+        from .models import EditorModuleGrant
+        from .role_matrix import pages_of
+
+        User = get_user_model()
+        editor = User.objects.create_user(
+            username='zz_matrix_broadcast_probe', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.bulk_create([
+            EditorModuleGrant(user=editor, module=module, granted_by=self.admin)
+            for module in CONTENT_MODULES
+        ])
+        self.assertEqual(content_modules_of(editor), list(CONTENT_MODULES))
+        self.assertNotIn('BROADCAST', capabilities_of(editor))
+        self.assertFalse(is_full_admin(editor))
+        # 他连 /admin/health 的外壳都进不去（守卫按 capability: 'BROADCAST' 判）
+        self.assertNotIn('/admin/health', pages_of(capabilities_of(editor), list(CONTENT_MODULES)))
+
+        full = User.objects.create_user(
+            username='zz_matrix_broadcast_full', password='pw12345678', is_staff=True, role='USER')
+        self.assertIn('BROADCAST', capabilities_of(full))
+        self.assertTrue(is_full_admin(full))   # ← 关键：有 BROADCAST 的人必然是全权管理员
+
 
 class RoleMatrixEndpointTests(APITestCase):
     """
