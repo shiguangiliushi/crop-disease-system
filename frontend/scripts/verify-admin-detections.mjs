@@ -125,8 +125,13 @@ check('侧栏不再有已并入页签的旧入口（/review、/forum、/comments
 await page.goto(`${UI}/admin/detection-history`, { waitUntil: 'domcontentloaded' });
 await page.waitForSelector('.admin-table', { timeout: 30_000 });
 await page.waitForTimeout(2500);
-check('进的是管理页（URL 没有被重定向到农户端 /history）',
-  new URL(page.url()).pathname.includes('/admin/detection-history'), page.url());
+// ⚠️ 第 184 批起这条旧地址**就是重定向**：`/admin/detection-history` → `/admin/users?tab=detections`。
+//    所以判据是"落在管理页的识别记录页签上、**没有**被丢到农户端 `/history`"，
+//    而不是"URL 还留在旧地址上"（第一版是后者，184 批之后必然红）。
+const landed = new URL(page.url());
+check('旧地址落在管理页的识别记录页签（没有被重定向到农户端 /history）',
+  landed.pathname === '/admin/users' && landed.search.includes('tab=detections'),
+  `${landed.pathname}${landed.search}`);
 
 // ---------------------------------------------------------------------------
 // ② 列表内容
