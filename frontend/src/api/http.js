@@ -11,7 +11,7 @@
  */
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
-import { t } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言
+import { t, locale } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言；第 197 批：请求带语言头
 
 // VITE_API_BASE_URL 形如 http://127.0.0.1:8000/api，已包含 /api 前缀
 export const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
@@ -38,6 +38,12 @@ http.interceptors.request.use((config) => {
   }
 
   config.headers['X-Requested-With'] = 'XMLHttpRequest';
+  // 第 197 批：带上界面语言（后端已挂 LocaleMiddleware，会协商成 request.LANGUAGE_CODE）。
+  // 首个消费者是智能回答助手 —— 它据此选提示词与词条的中/英文字段，
+  // 否则用户在英文界面下会收到中文回答。
+  if (locale.value) {
+    config.headers['Accept-Language'] = locale.value;
+  }
   return config;
 });
 

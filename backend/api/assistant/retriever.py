@@ -148,6 +148,20 @@ def search(question: str, *, pest_identifier: str = '', top_k: int = 5) -> list[
             why.append(f'词条名命中（{"/".join(name_hit[:3])}）')
             matched += name_hit
 
+        # 第 197 批：英文名也要能命中。
+        # ⚠️ 这条是补出来的**真缺陷** —— 原来是"只匹配中文名 + english_identifier"，
+        #    于是英文界面下用户打 `tomato late blight` 命中 0 条，助手一律回
+        #    "not covered by our entries"（实测）。而英文用户不会去打中文病名。
+        #    权重比中文名略低：中文名是主语言，且英文名里常含作物词（tomato），
+        #    单靠作物就能命中的条目不该压过真正的目标条目。
+        name_en = pest.name_en or ''
+        if name_en:
+            en_tokens = [t for t in tokens if len(t) >= 3 and t in name_en.lower()]
+            if en_tokens:
+                score += 8 * len(en_tokens) + len(max(en_tokens, key=len))
+                why.append(f'英文名命中（{"/".join(en_tokens[:3])}）')
+                matched += en_tokens
+
         if pest.english_identifier and pest.english_identifier.lower() in question.lower():
             score += 30
             why.append('英文标识符命中')
@@ -160,6 +174,12 @@ def search(question: str, *, pest_identifier: str = '', top_k: int = 5) -> list[
         elif pest.crop_type and pest.crop_type in crops:
             score += 4
             why.append(f'作物（别名）命中（{pest.crop_type}）')
+        # 英文作物名同理（`tomato late blight` 里的 tomato）
+        crop_en = (pest.crop_type_en or '').lower()
+        if crop_en and len(crop_en) >= 3 and crop_en in question.lower():
+            score += 6
+            why.append(f'英文作物命中（{pest.crop_type_en}）')
+            matched.append(pest.crop_type_en)
 
         # 正文命中：只做弱加权。长字段（化学防治 353 字）靠长度刷分是不对的，
         # 所以每个命中的词最多贡献 2 分，且整个正文字段封顶 8 分。

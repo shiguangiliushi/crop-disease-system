@@ -40,49 +40,65 @@ TITLE_CHARS = 30
 MAX_CITATIONS = 6
 
 
-def _fallback_body(hits) -> str:
+def _fallback_body(hits, lang: str = prompts.DEFAULT_LANG) -> str:
     """降级时给"词条原文"：把命中条目的关键字段原样列出来。
 
     刻意**不做任何改写或总结** —— 没有 AI 的时候就老老实实给档案，
-    让用户知道这不是 AI 的回答（正文前缀由 `prompts.DEGRADE_NO_LLM` 说明）。
-    """
-    from .context import CARE_SECTIONS, DISEASE_SECTIONS, HEALTHY_SECTIONS, _split_append_note
+    让用户知道这不是 AI 的回答（正文前缀由 `prompts.degrade_text('no_llm')` 说明）。
 
+    第 197 批：按语言取字段与标签（英文优先 `*_en`、为空回落中文），
+    否则英文用户会拿到"英文提示 + 中文档案"的半截本地化。
+    """
+    from .context import (CARE_SECTIONS, DISEASE_SECTIONS, HEALTHY_SECTIONS,
+                          PREVENTION_LABELS_EN, _localized_pair, field_text,
+                          section_label)
+
+    english = lang == 'en'
     blocks: list[str] = []
     for index, hit in enumerate(hits[:2], start=1):
         pest = hit.pest
-        lines = [f'【{index}】{pest.name}（作物：{pest.crop_type}）']
-        if pest.scientific_name:
-            lines.append(f'学名：{pest.scientific_name.split("（")[0].strip()}')
+        head = (f'[{index}] {pest.name_en or pest.name} (Crop: {pest.crop_type_en or pest.crop_type})'
+                if english else f'【{index}】{pest.name}（作物：{pest.crop_type}）')
+        lines = [head]
+        latin = (pest.scientific_name or '').split('（')[0].strip()
+        if latin:
+            lines.append(f'{"Scientific name" if english else "学名"}: {latin}')
         if hit.is_healthy and hit.profile is not None:
             for title, attr in HEALTHY_SECTIONS + CARE_SECTIONS:
-                value = _split_append_note(getattr(hit.profile, attr, '') or '')
+                value = _localized_pair(hit.profile, attr, f'{attr}_en', lang)
                 if value:
-                    lines.append(f'{title}：{value}')
+                    lines.append(f'{section_label(title, lang)}: {value}' if english
+                                 else f'{title}：{value}')
         else:
             for title, attr in DISEASE_SECTIONS:
-                value = _split_append_note(getattr(pest, attr, '') or '')
+                value = _localized_pair(pest, attr, f'{attr}_en', lang)
                 if value:
-                    lines.append(f'{title}：{value}')
+                    lines.append(f'{section_label(title, lang)}: {value}' if english
+                                 else f'{title}：{value}')
             for method in pest.prevention_methods.all().order_by('category'):
-                value = _split_append_note(method.measure or '')
-                if value:
-                    lines.append(f'{method.get_category_display()}：{value}')
+                en_value = field_text(method.measure_en or '', 'en')
+                zh_value = field_text(method.measure or '', 'zh')
+                value = (en_value or zh_value) if english else zh_value
+                if not value:
+                    continue
+                title = (PREVENTION_LABELS_EN.get(method.category, method.category) if english
+                         else method.get_category_display())
+                lines.append(f'{title}: {value}' if english else f'{title}：{value}')
         blocks.append('\n'.join(lines))
     return '\n\n'.join(blocks)
 
 
-def _guard_reply(result: guard.GuardResult) -> tuple[str, str]:
-    """把闸门结果翻译成 (回答文本, 降级原因)。"""
+def _guard_reply(result: guard.GuardResult, lang: str) -> tuple[str, str]:
+    """把闸门结果翻译成 (回答文本, 降级原因)。话术按语言取（第 197 批）。"""
     if result.reason == 'empty':
-        return prompts.DEGRADE_EMPTY, 'empty'
+        return prompts.degrade_text('empty', lang), 'empty'
     if result.reason == 'too_long':
-        return prompts.DEGRADE_TOO_LONG.format(limit=guard.MAX_QUESTION_CHARS), 'too_long'
+        return prompts.degrade_text('too_long', lang, limit=guard.MAX_QUESTION_CHARS), 'too_long'
     if result.reason == 'sensitive':
-        return prompts.DEGRADE_SENSITIVE.format(words=result.detail), 'sensitive'
+        return prompts.degrade_text('sensitive', lang, words=result.detail), 'sensitive'
     if result.reason == 'rate_limited':
-        return (f'提问太频繁了（每分钟上限 {result.detail} 次），请稍等一下再问。', 'rate_limited')
-    return prompts.DEGRADE_NO_SOURCE, 'no_source'
+        return prompts.degrade_text('rate_limited', lang, limit=result.detail), 'rate_limited'
+    return prompts.degrade_text('no_source', lang), 'no_source'
 
 
 def _get_or_create_session(*, user, session, question, pest_identifier):
@@ -121,6 +137,8 @@ class Prepared:
 
     session: AssistantSession
     question: str
+    #: 归一化后的语言（`'zh'` / `'en'`）—— 提示词、降级话术、落库都跟着它走
+    lang: str = prompts.DEFAULT_LANG
     #: 非空表示**不必生成**，直接把这段话当答案（降级）
     early_answer: str = ''
     early_reason: str = ''
@@ -130,8 +148,9 @@ class Prepared:
 
 
 def _prepare(*, user, question: str, session: AssistantSession | None,
-             pest_identifier: str) -> Prepared | dict:
+             pest_identifier: str, lang: str = prompts.DEFAULT_LANG) -> Prepared | dict:
     """跑完"决策阶段"。返回 `Prepared`；对**空问题**直接返回响应字典（连会话都不建）。"""
+    code = prompts.normalize_lang(lang)
     guard_result = guard.check(question, user=user, rate_per_minute=_rate_limit())
 
     # 空问题连会话都不该建（否则问答历史里会积一堆空会话）。
@@ -139,7 +158,7 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
         return {
             'session_id': getattr(session, 'pk', None),
             'message_id': None,
-            'answer': prompts.DEGRADE_EMPTY,
+            'answer': prompts.degrade_text('empty', code),
             'degraded': True,
             'degrade_reason': 'empty',
             'citations': [],
@@ -150,10 +169,10 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
         user=user, session=session, question=guard_result.question or question,
         pest_identifier=pest_identifier,
     )
-    prepared = Prepared(session=session, question=guard_result.question or question)
+    prepared = Prepared(session=session, question=guard_result.question or question, lang=code)
 
     if not guard_result.ok:
-        prepared.early_answer, prepared.early_reason = _guard_reply(guard_result)
+        prepared.early_answer, prepared.early_reason = _guard_reply(guard_result, code)
         return prepared
 
     intent = detect_intent(prepared.question)
@@ -161,16 +180,17 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
 
     hits = search(prepared.question, pest_identifier=pest_identifier,
                   top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 5))
-    built = context_builder.build(hits)
+    built = context_builder.build(hits, lang=code)
 
     if built.is_empty:
         # 无来源不回答：农业场景答错药是事故，不是体验问题
-        prepared.early_answer, prepared.early_reason = prompts.DEGRADE_NO_SOURCE, 'no_source'
+        prepared.early_answer = prompts.degrade_text('no_source', code)
+        prepared.early_reason = 'no_source'
     elif not llm.enabled():
-        prepared.early_answer = prompts.DEGRADE_NO_LLM.format(body=_fallback_body(hits))
+        prepared.early_answer = prompts.degrade_text('no_llm', code, body=_fallback_body(hits, code))
         prepared.early_reason = 'llm_disabled'
     else:
-        prepared.messages = prompts.build_messages(prepared.question, built.text, intent)
+        prepared.messages = prompts.build_messages(prepared.question, built.text, intent, code)
         prepared.citations = [c.as_dict() for c in built.citations[:MAX_CITATIONS]]
         prepared.prompt_version = prompts.PROMPT_VERSION
     return prepared
@@ -178,7 +198,8 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
 
 def _persist(session, question: str, *, answer: str, reason: str, model: str = '',
              latency_ms: int = 0, citations: list | None = None,
-             usage: dict | None = None, prompt_version: str = '') -> AssistantMessage:
+             usage: dict | None = None, prompt_version: str = '',
+             lang: str = prompts.DEFAULT_LANG) -> AssistantMessage:
     """落库：用户消息 + 助手消息（单事务，要么都写要么都不写）。"""
     with transaction.atomic():
         AssistantMessage.objects.create(session=session, role='user', content=question)
@@ -193,16 +214,17 @@ def _persist(session, question: str, *, answer: str, reason: str, model: str = '
             citations=citations or [],
             usage=usage or {},
             prompt_version=prompt_version,
+            lang=prompts.normalize_lang(lang),
         )
         session.save(update_fields=['updated_at'])   # 触发 auto_now，让会话列表按活跃排序
     return message
 
 
 def ask(*, user, question: str, session: AssistantSession | None = None,
-        pest_identifier: str = '') -> dict:
+        pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG) -> dict:
     """问一个问题，返回结构化结果。**永不抛异常给调用方**（见模块 docstring）。"""
     prepared = _prepare(user=user, question=question, session=session,
-                        pest_identifier=pest_identifier)
+                        pest_identifier=pest_identifier, lang=lang)
     if isinstance(prepared, dict):
         return prepared
 
@@ -220,7 +242,8 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                 logger.warning('助手生成失败，降级：%s', exc)
                 from .retriever import search as _search
                 hits = _search(prepared.question, pest_identifier=pest_identifier)
-                answer = prompts.DEGRADE_ERROR.format(reason=exc, body=_fallback_body(hits))
+                answer = prompts.degrade_text('error', prepared.lang, reason=exc,
+                                             body=_fallback_body(hits, prepared.lang))
                 reason = 'llm_error'
             else:
                 latency_ms = result.latency_ms
@@ -249,7 +272,7 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                     usage['citation_marked'] = False
                 answer = (result.text or '').strip()
                 if not answer:
-                    answer, reason, citations = prompts.DEGRADE_NO_SOURCE, 'no_source', []
+                    answer, reason, citations = prompts.degrade_text('no_source', prepared.lang), 'no_source', []
     except Exception as exc:  # noqa: BLE001 —— 兜底：任何意外都要变成可读回答
         logger.exception('助手链路出现未预期错误')
         answer = f'（AI 助手暂时不可用：{exc}）'
@@ -259,7 +282,7 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
     message = _persist(
         prepared.session, prepared.question, answer=answer, reason=reason,
         model=actual_model, latency_ms=latency_ms, citations=citations,
-        usage=usage, prompt_version=prompt_version,
+        usage=usage, prompt_version=prompt_version, lang=prepared.lang,
     )
 
     return {
@@ -284,7 +307,7 @@ def _sse(event: str, data: dict) -> bytes:
 
 
 def ask_stream(*, user, question: str, session: AssistantSession | None = None,
-               pest_identifier: str = ''):
+               pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG):
     """流式问答：yield SSE 事件字节串。
 
     事件序列（与 `docs/智能回答助手框架.md` 第五节一致）：
@@ -302,7 +325,7 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     代价是"空内容的助手消息"会短暂存在 —— 但它必然被同一个请求补全。
     """
     prepared = _prepare(user=user, question=question, session=session,
-                        pest_identifier=pest_identifier)
+                        pest_identifier=pest_identifier, lang=lang)
     if isinstance(prepared, dict):
         # 空问题：不落库，只把同一套响应翻译成 SSE
         yield _sse('meta', {'session_id': prepared['session_id'], 'message_id': None,
@@ -317,7 +340,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     if prepared.early_answer:
         message = _persist(prepared.session, prepared.question,
                            answer=prepared.early_answer, reason=prepared.early_reason,
-                           citations=[], prompt_version=prepared.prompt_version)
+                           citations=[], prompt_version=prepared.prompt_version,
+                       lang=prepared.lang)
         yield _sse('meta', {'session_id': prepared.session.pk, 'message_id': message.pk,
                             'degraded': True, 'degrade_reason': prepared.early_reason,
                             'citations': []})
@@ -333,7 +357,7 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
                                         content=prepared.question)
         message = AssistantMessage.objects.create(
             session=prepared.session, role='assistant', content='', degraded=False,
-            prompt_version=prepared.prompt_version,
+            prompt_version=prepared.prompt_version, lang=prepared.lang,
         )
         prepared.session.save(update_fields=['updated_at'])
 
@@ -364,7 +388,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
         error_reason = 'llm_error'
         if not pieces:
             hits = search(prepared.question, pest_identifier=pest_identifier)
-            text = prompts.DEGRADE_ERROR.format(reason=exc, body=_fallback_body(hits))
+            text = prompts.degrade_text('error', prepared.lang, reason=exc,
+                                                body=_fallback_body(hits, prepared.lang))
             pieces = [text]
             yield _sse('delta', {'text': text})
         else:
@@ -387,7 +412,7 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
 
     if not answer:
         # 模型一个字都没吐（例如上下文过长被拒）：按"未收录"处理并如实记录
-        answer, reason, citations = prompts.DEGRADE_NO_SOURCE, 'no_source', []
+        answer, reason, citations = prompts.degrade_text('no_source', prepared.lang), 'no_source', []
 
     usage['latency_ms'] = latency_ms
     if actual_model:

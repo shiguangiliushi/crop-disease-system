@@ -55,7 +55,7 @@ from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志
 from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
 # 第 193 批：智能回答助手（会话/消息）+ 闸门/检索/上下文/LLM 四个可单独测的模块
 from .models_assistant import AssistantMessage, AssistantSession
-from .assistant import context, guard, llm, retriever
+from .assistant import context, guard, llm, prompts, retriever  # prompts：第 197 批语言归一用例要用
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
 from .pest_lookup import (  # noqa: E402  第 159 批：类名 → 词条匹配
     find_pest_info,
@@ -13240,3 +13240,176 @@ class AssistantFeedbackTests(TestCase):
         resp = APIClient().post(f'/api/assistant/sessions/{self.session.pk}/escalate/',
                                 {}, format='json')
         self.assertIn(resp.status_code, (401, 403))
+
+
+# ============================================================================
+# 智能回答助手 · 语言选择（第 197 批 K4）
+# ----------------------------------------------------------------------------
+# 验的是"用户在英文界面下不会收到中文回答"：
+#   · 提示词与降级话术按 `Accept-Language` 切换（整组切，不是只换 system prompt）；
+#   · 词条字段英文优先、**为空回落中文**（宁可给中文，也不要给空段落）；
+#   · `lang` 落库 —— 英文回答的质量要能单独统计（英文语料是后补的，
+#     混进"整体满意度"会把英文侧的问题稀释掉）。
+# ============================================================================
+class AssistantLanguageTests(TestCase):
+    """助手语言：提示词 / 降级话术 / 字段选择 / 落库。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.pest = PestInfo.objects.create(
+            name='番茄晚疫病', name_en='Tomato late blight',
+            crop_type='番茄', crop_type_en='Tomato',
+            english_identifier='tomato_late_blight',
+            symptoms='中文症状：叶片初为暗绿色水渍状病斑。',
+            symptoms_en='English symptoms: dark water-soaked lesions on the leaves.',
+            description='中文发病规律：冷凉高湿条件下流行快。',
+            description_en='English cycle: epidemics develop fast under cool, wet conditions.',
+        )
+        PreventionMethod.objects.create(
+            pest=cls.pest, category='CHEMICAL',
+            measure='中文化学防治：间隔5-7天喷1次。',
+            measure_en='Chemical control (EN): spray every 5-7 days.',
+        )
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_lang', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        cache.delete('sensitive_words:active')
+
+    def _ask_zh(self, **extra):
+        return self.client_auth.post('/api/assistant/ask/', {'question': '番茄晚疫病怎么打药', **extra},
+                                     format='json')
+
+    def _ask_en(self, question='How to treat tomato late blight', **extra):
+        """带 `Accept-Language: en` —— 前端在英文界面下就是这么发的。
+
+        ⚠️ 默认问题用**英文**是有意的：它顺带守住"英文查询能不能检索到词条"。
+        第 197 批之前 `retriever` 只匹配中文名与 `english_identifier`，
+        英文问题一律命中 0 条 —— 表现是英文用户永远收到"not covered by our entries"。
+        这条测试当时就是这么发现问题的。
+        """
+        return self.client_auth.post('/api/assistant/ask/', {'question': question, **extra},
+                                     format='json', HTTP_ACCEPT_LANGUAGE='en-US,en;q=0.9')
+
+    # ── 一、提示词整组切换 ──────────────────────────────────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_english_prompt_is_fully_english(self):
+        """英文请求：system prompt 与 user 模板都必须是英文（不能半截本地化）。
+
+        这条同时守住"FOCUS_BY_INTENT 与降级话术也切了语言" —— 只换 system prompt
+        的实现会在这里露出来（user 消息里仍是中文的侧重提示）。
+        """
+        captured = {}
+
+        def fake_chat(messages, **_kwargs):
+            captured['messages'] = messages
+            return llm.ChatResult(text='Answer.【1】', model='deepseek-flash')
+
+        with patch('api.assistant.llm.chat', side_effect=fake_chat):
+            self._ask_en()
+
+        messages = captured['messages']
+        system = messages[0]['content']
+        user = messages[1]['content']
+        self.assertIn('agronomy assistant', system)
+        self.assertIn('cite entries with 【number】', system.lower())
+
+        # 知识块的**维度标签**必须是英文 —— 这是"整组切了语言"的直接证据。
+        # ⚠️ 这里不能断言"整段无中文"：命中的**词条名标签**保留中文
+        #    （`[1] 番茄晚疫病 (Crop: Tomato)`）是**刻意**的 —— 中文名是主语言的标识符，
+        #    引用里必须能和百科页面对上；只把"标签"翻成英文会让用户对不上条目。
+        #    所以断言的是"结构部分英文 + 正文取的是英文侧字段"。
+        self.assertIn('Symptoms:', user)
+        self.assertIn('Disease cycle:', user)
+        self.assertIn('Chemical control:', user)
+        self.assertIn('English symptoms', user)      # 取的是 symptoms_en
+        self.assertIn('English cycle', user)         # 取的是 description_en
+        self.assertNotRegex(user.split('<knowledge>')[1], r'(症状描述|发病规律|化学防治)：',
+                            '知识块里仍是中文维度标签')
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_chinese_prompt_stays_chinese(self):
+        """中文请求（或不带头）：仍走中文提示词 —— 别把默认语言改坏了"""
+        captured = {}
+
+        def fake_chat(messages, **_kwargs):
+            captured['messages'] = messages
+            return llm.ChatResult(text='回答【1】', model='deepseek-flash')
+
+        with patch('api.assistant.llm.chat', side_effect=fake_chat):
+            self._ask_zh()
+
+        self.assertIn('农业技术助手', captured['messages'][0]['content'])
+        self.assertIn('中文症状', captured['messages'][1]['content'])
+
+    # ── 二、降级话术也跟着语言 ──────────────────────────────────────────
+    def test_degraded_answer_follows_language(self):
+        """LLM 关着时：英文请求要给英文的"档案原文"前缀，不是中文那句"""
+        resp = self._ask_en()
+        self.assertEqual(resp.data['degrade_reason'], 'llm_disabled')
+        self.assertIn('AI assistant is temporarily unavailable', resp.data['answer'])
+        self.assertNotIn('AI 助手暂时不可用', resp.data['answer'])
+        # 档案正文也是英文侧
+        self.assertIn('English symptoms', resp.data['answer'])
+
+    def test_no_source_message_follows_language(self):
+        """无来源话术也要按语言给（英文用户不该看到中文提示）"""
+        resp = self._ask_en(question='Please write me a poem about spring')
+        self.assertEqual(resp.data['degrade_reason'], 'no_source')
+        self.assertIn('not covered by our entries', resp.data['answer'])
+        self.assertNotRegex(resp.data['answer'], r'[\u4e00-\u9fff]')
+
+    def test_sensitive_and_empty_messages_follow_language(self):
+        """敏感词 / 空问题的话术也要切语言"""
+        empty = self._ask_en(question='   ')
+        self.assertEqual(empty.data['degrade_reason'], 'empty')
+        self.assertNotRegex(empty.data['answer'], r'[\u4e00-\u9fff]')
+
+        SensitiveWord.objects.create(word='forbiddenterm', category='other', is_active=True)
+        cache.delete('sensitive_words:active')
+        hit = self._ask_en(question='tell me about forbiddenterm')
+        self.assertEqual(hit.data['degrade_reason'], 'sensitive')
+        self.assertNotRegex(hit.data['answer'], r'[\u4e00-\u9fff]')
+
+    # ── 三、字段回落 ────────────────────────────────────────────────────
+    def test_missing_english_field_falls_back_to_chinese(self):
+        """英文译稿缺失时回落中文 —— 宁可给中文，也不要给空段落。
+
+        这条也解释了为什么"补完 130 条防治英文"是必须的：在补完之前，
+        英文用户看到的档案里会夹着中文段落（回落），体验是半截的。
+        """
+        pest = PestInfo.objects.create(
+            name='无译文病害', crop_type='番茄', english_identifier='no_en_translation',
+            symptoms='中文症状独有', description='中文规律独有',
+            # 故意不填 symptoms_en / description_en
+        )
+        PreventionMethod.objects.create(
+            pest=pest, category='AGRICULTURAL', measure='中文农业防治独有',
+        )
+        PestInfo.objects.filter(pk=pest.pk).update(symptoms_en='', description_en='')
+        resp = self._ask_en(question='no_en_translation')
+        # 走降级（llm 关着）正好能看到档案正文；这里断言它回落到了中文
+        self.assertIn('中文症状独有', resp.data['answer'])
+
+    # ── 四、语言落库 ────────────────────────────────────────────────────
+    def test_lang_is_persisted(self):
+        """`lang` 必须落库：英文回答的质量要能单独统计"""
+        self._ask_en()
+        message = AssistantMessage.objects.filter(role='assistant').order_by('-id').first()
+        self.assertEqual(message.lang, 'en')
+
+        self._ask_zh()
+        message = AssistantMessage.objects.filter(role='assistant').order_by('-id').first()
+        self.assertEqual(message.lang, 'zh')
+
+    def test_lang_header_variants_normalize(self):
+        """`Accept-Language` 的常见写法都要能归一（带地区后缀、带 q 值、大小写）"""
+        for header, expected in (
+            ('en', 'en'), ('en-US', 'en'), ('EN-GB,en;q=0.9', 'en'),
+            ('zh-CN,zh;q=0.9', 'zh'), ('zh-Hans', 'zh'), ('fr-FR', 'zh'), ('', 'zh'),
+        ):
+            self.assertEqual(prompts.normalize_lang(header), expected, header)

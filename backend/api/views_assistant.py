@@ -34,7 +34,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models_assistant import AssistantMessage, AssistantSession
-from .assistant import orchestrator
+from .assistant import orchestrator, prompts
 from .assistant.service import escalate
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,20 @@ logger = logging.getLogger(__name__)
 #: 单次请求的问题长度硬上限（比闸门的 500 稍宽松，超了才判 400）——
 #: 闸门负责"给可操作提示"，这里负责"别把超长 body 读进内存"。
 MAX_BODY_CHARS = 2000
+
+
+def _request_lang(request) -> str:
+    """从请求判定回答语言（第 197 批）。
+
+    用 `Accept-Language` 而不是请求体字段：它是 HTTP 标准做法，
+    而且项目已经挂了 `django.middleware.locale.LocaleMiddleware`，
+    `request.LANGUAGE_CODE` 就是协商结果 —— 不必自己解析头。
+
+    取不到就回落中文（本项目主语言）。判定逻辑收口在 `prompts.normalize_lang`，
+    视图这层只负责"从头里拿一个字符串"。
+    """
+    code = getattr(request, 'LANGUAGE_CODE', '') or request.META.get('HTTP_ACCEPT_LANGUAGE', '')
+    return prompts.normalize_lang(code)
 
 
 def _parse_request(request):
@@ -71,6 +85,7 @@ def _parse_request(request):
         'question': question,
         'session': session,
         'pest_identifier': str(request.data.get('pest_identifier') or ''),
+        'lang': _request_lang(request),
     }, None
 
 
@@ -89,6 +104,7 @@ class AssistantAskView(APIView):
             question=payload['question'],
             session=payload['session'],
             pest_identifier=payload['pest_identifier'],
+            lang=payload['lang'],
         )
         return Response(result)
 
@@ -112,6 +128,7 @@ class AssistantAskStreamView(APIView):
             question=payload['question'],
             session=payload['session'],
             pest_identifier=payload['pest_identifier'],
+            lang=payload['lang'],
         )
         response = StreamingHttpResponse(stream, content_type='text/event-stream; charset=utf-8')
         # ① 别让 GZipMiddleware 把流攒住（见模块 docstring 第 4 条）

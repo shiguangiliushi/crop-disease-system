@@ -88,6 +88,9 @@ class AssistantMessage(models.Model):
     citations = models.JSONField(default=list, blank=True, verbose_name="引用来源")
     usage = models.JSONField(default=dict, blank=True, verbose_name="token 用量")
     prompt_version = models.CharField(max_length=20, blank=True, default='', verbose_name="提示词版本")
+    #: 本条问答用的语言（`zh` / `en`）。第 197 批加：**英文回答的质量要能单独统计** ——
+    #: 英文语料是后补的，混在一起看"整体满意度"会把英文侧的问题稀释掉。
+    lang = models.CharField(max_length=5, blank=True, default='zh', verbose_name="回答语言")
     # ── 用户反馈（第 196 批）──────────────────────────────────────────────
     #: 用户对**这一条**回答的评价。放在消息上而不是会话上：一次会话里可能前几问答得好、
     #: 后几问答得差，只有逐条记才能定位"哪一类问题答不好"。

@@ -67,6 +67,19 @@ def _split_append_note(text: str) -> str:
     return re.sub(r'\s{2,}', ' ', chinese_only(text)).strip()
 
 
+def field_text(value: str, lang: str = 'zh') -> str:
+    """按语言取字段文本。
+
+    ⚠️ 英文界面下**不能**再走 `chinese_only` —— 那个函数是给中文主字段用的
+    （它会把成段英文切掉）。英文取自 `*_en` 字段，本身就该是英文，
+    若为空则**回落中文原文**：宁可给用户看中文，也不要给一个空段落。
+    """
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    return re.sub(r'\s{2,}', ' ', text).strip() if lang == 'en' else _split_append_note(text)
+
+
 @dataclass
 class Citation:
     """引用来源。`snippet` 会展示给用户，所以必须是干净的中文片段。"""
@@ -115,66 +128,149 @@ CARE_SECTIONS = (
     ('健康监测', 'care_monitoring'),
 )
 
+#: 英文展示名（第 197 批）。键与上面三张表一一对应；
+#: `(*_en)` 后缀表示该维度在数据库里有独立的 `*_en` 字段（健康档案有，防治措施有）。
+SECTION_LABELS_EN = {
+    '症状描述': 'Symptoms',
+    '发病规律': 'Disease cycle',
+    '健康形态特征': 'Healthy morphology',
+    '健康生长条件': 'Growing conditions',
+    '农业健康管理': 'Cultural care',
+    '化学保护': 'Chemical protection',
+    '生态健康管理': 'Ecological care',
+    '物理保护': 'Physical protection',
+    '健康监测': 'Health monitoring',
+    '农业防治': 'Cultural control',
+    '化学防治': 'Chemical control',
+    '生态防治': 'Ecological control',
+    '物理防治': 'Physical control',
+    '监测预警': 'Monitoring and forecasting',
+}
 
-def build(hits: list[Hit], *, max_chars: int = 6000) -> BuiltContext:
+#: 防治类别代码 → 英文展示名（`PreventionMethod.get_category_display()` 只有中文）
+PREVENTION_LABELS_EN = {
+    'AGRICULTURAL': 'Cultural control',
+    'CHEMICAL': 'Chemical control',
+    'ECOLOGICAL': 'Ecological control',
+    'PHYSICAL': 'Physical control',
+    'MONITORING': 'Monitoring and forecasting',
+}
+
+#: 词条头部与说明的英文（降级文本要用，不能中英混排）
+LABELS_EN = {
+    'crop': 'Crop',
+    'scientific_name': 'Scientific name',
+    'no_profile': '(no cultivation profile for this entry yet)',
+}
+
+
+def section_label(zh_label: str, lang: str) -> str:
+    return SECTION_LABELS_EN.get(zh_label, zh_label) if lang == 'en' else zh_label
+
+
+def _localized_pair(item, zh_attr: str, en_attr: str, lang: str) -> str:
+    """按语言取一对字段（如 `symptoms` / `symptoms_en`）。
+
+    英文优先取 `*_en`；**为空就回落中文**并加一句标注 —— 让用户知道这段是没有译文的，
+    而不是以为系统答错了语言。这比"显示空白"或"静默给中文"都更诚实。
+    """
+    if lang == 'en':
+        en_value = field_text(getattr(item, en_attr, '') or '', 'en')
+        if en_value:
+            return en_value
+        zh_value = field_text(getattr(item, zh_attr, '') or '', 'en')
+        return zh_value
+    return field_text(getattr(item, zh_attr, '') or '', 'zh')
+
+
+def _disease_en_attrs(attr: str) -> str:
+    """`symptoms` → `symptoms_en`（第 197 批：英文优先取 `*_en` 字段）。"""
+    return f'{attr}_en'
+
+
+def build(hits: list[Hit], *, max_chars: int = 6000, lang: str = 'zh') -> BuiltContext:
     """把命中拼成 `<knowledge>` 块 + 引用列表。
 
     `max_chars` 是硬上限：化学防治单条最长 353 字，5 条命中就能到 2000+ 字，
     再加发病规律会撑大输入（费钱且容易让模型跑题）。超限时**按条目顺序截断**
     并在文本里留一行说明，而不是静默丢弃 —— 让"答案为什么没提某一点"可复盘。
+
+    `lang='en'` 时（第 197 批）：维度名与防治类别名换成英文，字段优先取 `*_en`，
+    **该字段为空则回落中文原文** —— 宁可让用户看到中文，也不要给一个空段落。
+    西文里的分隔符也跟着换（`（作物：…）` → `(Crop: …)`），否则会是中英混排。
     """
+    english = lang == 'en'
     result = BuiltContext()
     blocks: list[str] = []
     budget = max_chars
 
+    def wrap(text: str) -> str:
+        return f'({text})' if english else f'（{text}）'
+
     for index, hit in enumerate(hits, start=1):
         pest = hit.pest
-        label = pest.name or f'词条#{pest.id}'
-        part: list[str] = [f'【{index}】{label}（作物：{pest.crop_type}）']
+        label = pest.name or ('entry #' if english else '词条#') + str(pest.id)
+        head = (f'[{index}] {label} (Crop: {pest.crop_type_en or pest.crop_type})' if english
+                else f'【{index}】{label}（作物：{pest.crop_type}）')
+        part: list[str] = [head]
         if pest.scientific_name:
-            # 学名是拉丁文但很短，保留原样（它是身份标识，不是"英文正文"）
-            part.append(f'学名：{pest.scientific_name.split("（")[0].strip()}')
+            # 学名是拉丁文、不分语言，保留原样（它是身份标识，不是"英文正文"）
+            latin = pest.scientific_name.split('（')[0].strip()
+            part.append(f'{LABELS_EN["scientific_name"] if english else "学名"}：{latin}')
 
         cit_parts: list[str] = []
         if hit.is_healthy:
             profile = hit.profile
             if profile is not None:
                 for title, attr in HEALTHY_SECTIONS:
-                    value = _split_append_note(getattr(profile, attr, '') or '')
+                    value = _localized_pair(profile, attr, f'{attr}_en', lang)
                     if value:
-                        part.append(f'{title}：{value}')
+                        part.append(f'{section_label(title, lang)}: {value}' if english
+                                    else f'{title}：{value}')
                 for title, attr in CARE_SECTIONS:
-                    value = _split_append_note(getattr(profile, attr, '') or '')
+                    value = _localized_pair(profile, attr, f'{attr}_en', lang)
                     if value:
-                        part.append(f'{title}：{value}')
+                        part.append(f'{section_label(title, lang)}: {value}' if english
+                                    else f'{title}：{value}')
                 if profile.scientific_name:
-                    part.append(f'（该作物学名：{profile.scientific_name.split("（")[0].strip()}）')
+                    latin = profile.scientific_name.split('（')[0].strip()
+                    part.append(wrap(f'this crop: {latin}' if english else f'该作物学名：{latin}'))
             else:
                 # 健康词条但没档案：只能说清"没有管理资料"，不能编
-                part.append('（本条暂无栽培管理档案）')
+                part.append(wrap('no cultivation profile for this entry' if english
+                                 else '本条暂无栽培管理档案'))
         else:
             for title, attr in DISEASE_SECTIONS:
-                value = _split_append_note(getattr(pest, attr, '') or '')
+                value = _localized_pair(pest, attr, _disease_en_attrs(attr), lang)
                 if value:
-                    part.append(f'{title}：{value}')
-                    cit_parts.append(f'{title}：{value[:80]}')
+                    shown = section_label(title, lang) if english else title
+                    sep = ': ' if english else '：'
+                    part.append(f'{shown}{sep}{value}')
+                    cit_parts.append(f'{shown}{sep}{value[:80]}')
             # 防治措施按类别给出：这是"能照做"的部分，必须进上下文
             for method in pest.prevention_methods.all().order_by('category'):
-                value = _split_append_note(method.measure or '')
+                en_value = field_text(method.measure_en or '', 'en')
+                zh_value = field_text(method.measure or '', 'zh')
+                value = ((en_value or zh_value) if english else zh_value)
                 if not value:
                     continue
-                title = method.get_category_display()
-                part.append(f'{title}：{value}')
-                cit_parts.append(f'{title}：{value[:80]}')
+                title = (PREVENTION_LABELS_EN.get(method.category, method.category) if english
+                         else method.get_category_display())
+                sep = ': ' if english else '：'
+                part.append(f'{title}{sep}{value}')
+                cit_parts.append(f'{title}{sep}{value[:80]}')
 
         block = '\n'.join(part)
         if len(block) > budget:
-            blocks.append(f'（以下条目因上下文长度上限被省略，共 {len(hits) - index + 1} 条）')
+            omitted = len(hits) - index + 1
+            blocks.append(f'({omitted} more entries omitted: context length limit)' if english
+                          else f'（以下条目因上下文长度上限被省略，共 {omitted} 条）')
             break
         budget -= len(block)
         blocks.append(block)
 
-        snippet = ' ｜ '.join(cit_parts)[:200] if cit_parts else (label)
+        joiner = ' | ' if english else ' ｜ '
+        snippet = joiner.join(cit_parts)[:200] if cit_parts else label
         result.citations.append(Citation(
             pest_id=pest.pk,
             label=label,
