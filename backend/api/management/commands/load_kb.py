@@ -227,9 +227,23 @@ class Command(BaseCommand):
                 missing = [d for d in HEALTHY_DIMENSIONS if not dims.get(d)]
                 if pest:
                     self.healthy_matched += 1
-                    # K2 之后有了落点：这一条会写进 CropHealthProfile（按 pest 一对一）
+                    # K2 之后有了落点：这一条会写进 CropHealthProfile（按 pest 一对一）。
+                    # 判定要区分"新建 / 有差异 / 已一致"，不能一律写"将更新档案" ——
+                    # 写入后重跑时仍显示"将更新"会让人以为还要再写一次。
                     existing = CropHealthProfile.objects.filter(pest=pest).first()
-                    note = '将更新档案' if existing else '将新建档案'
+                    if existing is None:
+                        note = '将新建档案'
+                    else:
+                        differs = (
+                            existing.name != record['name']
+                            or existing.scientific_name != (record.get('scientific_name') or '')
+                            or existing.sources != (record.get('sources') or [])
+                            or any(
+                                getattr(existing, field) != (dims.get(dim_key) or '').strip()
+                                for dim_key, field in CropHealthProfile.DIMENSION_FIELDS.items()
+                            )
+                        )
+                        note = '将更新档案' if differs else '档案已一致'
                 else:
                     note = '⚠ 未匹配到词条'
                     self.warnings.append(f'healthy 记录未匹配：{name}')
@@ -247,6 +261,10 @@ class Command(BaseCommand):
                 continue
 
             # ① PestInfo 的两个知识字段
+            #
+            # ⚠️ `field_changes` **只在真有差异时**追加。第一版无条件追加，
+            #    于是"判定"列永远算出"将更新" —— 明明 symptoms/description 长度一模一样。
+            #    （表现：verbose 里打印 `symptoms: 162→162` 却判"将更新"，自相矛盾。）
             field_changes = []
             for dim_key, (target, field) in DISEASE_FIELD_MAP.items():
                 if target != 'pest':
@@ -256,12 +274,12 @@ class Command(BaseCommand):
                     self.warnings.append(f'{name} 的「{dim_key}」为空')
                     continue
                 old_value = (getattr(pest, field, '') or '')
-                changed = len(new_value) != len(old_value) or new_value != old_value
-                if changed:
+                if new_value != old_value:
                     self.to_pest_fields += 1
+                    field_changes.append(f'{field}: {len(old_value)}→{len(new_value)}')
                 else:
                     self.unchanged += 1
-                field_changes.append(f'{field}: {len(old_value)}→{len(new_value)}')
+                    field_changes.append(f'{field}: {len(old_value)}=同')
 
             # ② 防治措施：先删该 pest 的旧记录再写（该表无唯一约束，必须幂等）
             #
@@ -299,7 +317,26 @@ class Command(BaseCommand):
             self.prev_identical += identical
             self.prev_deleted += existing_total - identical
 
-            verdict = '将更新' if field_changes else '字段已一致'
+            # ③ 学名与来源：同样要能报"是否已一致"，
+            #    否则 K3 写完再跑 dry-run 时，这一行仍会显示"将更新"（第一版就漏了这两个字段）。
+            sci_new = (record.get('scientific_name') or '').strip()
+            src_new = record.get('sources') or []
+            sci_changed = bool(sci_new) and pest.scientific_name != sci_new
+            src_changed = bool(src_new) and pest.sources != src_new
+            if sci_changed:
+                field_changes.append(f'scientific_name: {len(pest.scientific_name or "")}→{len(sci_new)}')
+            if src_changed:
+                field_changes.append(f'sources: {len(pest.sources or [])}→{len(src_new)} 条')
+
+            # 判定必须反映**真实差异**：已写入后再跑应显示"已一致"。
+            # ⚠️ 判据不能是 `field_changes` 非空 —— 它现在也包含"=同"的条目（供 verbose 展示），
+            #    所以要看 `changed_any`：知识字段 / 学名 / 来源 / 防治三类里任一项变了才算要更新。
+            changed_any = (
+                any('→' in item for item in field_changes)   # 知识字段有实质差异
+                or sci_changed or src_changed
+                or n_changed > 0 or n_new > 0
+            )
+            verdict = '将更新' if changed_any else '已一致'
             # "构成"列是必须的：只写 `5→5` 会让人以为"没变化"，
             # 实际可能是"4 改 + 1 新增"（如草莓叶焦病：库里没有化学防治条目）。
             shape = f'{n_changed}改' + (f' {n_new}新' if n_new else '') + (f' {identical}同' if identical else '')
@@ -437,6 +474,9 @@ class Command(BaseCommand):
                     changed = True
                 if changed:
                     pest.save(update_fields=['symptoms', 'description', 'scientific_name', 'sources'])
+                    # ⚠️ 这条自增漏过一次：计数器初始化后再没加过，于是"写入 26 条知识字段"
+                    #    被报成"已更新 0 条"—— 数据其实写对了，但报告说没写，比不报更糟。
+                    pests_updated += 1
 
                 # ② 防治：先删后写（该表无唯一约束，这是唯一的幂等做法）
                 PreventionMethod.objects.filter(pest=pest).delete()
