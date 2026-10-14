@@ -169,4 +169,44 @@ export async function askAssistantStream({ question, session_id, pest_identifier
   return result;
 }
 
-export default { askAssistant, askAssistantStream, formatAssistantError };
+/**
+ * 给某条助手回答打分（第 196 批）
+ *
+ * 语义是"最后一次评价为准"：用户可以改主意（点错了会再点一次），
+ * 后端会覆盖 verdict 并更新 `feedback_at`。
+ *
+ * @param {number} messageId 助手消息 id（`meta` / 同步响应的 `message_id`）
+ * @param {'helpful'|'useless'} verdict
+ * @param {string} [note] `useless` 时补充"哪里不对" —— 这是最有价值的信号
+ */
+export async function sendAssistantFeedback(messageId, verdict, note = '') {
+  const response = await http.post(`/assistant/messages/${messageId}/feedback/`, {
+    verdict,
+    note: note || undefined,
+  });
+  return response.data;
+}
+
+/**
+ * 把这次会话转人工（第 196 批）—— 写进既有的专家咨询链路
+ *
+ * **幂等**：同一会话重复调用返回同一张工单（后端返回 `created=false` 时说明已经转过），
+ * 所以前端不必自己做"已转过就别再发"的判断，但也不该故意重复发。
+ *
+ * @param {number} sessionId
+ * @param {string} [note] 想让专家知道的补充信息
+ */
+export async function escalateSession(sessionId, note = '') {
+  const response = await http.post(`/assistant/sessions/${sessionId}/escalate/`, {
+    note: note || undefined,
+  });
+  return response.data;
+}
+
+export default {
+  askAssistant,
+  askAssistantStream,
+  sendAssistantFeedback,
+  escalateSession,
+  formatAssistantError,
+};

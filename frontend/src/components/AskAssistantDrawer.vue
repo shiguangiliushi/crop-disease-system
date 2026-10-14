@@ -65,6 +65,70 @@
           <p v-if="msg.role === 'assistant' && msg.hasPesticide" class="assistant-disclaimer">
             {{ t('assistant.pesticideDisclaimer') }}
           </p>
+
+          <!-- 反馈闭环（第 196 批）：只对**已经答完**的助手消息显示。
+               流式进行中不显示 —— 答案还没完，评价没有意义。 -->
+          <div v-if="msg.role === 'assistant' && msg.messageId && !isStreaming(msg)" class="assistant-feedback">
+            <template v-if="msg.verdict">
+              <span class="assistant-feedback-done">
+                <i class="bi bi-check-circle" aria-hidden="true"></i>
+                {{ t('assistant.feedbackThanks') }}
+                <em v-if="msg.verdict === 'useless'">{{ t('assistant.feedbackUseless') }}</em>
+              </span>
+              <el-button link size="small" @click="openFeedback(msg)">
+                {{ t('assistant.feedbackSubmit') }}
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button size="small" plain :disabled="feedbackBusy" @click="rate(msg, 'helpful')">
+                <i class="bi bi-hand-thumbs-up me-1"></i>{{ t('assistant.feedbackHelpful') }}
+              </el-button>
+              <el-button size="small" plain :disabled="feedbackBusy" @click="openFeedback(msg)">
+                <i class="bi bi-hand-thumbs-down me-1"></i>{{ t('assistant.feedbackUseless') }}
+              </el-button>
+            </template>
+
+            <!-- 转人工：单独一条（它不是"评价"，而是"换个人来答"）。
+                 已转过就显示"已转人工"而不是再给按钮 —— 后端虽然幂等，
+                 但让用户重复点是设计上的浪费。 -->
+            <span class="assistant-escalate">
+              <el-tooltip :content="t('assistant.escalateHint')" placement="top" :show-after="300">
+                <el-button
+                  v-if="!escalatedQuestionId"
+                  link
+                  size="small"
+                  :loading="escalating"
+                  @click="escalate(msg)"
+                >
+                  <i class="bi bi-person-plus me-1"></i>{{ t('assistant.escalate') }}
+                </el-button>
+                <span v-else class="assistant-escalate-done">
+                  <i class="bi bi-check-circle me-1" aria-hidden="true"></i>{{ t('assistant.escalateDone') }}
+                </span>
+              </el-tooltip>
+            </span>
+          </div>
+
+          <!-- "没用"的补充说明：**这是最有价值的信号**（只统计次数无法知道该补什么） -->
+          <div v-if="msg.showNoteInput" class="assistant-note">
+            <p class="assistant-note-label">{{ t('assistant.feedbackReasonLabel') }}</p>
+            <el-input
+              v-model="msg.noteDraft"
+              type="textarea"
+              :rows="2"
+              resize="none"
+              maxlength="500"
+              :placeholder="t('assistant.feedbackReasonPlaceholder')"
+            />
+            <div class="assistant-note-actions">
+              <el-button size="small" text @click="msg.showNoteInput = false">
+                {{ t('assistant.feedbackCancel') }}
+              </el-button>
+              <el-button size="small" type="primary" :loading="feedbackBusy" @click="rate(msg, 'useless')">
+                {{ t('assistant.feedbackSubmit') }}
+              </el-button>
+            </div>
+          </div>
         </div>
 
         <!-- 第 195 批：改为 SSE 流式后**不再有"思考中"骨架** —— 正文自己逐字出现。
@@ -124,7 +188,7 @@
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { askAssistantStream, formatAssistantError } from '@/api/assistant';
+import { askAssistantStream, escalateSession, formatAssistantError, sendAssistantFeedback } from '@/api/assistant';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -182,6 +246,62 @@ const degradeHintOf = (reason) => {
 /** 回答里是否出现药剂（用于补免责声明）。保守匹配：常见剂型/百分比浓度/稀释倍数 */
 const hasPesticideText = (text) => /(\d+%|倍液|稀释|可湿性粉剂|悬浮剂|水分散粒剂|间隔期)/.test(String(text || ''));
 
+// ── 反馈闭环（第 196 批）───────────────────────────────────────────────
+const feedbackBusy = ref(false);
+const escalating = ref(false);
+/** 已转人工的工单 id（非空即视为"这次会话已转过"） */
+const escalatedQuestionId = ref(null);
+
+/** 流式进行中的那条还没有 messageId，不该显示评价按钮 */
+const isStreaming = (msg) => loading.value && !msg.messageId;
+
+const openFeedback = (msg) => {
+  // 展开输入框时把已有说明带出来，便于用户在原话上修改
+  msg.noteDraft = msg.feedbackNote || '';
+  msg.showNoteInput = true;
+};
+
+const rate = async (msg, verdict) => {
+  if (feedbackBusy.value || !msg.messageId) return;
+  feedbackBusy.value = true;
+  try {
+    const data = await sendAssistantFeedback(msg.messageId, verdict, msg.noteDraft || '');
+    msg.verdict = data?.verdict || verdict;
+    msg.feedbackNote = data?.note || '';
+    msg.showNoteInput = false;
+    ElMessage.success(t('assistant.feedbackThanks'));
+  } catch (error) {
+    ElMessage.error(formatAssistantError(error) || t('assistant.feedbackSubmitFailed'));
+  } finally {
+    feedbackBusy.value = false;
+  }
+};
+
+/**
+ * 转人工。**只在拿到 sessionId 后才可能** —— 第一次提问的响应里才有会话 id；
+ * 若用户还没问过任何问题，"转人工"没有内容可转（后端也会以 404 拒绝）。
+ */
+const escalate = async (msg) => {
+  if (escalating.value) return;
+  const target = sessionId.value;
+  if (!target) {
+    ElMessage.warning(t('assistant.escalateHint'));
+    return;
+  }
+  escalating.value = true;
+  try {
+    const data = await escalateSession(target, msg.feedbackNote || '');
+    escalatedQuestionId.value = data?.consult_question_id || 'sent';
+    ElMessage.success(data?.created === false
+      ? t('assistant.escalateAlready')
+      : t('assistant.escalateDone'));
+  } catch (error) {
+    ElMessage.error(formatAssistantError(error) || t('assistant.escalateFailed'));
+  } finally {
+    escalating.value = false;
+  }
+};
+
 const scrollToBottom = async () => {
   await nextTick();
   const box = scrollBox.value;
@@ -201,6 +321,7 @@ const submit = async (presetText) => {
   // 先占一条**空**的助手气泡，正文随 SSE 的 delta 逐段追加。
   // 这样用户第一眼就看到"回答区已就位"，而不是盯着"思考中" —— 实测首个正文
   // 0.7s 到达（同步版要等 3.1s 才整段出现）。
+  // `messageId` 先留空：它对评价按钮的显示条件有用（流式期间不该出现评价）。
   const placeholder = {
     key: ++messageKey,
     role: 'assistant',
@@ -208,6 +329,11 @@ const submit = async (presetText) => {
     citations: [],
     degradeHint: '',
     hasPesticide: false,
+    messageId: null,
+    verdict: '',
+    feedbackNote: '',
+    noteDraft: '',
+    showNoteInput: false,
   };
   messages.value.push(placeholder);
   const target = messages.value[messages.value.length - 1];
@@ -236,6 +362,8 @@ const submit = async (presetText) => {
       target.citations = Array.isArray(data?.citations) ? data.citations : [];
       target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
       target.hasPesticide = hasPesticideText(target.content);
+      // 拿到 message_id 之后评价按钮才会出现（见 isStreaming）
+      target.messageId = data?.message_id || null;
     });
   } catch (error) {
     // 只有真正的失败才走到这里（业务降级是 200 + degraded）。
@@ -393,5 +521,54 @@ defineExpose({ submit });
 .assistant-hint {
   font-size: 0.75rem;
   color: #9ca3af;
+}
+
+/* 第 196 批：反馈闭环（评价 / 转人工 / 补充说明） */
+.assistant-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.assistant-feedback-done {
+  font-size: 0.78rem;
+  color: #2f6b4f;
+}
+
+.assistant-feedback-done em {
+  font-style: normal;
+  color: #8a6d3b;
+}
+
+.assistant-escalate {
+  margin-left: auto;   /* 推到右侧：它与其他按钮不同类（不是"评价"） */
+}
+
+.assistant-escalate-done {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.assistant-note {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.assistant-note-label {
+  font-size: 0.78rem;
+  color: #4b5563;
+  margin-bottom: 0.35rem;
+}
+
+.assistant-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
 }
 </style>

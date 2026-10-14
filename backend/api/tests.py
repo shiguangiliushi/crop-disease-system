@@ -13086,3 +13086,157 @@ class AssistantStreamTests(TestCase):
         resp = self.client_auth.post('/api/assistant/ask/stream/',
                                      {'question': '番茄晚疫病', 'session_id': 'abc'}, format='json')
         self.assertEqual(resp.status_code, 400)
+
+
+# ============================================================================
+# 智能回答助手 · 反馈闭环（第 196 批）
+# ----------------------------------------------------------------------------
+# 验三件事：① 打分只能打自己的、只能打助手消息；② `useless` 的补充说明要留下；
+#          ③ **转人工是幂等的**（用户多点两下不该让专家看到三条一样的提问），
+#             且工单必须带上"AI 当时答了什么"（否则专家会重复 AI 已给的建议）。
+# ============================================================================
+class AssistantFeedbackTests(TestCase):
+    """助手反馈：打分 / 转人工 / 幂等 / 归属校验。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.pest = PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='tomato_late_blight',
+            symptoms='症状', description='规律',
+        )
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_fb', password='pw12345678')
+        self.other = User.objects.create_user(username='asst_fb_other', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+
+        self.session = AssistantSession.objects.create(
+            user=self.user, title='番茄晚疫病怎么打药？', pest=self.pest,
+        )
+        AssistantMessage.objects.create(session=self.session, role='user',
+                                        content='番茄晚疫病怎么打药？')
+        self.answer = AssistantMessage.objects.create(
+            session=self.session, role='assistant',
+            content='用烯酰吗啉，间隔5-7天喷1次。', prompt_version='v1',
+        )
+
+    def _feedback(self, message_id, **body):
+        return self.client_auth.post(f'/api/assistant/messages/{message_id}/feedback/',
+                                     body, format='json')
+
+    def _escalate(self, session_id=None, **body):
+        return self.client_auth.post(
+            f'/api/assistant/sessions/{session_id or self.session.pk}/escalate/', body, format='json')
+
+    # ── 一、打分 ────────────────────────────────────────────────────────
+    def test_useless_keeps_note(self):
+        """`useless` + 补充说明：说明必须落库（它是"该补什么内容"的唯一线索）"""
+        resp = self._feedback(self.answer.pk, verdict='useless', note='没说安全间隔期')
+        self.assertEqual(resp.status_code, 200)
+        self.answer.refresh_from_db()
+        self.assertEqual(self.answer.verdict, 'useless')
+        self.assertEqual(self.answer.feedback_note, '没说安全间隔期')
+        self.assertIsNotNone(self.answer.feedback_at)
+
+    def test_verdict_can_be_changed(self):
+        """允许改主意（点错了会再点一次），且后一次说明覆盖前一次"""
+        self._feedback(self.answer.pk, verdict='useless', note='答偏了')
+        self._feedback(self.answer.pk, verdict='helpful')
+        self.answer.refresh_from_db()
+        self.assertEqual(self.answer.verdict, 'helpful')
+        self.assertEqual(self.answer.feedback_note, '')
+
+    def test_invalid_verdict_is_400(self):
+        resp = self._feedback(self.answer.pk, verdict='maybe')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_note_too_long_is_400(self):
+        resp = self._feedback(self.answer.pk, verdict='useless', note='x' * 501)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cannot_rate_others_message(self):
+        """别人的消息一律 404（不泄漏存在性）"""
+        foreign_session = AssistantSession.objects.create(user=self.other, title='别人的')
+        foreign = AssistantMessage.objects.create(
+            session=foreign_session, role='assistant', content='别人的回答')
+        resp = self._feedback(foreign.pk, verdict='helpful')
+        self.assertEqual(resp.status_code, 404)
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.verdict, '')
+
+    def test_cannot_rate_user_message(self):
+        """只能评价**助手**的回答 —— 给自己的提问打分没有意义"""
+        user_msg = AssistantMessage.objects.filter(session=self.session, role='user').first()
+        resp = self._feedback(user_msg.pk, verdict='helpful')
+        self.assertEqual(resp.status_code, 404)
+
+    # ── 二、转人工 ──────────────────────────────────────────────────────
+    def test_escalate_creates_consult_question_with_context(self):
+        """工单必须带上「用户问题 + AI 当时的回答 + 降级状态」——否则专家会重复 AI 的建议"""
+        resp = self._escalate(note='请专家看看')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data['created'])
+
+        question = ConsultQuestion.objects.get(pk=resp.data['consult_question_id'])
+        self.assertEqual(question.asker, self.user)
+        self.assertEqual(question.crop_type, '番茄')          # 取自会话绑定的病害
+        self.assertIn('番茄晚疫病怎么打药', question.title)
+        self.assertIn('用烯酰吗啉', question.content)          # AI 当时的回答
+        self.assertIn('用户补充', question.content)
+        self.assertIn('请专家看看', question.content)
+
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.consult_question_id, question.pk)
+        self.assertIsNotNone(self.session.escalated_at)
+
+    def test_escalate_is_idempotent(self):
+        """重复转人工返回同一张工单 —— 用户多点两下不该产生三条提问"""
+        first = self._escalate()
+        second = self._escalate()
+        self.assertEqual(first.data['consult_question_id'], second.data['consult_question_id'])
+        self.assertFalse(second.data['created'])
+        self.assertEqual(ConsultQuestion.objects.filter(asker=self.user).count(), 1)
+
+    def test_escalate_marks_degraded_answer(self):
+        """降级回答要如实标注：否则专家以为"AI 给过建议了"，而用户其实只拿到词条原文"""
+        degraded = AssistantMessage.objects.create(
+            session=self.session, role='assistant', content='（AI 不可用）档案原文…',
+            degraded=True, degrade_reason='llm_disabled',
+        )
+        resp = self._escalate()
+        question = ConsultQuestion.objects.get(pk=resp.data['consult_question_id'])
+        self.assertIn('llm_disabled', question.content)
+        # 取的是**最后一条**助手消息（降级那条），不是更早的正常回答
+        self.assertIn('档案原文', question.content)
+        degraded.refresh_from_db()   # 只是确保对象仍可用（避免未使用变量告警）
+
+    def test_long_question_title_is_truncated_at_punctuation(self):
+        """超长问题：标题在标点处截断，且**必须是完整的句子**（不以半句结尾）。
+
+        ⚠️ 这条断言改过两次，都值得记下来：
+          ① 第一版问题只有 128 字 —— **根本没触发截断**，"以？结尾"必然失败；
+          ② 第二版改用 `endswith('？')` —— 但截断点落在**最后一个能放下的标点**上，
+             本例是第 197 字的 `。`（更靠后的 `？` 会超出 200 字上限）。
+        所以正确的断言是"以任意标点结尾"，而不是指定某一个标点。
+        """
+        long_question = '番茄晚疫病怎么打药？' + '请详细说明稀释倍数和安全间隔期以及轮换用药的注意事项。' * 16
+        self.assertGreater(len(long_question), 200)
+        AssistantMessage.objects.create(session=self.session, role='user', content=long_question)
+        resp = self._escalate()
+        question = ConsultQuestion.objects.get(pk=resp.data['consult_question_id'])
+        self.assertLessEqual(len(question.title), 200)
+        self.assertLess(len(question.title), len(long_question))
+        self.assertIn(question.title[-1], '？?。！!；;，,', f'标题没有断在标点上：{question.title[-12:]}')
+
+    def test_cannot_escalate_others_session(self):
+        foreign_session = AssistantSession.objects.create(user=self.other, title='别人的')
+        resp = self._escalate(session_id=foreign_session.pk)
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(ConsultQuestion.objects.filter(asker=self.other).count(), 0)
+
+    def test_escalate_requires_authentication(self):
+        resp = APIClient().post(f'/api/assistant/sessions/{self.session.pk}/escalate/',
+                                {}, format='json')
+        self.assertIn(resp.status_code, (401, 403))

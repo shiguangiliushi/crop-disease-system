@@ -46,6 +46,13 @@ class AssistantSession(models.Model):
     updated_at = models.DateTimeField('更新时间', auto_now=True)
     #: 是否已转人工（写进 ConsultQuestion 之后置 True，避免重复建单）
     escalated_at = models.DateTimeField('转人工时间', null=True, blank=True)
+    #: 转人工产生的工单。**一拍一**（`OneToOneField`）：一次会话只该有一张工单 ——
+    #: 用 FK 的话"点了两次转人工"会建出两张，专家看到重复问题。
+    #: 方向是从会话指向工单（`models_expert` 不需要知道助手的存在）。
+    consult_question = models.OneToOneField(
+        'ConsultQuestion', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='assistant_session', verbose_name='转人工工单',
+    )
 
     class Meta:
         verbose_name = "助手会话"
@@ -81,6 +88,18 @@ class AssistantMessage(models.Model):
     citations = models.JSONField(default=list, blank=True, verbose_name="引用来源")
     usage = models.JSONField(default=dict, blank=True, verbose_name="token 用量")
     prompt_version = models.CharField(max_length=20, blank=True, default='', verbose_name="提示词版本")
+    # ── 用户反馈（第 196 批）──────────────────────────────────────────────
+    #: 用户对**这一条**回答的评价。放在消息上而不是会话上：一次会话里可能前几问答得好、
+    #: 后几问答得差，只有逐条记才能定位"哪一类问题答不好"。
+    verdict = models.CharField(
+        max_length=10, blank=True, default='',
+        choices=(('helpful', '有用'), ('useless', '没用')),
+        verbose_name="用户评价",
+    )
+    #: `useless` 时用户补充的"哪里不对"（可选）。**这是最有价值的信号** ——
+    #: 只统计"没用"的次数，无法知道该补什么内容。
+    feedback_note = models.CharField(max_length=500, blank=True, default='', verbose_name="反馈说明")
+    feedback_at = models.DateTimeField('反馈时间', null=True, blank=True)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
 
     class Meta:
@@ -91,6 +110,8 @@ class AssistantMessage(models.Model):
             models.Index(fields=['session', 'id'], name='asst_msg_session_idx'),
             # 限流要按 "某用户最近一分钟的用户消息数" 查，所以 role 与时间要能一起过滤
             models.Index(fields=['role', '-created_at'], name='asst_msg_role_time_idx'),
+            # 统计"哪类回答被评没用"要按 verdict 过滤
+            models.Index(fields=['verdict', '-created_at'], name='asst_msg_verdict_idx'),
         ]
 
     def __str__(self):

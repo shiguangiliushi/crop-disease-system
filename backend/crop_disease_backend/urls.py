@@ -136,6 +136,9 @@ ExpertListView = import_view('api.views_expert', 'ExpertListView')
 AssistantAskView = import_view('api.views_assistant', 'AssistantAskView')
 # 第 195 批：流式版（SSE 逐字返回；GZip/代理缓冲的绕法见 views_assistant 的模块说明）
 AssistantAskStreamView = import_view('api.views_assistant', 'AssistantAskStreamView')
+# 第 196 批：反馈闭环（打分 / 转人工）
+AssistantFeedbackView = import_view('api.views_assistant', 'AssistantFeedbackView')
+AssistantEscalateView = import_view('api.views_assistant', 'AssistantEscalateView')
 # 第 50 批：离线资料包
 PestOfflinePackView = import_view('api.views_offline', 'PestOfflinePackView')
 PasswordResetRequestView = import_view('api.views_user', 'PasswordResetRequestView')
@@ -427,6 +430,11 @@ api_urlpatterns = [
     path('assistant/ask/', AssistantAskView.as_view(), name='assistant-ask'),
     # 流式版（第 195 批）：同一套参数与降级语义，只是逐字返回
     path('assistant/ask/stream/', AssistantAskStreamView.as_view(), name='assistant-ask-stream'),
+    # 反馈闭环（第 196 批）
+    path('assistant/messages/<int:pk>/feedback/', AssistantFeedbackView.as_view(),
+         name='assistant-message-feedback'),
+    path('assistant/sessions/<int:pk>/escalate/', AssistantEscalateView.as_view(),
+         name='assistant-session-escalate'),
 
     # 路由已由 router.urls 处理
 ]

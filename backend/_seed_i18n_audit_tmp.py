@@ -74,13 +74,31 @@ User = get_user_model()
 
 
 def cleanup():
-    """删除全部审计夹具账号及其造出的检测记录"""
+    """删除全部审计夹具账号、它们造出的检测记录，以及第 196 批补的占位图。
+
+    占位图要一起删：它们是**夹具的一部分**，留着只会在 media 里堆垃圾
+    （与 `prune_media` 那条"孤儿文件"的教训一致）。
+    """
     usernames = [spec['username'] for spec in FIXTURES.values()]
     deleted_hist, _ = DetectionHistory.objects.filter(
         user__username__in=usernames
     ).delete()
     deleted_user, _ = User.objects.filter(username__in=usernames).delete()
     print(f'[cleanup] 删除检测记录 {deleted_hist} 行，用户对象 {deleted_user} 行')
+
+    from django.conf import settings
+    from pathlib import Path
+
+    target_dir = Path(settings.MEDIA_ROOT) / 'detection_history'
+    removed = 0
+    if target_dir.is_dir():
+        for path in target_dir.glob(f'{AUDIT_MARKER.strip("[]")}_placeholder_*.jpg'):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError as exc:
+                print(f'[cleanup] 占位图删除失败 {path.name}: {exc}')
+    print(f'[cleanup] 删除占位图 {removed} 个')
 
 
 def ensure_user(spec):
@@ -123,6 +141,42 @@ def ensure_pests():
     return picked
 
 
+def _write_placeholder_images(count: int):
+    """给占位记录写**真正存在**的图片文件。
+
+    ⚠️ 第 196 批补：原注释写"这里的图片是**占位引用**，不写实际文件" ——
+    后果是历史记录页/移动端页面在加载这些图时全都 **404**，
+    而 `05-mobile.spec.mjs` 有一条"页面没有 JS 报错"的断言，
+    于是**跑全量 e2e 时那条用例必然变红**（实测：10 条失败请求全指向这些占位图）。
+    那看起来像"移动端坏了"，实际是夹具自己没配套文件 —— 排查成本很高。
+
+    用 Pillow 生成 1×1 的极小 JPEG（项目本来就依赖 Pillow，不新增依赖）。
+    写失败不影响脚本其余部分（审计本身不依赖图片能不能显示）。
+    """
+    from django.conf import settings
+    from pathlib import Path
+
+    target_dir = Path(settings.MEDIA_ROOT) / 'detection_history'
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        from PIL import Image
+
+        payload = None
+        for idx in range(count):
+            path = target_dir / f'{AUDIT_MARKER.strip("[]")}_placeholder_{idx}.jpg'
+            if path.is_file():
+                continue
+            if payload is None:            # 只生成一次字节，重复写同一份
+                import io
+                buffer = io.BytesIO()
+                Image.new('RGB', (1, 1), (200, 220, 200)).save(buffer, format='JPEG')
+                payload = buffer.getvalue()
+            path.write_bytes(payload)
+        print(f'[history] 占位图片已就绪（{count} 个，目录 {target_dir}）')
+    except Exception as exc:  # noqa: BLE001
+        print(f'[history] 占位图片写入失败（不影响审计）：{exc}')
+
+
 def seed_history(user, pests):
     """重建审计检测记录（先删后建 → 幂等）"""
     removed, _ = DetectionHistory.objects.filter(
@@ -149,6 +203,8 @@ def seed_history(user, pests):
             )
         )
     DetectionHistory.objects.bulk_create(rows)
+    # 占位图必须**真的落盘**：否则页面加载时 404，全量 e2e 里那条"没有 JS 报错"必然变红
+    _write_placeholder_images(RECORD_COUNT)
 
     # timestamp 是 auto_now_add，必须再 update 一次才能改成"过去的时间"
     saved = list(

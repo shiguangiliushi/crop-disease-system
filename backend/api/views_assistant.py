@@ -4,6 +4,8 @@
 |---|---|---|---|
 | `/api/assistant/ask/` | POST | 需登录 | 问一个问题，一次返回完整答案 + 来源引用 |
 | `/api/assistant/ask/stream/` | POST | 需登录 | 同上，但用 SSE **逐字**返回 |
+| `/api/assistant/messages/<id>/feedback/` | POST | 需登录 | 给某条助手回答打分（有用 / 没用 + 可选说明） |
+| `/api/assistant/sessions/<id>/escalate/` | POST | 需登录 | 把这次会话**转人工**（写进既有的专家咨询） |
 
 ## 五个刻意的约定
 
@@ -26,12 +28,14 @@ from __future__ import annotations
 import logging
 
 from django.http import StreamingHttpResponse
+from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models_assistant import AssistantSession
+from .models_assistant import AssistantMessage, AssistantSession
 from .assistant import orchestrator
+from .assistant.service import escalate
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +124,74 @@ class AssistantAskStreamView(APIView):
         #    `AssertionError: Hop-by-hop header, 'Connection: keep-alive', not allowed`
         #    并变成 500。连接复用/关闭由服务器与客户端协商，不该由视图决定。
         return response
+
+
+class AssistantFeedbackView(APIView):
+    """给某条助手回答打分（有用 / 没用）。
+
+    为什么挂在**消息**上而不是会话上：一次会话里可能前几问答得好、后几问答得差，
+    只有逐条记才能定位"哪一类问题答不好"。
+
+    `useless` 时的 `note` 是最有价值的信号 —— 只统计次数无法知道该补什么内容。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        # 只允许评价**自己的**会话里的**助手**消息（别人的一律 404，不泄漏存在性）
+        message = AssistantMessage.objects.filter(
+            pk=pk, session__user=request.user, role='assistant',
+        ).first()
+        if message is None:
+            return Response({'detail': '消息不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        verdict = str(request.data.get('verdict') or '').strip()
+        if verdict not in ('helpful', 'useless'):
+            return Response({'detail': 'verdict 只能是 helpful 或 useless'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        note = str(request.data.get('note') or '').strip()
+        if len(note) > 500:
+            return Response({'detail': '补充说明最多 500 字'}, status=status.HTTP_400_BAD_REQUEST)
+
+        message.verdict = verdict
+        # 允许改主意（用户点错了会再点一次）；`feedback_at` 记的是最后一次评价的时间
+        message.feedback_note = note
+        message.feedback_at = timezone.now()
+        message.save(update_fields=['verdict', 'feedback_note', 'feedback_at'])
+
+        logger.info('助手反馈：message=%s verdict=%s', message.pk, verdict)
+        return Response({
+            'message_id': message.pk,
+            'verdict': message.verdict,
+            'note': message.feedback_note,
+            'feedback_at': message.feedback_at,
+        })
+
+
+class AssistantEscalateView(APIView):
+    """把这次会话转人工 —— 写进既有的专家咨询链路（`ConsultQuestion`）。
+
+    **幂等**：同一会话重复调用返回同一张工单（用户多点两下不该产生三条提问）。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        session = AssistantSession.objects.filter(pk=pk, user=request.user).first()
+        if session is None:
+            return Response({'detail': '会话不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        note = str(request.data.get('note') or '').strip()
+        if len(note) > 500:
+            return Response({'detail': '补充说明最多 500 字'}, status=status.HTTP_400_BAD_REQUEST)
+
+        question, created = escalate(session=session, user=request.user, note=note)
+        return Response({
+            'consult_question_id': question.pk,
+            'session_id': session.pk,
+            'title': question.title,
+            'created': created,
+            'detail': ('已转人工，专家会看到你的问题和 AI 当时的回答'
+                       if created else '这次会话已经转过人工了，无需重复提交'),
+        })

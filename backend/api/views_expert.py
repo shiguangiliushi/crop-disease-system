@@ -41,6 +41,33 @@ def _can_admin_users(user):
     return has_capability(user, CAP_USER_ADMIN)
 
 
+def notify_experts(question):
+    """把一张咨询工单通知给在岗专家（第 196 批从 `QuestionListView._notify_experts` 提出）。
+
+    为什么要提出来：助手"转人工"也要发同样的通知。原先它是视图里的方法，
+    助手要复用就只能 import 视图类再手动构造 —— 那种耦合迟早出问题。
+    失败只记日志：**通知发不出去不该让提问失败**（提问本身已经落库了）。
+    """
+    try:
+        from .views_notify import notify
+        experts = User.objects.filter(
+            Q(expert_profile__is_active=True) | Q(is_staff=True),
+            is_active=True,
+        ).exclude(id=question.asker_id).distinct()
+        for expert in experts:
+            notify(
+                expert,
+                type='system',
+                title=f'新的专家咨询：{question.title[:30]}',
+                title_en=f'New expert question: {question.title[:30]}',
+                message=f'{question.asker.username} 提问（{question.crop_type or "未指定作物"}），期待你的解答',
+                url='/consult',
+                actor=question.asker,
+            )
+    except Exception:
+        logger.exception('通知专家失败 question=%s', question.id)
+
+
 def is_expert(user):
     """
     在岗专家（管理员默认也算，方便管理员直接答疑）
@@ -205,24 +232,12 @@ class QuestionListView(APIView):
                         status=status.HTTP_201_CREATED)
 
     def _notify_experts(self, question):
-        try:
-            from .views_notify import notify
-            experts = User.objects.filter(
-                Q(expert_profile__is_active=True) | Q(is_staff=True),
-                is_active=True,
-            ).exclude(id=question.asker_id).distinct()
-            for expert in experts:
-                notify(
-                    expert,
-                    type='system',
-                    title=f'新的专家咨询：{question.title[:30]}',
-                    title_en=f'New expert question: {question.title[:30]}',
-                    message=f'{question.asker.username} 提问（{question.crop_type or "未指定作物"}），期待你的解答',
-                    url='/consult',
-                    actor=question.asker,
-                )
-        except Exception:
-            logger.exception('通知专家失败 question=%s', question.id)
+        """保留这个方法名（原有调用点与测试可能引用），实现收口到模块级 `notify_experts()`。
+
+        第 196 批：助手"转人工"也要发同样的通知，所以把实现提成模块级函数 ——
+        否则助手侧只能 import 视图类再手工调用，那种耦合迟早出问题。
+        """
+        notify_experts(question)
 
 
 class QuestionDetailView(APIView):

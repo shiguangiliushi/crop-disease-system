@@ -214,7 +214,70 @@ test.describe('智能回答助手', () => {
       expect(citeCount, '正常回答里没有任何来源引用').toBeGreaterThan(0);
     }
 
-    // ── 七、控制台不能有 JS 报错 ──────────────────────────────────────
+    // ── 七、反馈闭环（第 196 批）：打分 + 转人工 ───────────────────────
+    // 这一段的重点是"点了有反应且落库"：评价按钮在**流式结束后**才该出现，
+    // 转人工要么成功、要么明确提示"已转过"，不能静默什么都不发生。
+    const feedbackBox = drawer.locator('.assistant-feedback');
+    const feedbackVisible = await feedbackBox
+      .first()
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    expect(feedbackVisible, '回答完了却没有出现评价按钮').toBe(true);
+
+    // 评价"没用" → 应展开补充说明输入框（它不是可选装饰，是"该补什么内容"的唯一线索）
+    await feedbackBox.first().locator('button', { hasText: /没用|Not helpful/ }).first().click();
+    const noteInput = drawer.locator('.assistant-note');
+    const noteVisible = await noteInput
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    expect(noteVisible, '点"没用"没有展开补充说明输入框').toBe(true);
+
+    await noteInput.locator('textarea').first().fill('第一句就答偏了');
+    await noteInput.locator('button', { hasText: /提交|Submit/ }).first().click();
+    // 提交成功后应出现"谢谢反馈"，且输入框收起
+    const thanksShown = await drawer
+      .locator('.assistant-feedback-done')
+      .first()
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    expect(thanksShown, '提交评价后没有出现"谢谢反馈"').toBe(true);
+
+    // 转人工 → 成功提示；后端幂等，重复点也应给明确反馈而不是静默
+    //
+    // ⚠️ 这里**必须当场断言接口返回值**，不能"跑完再查库"：
+    //    `afterAll` 会删掉临时账号，级联删除它的会话与消息 —— 跑完查库只会看到"什么都没有"
+    //    （第一版就是这么误判了一次）。监听响应是最直接的证据。
+    const escalateBtn = drawer.locator('.assistant-escalate button').first();
+    if (await escalateBtn.count()) {
+      const [escalateResp] = await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/escalate/') && r.request().method() === 'POST',
+                             { timeout: 25_000 }),
+        escalateBtn.click(),
+      ]);
+      const escalateBody = await escalateResp.json().catch(() => ({}));
+      console.log(`  ↳ 转人工 HTTP ${escalateResp.status()}：${JSON.stringify(escalateBody).slice(0, 140)}`);
+      expect(escalateResp.status(), '转人工接口没有返回 200').toBe(200);
+      expect(
+        typeof escalateBody.consult_question_id,
+        '转人工没有返回工单 id —— 说明没真的写进专家咨询',
+      ).toBe('number');
+      expect(escalateBody.created, '首次转人工应当是新建议单').toBe(true);
+
+      const escalated = await drawer
+        .locator('.assistant-escalate-done')
+        .first()
+        .waitFor({ state: 'visible', timeout: 20_000 })
+        .then(() => true)
+        .catch(() => false);
+      expect(escalated, '转人工成功后界面没有显示"已转人工"').toBe(true);
+    } else {
+      console.log('  ↳ 转人工按钮不存在（该消息可能已转过），跳过');
+    }
+
+    // ── 八、控制台不能有 JS 报错 ──────────────────────────────────────
     const realErrors = pageErrors.filter((e) => !/favicon|ResizeObserver/i.test(e));
     expect(realErrors, `页面出现 JS 报错：\n  ${realErrors.join('\n  ')}`).toEqual([]);
 
