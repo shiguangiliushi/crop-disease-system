@@ -24,7 +24,7 @@ from django.db.models import Count  # 导入Django计数聚合函数
 from django.utils import timezone  # 第 91 批：反馈里的识别摘要要按本地时区展示
 from .models import (
     CustomUser, PestInfo, PreventionMethod, DetectionHistory, 
-    Feedback, News, SensitiveWord
+    Feedback, News, SensitiveWord, CropHealthProfile
 )  # 导入模型类
 from .models_forum import Post, Comment, Like, ForumBoard  # 导入论坛模型类
 # 第 124 批：对象级约束里的"管理员例外"统一用 is_full_admin()（不是能力判定）
@@ -423,12 +423,36 @@ class PestInfoListSerializer(serializers.ModelSerializer):  # 定义病害信息
     class Meta:  # 定义元数据
         model = PestInfo  # 关联病害信息模型
         fields = ('id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'symptoms', 'symptoms_en',
-                  'english_identifier', 'image')  # 包含的字段
+                  'english_identifier', 'image', 'scientific_name')  # 包含的字段
+        # 第 192 批补 `scientific_name`：列表页展示学名是常见需求，且它很短（最长 60 字），
+        # 不会让这个"轻量"序列化器变重。**不加 `sources`** —— 那是详情才需要的。
 
     def get_image(self, obj):  # 定义获取图片方法
         if obj.image and hasattr(obj.image, 'url'):  # 检查图片是否存在
             return obj.image.url  # 返回图片URL
         return ''  # 返回空字符串
+
+
+class CropHealthProfileSerializer(serializers.ModelSerializer):  # 第 192 批：作物健康管理档案
+    """
+    作物健康管理档案（校准版知识库的 healthy 记录）。
+
+    字段名刻意与 `PestInfo` 对齐：`morphology` ↔ `symptoms`、`growing_conditions` ↔ `description`，
+    这样前端两处渲染逻辑可以共用同一套写法，不必记两套字段名。
+    """
+
+    class Meta:
+        model = CropHealthProfile
+        fields = (
+            'id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'scientific_name',
+            'morphology', 'morphology_en', 'growing_conditions', 'growing_conditions_en',
+            'care_agricultural', 'care_agricultural_en',
+            'care_chemical', 'care_chemical_en',
+            'care_ecological', 'care_ecological_en',
+            'care_physical', 'care_physical_en',
+            'care_monitoring', 'care_monitoring_en',
+            'sources', 'updated_at',
+        )
 
 
 # Serializer for the Detail View (with all fields)
@@ -440,14 +464,21 @@ class PestInfoDetailSerializer(serializers.ModelSerializer):  # 定义病害信�
     crop_type = serializers.CharField(read_only=True)  # 添加作物类型字段
     description = serializers.CharField(read_only=True)  # 添加描述字段
     english_identifier = serializers.CharField(read_only=True)  # 添加英文标识符字段
+    # 第 192 批：健康管理档案（只有 12 条「健康X」词条有；用 SerializerMethodField 而不是
+    # 直接写 `health_profile`，因为 OneToOne 反向关系不存在时 DRF 会抛 RelatedObjectDoesNotExist，
+    # 而不是返回 null —— 详情接口不能因为"这条没有档案"就 500）。
+    health_profile = serializers.SerializerMethodField()
 
     class Meta:  # 定义元数据
         model = PestInfo  # 关联病害信息模型
         fields = [
             'id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier', 'image', 
             'symptoms', 'symptoms_en', 'description', 'description_en', 'trigger', 'trigger_en',
-            'prevention_methods'
+            'prevention_methods', 'scientific_name', 'sources', 'health_profile'
         ]  # 包含的字段
+        # 第 192 批新增 `scientific_name` / `sources` / `health_profile`：
+        # 前两个来自校准版知识库（学名 + 权威来源 URL），助手回答要引用 sources；
+        # 前端此前未引用它们，加字段是纯新增。
 
     def get_image(self, obj):  # 定义获取图片方法
         if obj.image and hasattr(obj.image, 'url'):  # 检查图片是否存在
@@ -459,6 +490,12 @@ class PestInfoDetailSerializer(serializers.ModelSerializer):  # 定义病害信�
 
     def get_trigger_en(self, obj):  # 第 72 批：发病规律的英文版本
         return obj.description_en or obj.description or ''
+
+    def get_health_profile(self, obj):  # 第 192 批：健康管理档案（没有就返回 None）
+        profile = getattr(obj, 'health_profile', None)
+        if profile is None:
+            return None
+        return CropHealthProfileSerializer(profile, context=self.context).data
 
 
 # New serializer for history, including prevention methods

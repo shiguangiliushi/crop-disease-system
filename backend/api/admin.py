@@ -2,6 +2,7 @@ from django.contrib import admin  # 导入Django管理后台模块
 from django.contrib.auth.admin import UserAdmin  # 导入用户管理类
 from django.utils.html import format_html  # 导入HTML格式化工具
 from .models import CustomUser, PestInfo, PreventionMethod, DetectionHistory, Feedback, News  # 导入模型
+from .models import CropHealthProfile  # 第 192 批：作物健康管理档案（校准版知识库 healthy 记录）
 from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志（只读注册）
 from .models_forum import ForumBoard, Post, Comment, Like  # 导入论坛模型
 from .models_notify import Announcement, Notification  # 第 37 批：通知与公告
@@ -21,12 +22,57 @@ class PestInfoAdmin(admin.ModelAdmin):  # 病害信息管理类
     list_display = ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier')  # 列表显示字段
     search_fields = ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier')  # 搜索字段
     list_filter = ('crop_type',)  # 过滤器字段
+    # 第 192 批：补上第 192 批新增的 scientific_name / sources，并把此前的英文字段
+    # 真正放进表单（`symptoms_en` / `description_en` 此前只存在于模型，后台改不到）。
     fieldsets = (
         (None, {
-            'fields': ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier', 'image'),
+            'fields': ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier',
+                       'scientific_name', 'image'),
         }),
         ('正文', {
             'fields': ('symptoms', 'description'),
+        }),
+        ('正文（英文）', {
+            'fields': ('symptoms_en', 'description_en'),
+        }),
+        ('数据来源', {
+            'fields': ('sources',),
+            'description': '来自校准版知识库的来源 URL 列表。助手回答会引用它，'
+                           '所以这里的内容要能逐条核对（JSON 数组格式）。',
+        }),
+    )
+
+
+@admin.register(CropHealthProfile)  # 第 192 批：作物健康管理档案
+class CropHealthProfileAdmin(admin.ModelAdmin):
+    """
+    作物健康管理档案（校准版知识库的 12 条 healthy 记录）。
+
+    这些内容**不参与识别流程**：识别只用 `PestInfo` 的词条反查（`pest_lookup`）。
+    本表是给"健康叶片的用户"和百科页看的栽培管理建议，所以单独一张表、单独一个入口。
+    """
+    list_display = ('name', 'crop_type', 'crop_type_en', 'pest', 'updated_at')
+    search_fields = ('name', 'name_en', 'crop_type', 'crop_type_en', 'scientific_name')
+    list_filter = ('crop_type',)
+    readonly_fields = ('updated_at',)
+    fieldsets = (
+        (None, {
+            'fields': ('pest', 'name', 'name_en', 'crop_type', 'crop_type_en', 'scientific_name'),
+            'description': '`对应词条` 指向 PestInfo 里的「健康X」词条；两者是"识别用词条"与'
+                           '"栽培管理档案"的关系，内容刻意不合并。',
+        }),
+        ('形态与条件', {
+            'fields': ('morphology', 'morphology_en', 'growing_conditions', 'growing_conditions_en'),
+        }),
+        ('健康管理（五类）', {
+            'fields': ('care_agricultural', 'care_agricultural_en',
+                       'care_chemical', 'care_chemical_en',
+                       'care_ecological', 'care_ecological_en',
+                       'care_physical', 'care_physical_en',
+                       'care_monitoring', 'care_monitoring_en'),
+        }),
+        ('数据来源', {
+            'fields': ('sources', 'updated_at'),
         }),
     )
 
