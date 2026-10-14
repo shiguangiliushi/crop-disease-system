@@ -20,6 +20,7 @@ const UI = 'http://127.0.0.1:5173';
 const suffix = Math.random().toString(36).slice(2, 6);
 const password = 'ZzPeach!2026pw';
 const userName = `zzpeach_user_${suffix}`;
+const adminName = `zzpeach_admin_${suffix}`;
 
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -46,6 +47,8 @@ runDjango([
   'from django.contrib.auth import get_user_model',
   'U = get_user_model()',
   `U.objects.create_user(username='${userName}', password='${password}', role='USER')`,
+  // 管理端那两条（筛选 + 编辑弹窗的作物下拉）要管理员账号才能进
+  `U.objects.create_user(username='${adminName}', password='${password}', is_staff=True, role='ADMIN')`,
   "print('seeded')",
 ]);
 
@@ -141,6 +144,63 @@ check('关于页显示「桃子」', aboutText.includes('桃子'), aboutText.rep
 const nakedOnAbout = scanNakedPeach(aboutText);
 check('关于页没有裸的「桃」（桃子/樱桃/病害名都不算）', nakedOnAbout.count === 0,
   nakedOnAbout.count ? `命中 ${nakedOnAbout.count} 处：…${nakedOnAbout.context.join(' ｜ ')}…` : '');
+
+// ---------------------------------------------------------------------------
+// ④ 管理端「病害百科维护」：按作物筛选不该串味（用户报的那条）
+// ---------------------------------------------------------------------------
+console.log('\n--- ④ 管理端按作物筛选（桃子 vs 樱桃）---');
+clearThrottle();
+const adminCtx = await browser.newContext({ viewport: { width: 1500, height: 950 }, locale: 'zh-CN' });
+const adminPage = await adminCtx.newPage();
+const adminErrors = [];
+adminPage.on('pageerror', (e) => adminErrors.push(String(e).slice(0, 200)));
+
+await adminPage.goto(`${UI}/admin/login`, { waitUntil: 'domcontentloaded' });
+await adminPage.waitForSelector('.admin-login', { timeout: 30_000 });
+await adminPage.locator('#username').fill(adminName);
+await adminPage.locator('#password').fill(password);
+await adminPage.locator('button[type="submit"]').first().click();
+await adminPage.waitForURL((u) => u.pathname.startsWith('/admin/') && u.pathname !== '/admin/login', { timeout: 30_000 });
+await adminPage.waitForSelector('.admin-console', { timeout: 25_000 });
+
+await adminPage.goto(`${UI}/admin/pests`, { waitUntil: 'domcontentloaded' });
+await adminPage.waitForTimeout(3500);
+
+/** 选一个作物并返回列表里可见的病害名 */
+const filterByCrop = async (crop) => {
+  await adminPage.goto(`${UI}/admin/pests`, { waitUntil: 'domcontentloaded' });
+  await adminPage.waitForTimeout(2500);
+  await adminPage.locator('.filter-bar .el-select, .el-select').first().click();
+  await adminPage.waitForTimeout(600);
+  await adminPage.locator('.el-select-dropdown__item:visible', { hasText: crop }).first().click();
+  await adminPage.waitForTimeout(2500);
+  const rows = await adminPage.locator('.el-table__row').allInnerTexts();
+  return rows.map((t) => t.replace(/\s+/g, ' ').trim());
+};
+
+const peachRows = (await filterByCrop('桃子')).join(' ｜ ');
+check('管理端筛「桃子」只剩该作物的词条',
+  peachRows.includes('桃细菌性斑点病') && peachRows.includes('健康桃'), peachRows.slice(0, 100));
+check('管理端筛「桃子」**不再**出现樱桃白粉病（用户报的串味）',
+  !peachRows.includes('樱桃'), peachRows.includes('樱桃') ? peachRows.slice(0, 120) : '');
+
+const cherryRows = (await filterByCrop('樱桃')).join(' ｜ ');
+check('管理端筛「樱桃」只剩该作物的词条',
+  cherryRows.includes('樱桃白粉病') && !cherryRows.includes('桃细菌性斑点病'),
+  cherryRows.slice(0, 100));
+
+// 编辑弹窗的作物下拉：第 190 批把 cropOptions 从字符串数组改成了 {key,label}，
+// 忘了同步改弹窗就会显示成 [object Object] —— 这条专门盯它
+await adminPage.goto(`${UI}/admin/pests`, { waitUntil: 'domcontentloaded' });
+await adminPage.waitForTimeout(2500);
+await adminPage.locator('.el-table__row button', { hasText: '编辑' }).first().click();
+await adminPage.waitForSelector('.el-dialog:visible', { timeout: 15_000 });
+await adminPage.waitForTimeout(1200);
+const dialogText = await adminPage.locator('.el-dialog:visible').innerText();
+check('编辑弹窗的作物下拉没有显示成 [object Object]',
+  !dialogText.includes('[object Object]'), dialogText.replace(/\s+/g, ' ').slice(0, 80));
+check('管理端全程无 JS 报错', adminErrors.length === 0, adminErrors.slice(0, 2).join(' | '));
+await adminCtx.close();
 
 check('全程无 JS 报错', errors.length === 0, errors.slice(0, 2).join(' | '));
 
