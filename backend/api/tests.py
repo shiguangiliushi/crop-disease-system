@@ -3857,6 +3857,89 @@ class PestTypesSearchTests(TestCase):
         self.assertEqual(response.json()['results'], ['苹果黑星病'])
 
 
+class PestListCropFilterTests(TestCase):
+    """
+    `/api/pests/?crop_type=` 必须**精确**匹配作物（第 190 批）
+
+    用户反馈（原话）："管理员后台病害百科维护筛选桃，多出了一个樱桃白粉病、
+    它不是在樱桃里面吗" —— 报得完全正确。根因是 `PestInfoViewSet.get_queryset`
+    用的是 `crop_type__icontains`（**包含**匹配），而中文作物名之间会互相包含：
+    `桃子` 里含 `桃`，于是筛「桃子」把 **樱桃** 的病害一起捞了出来。
+
+    为什么这条要单独钉住：
+      · 它只在**作物名互相包含**时才会暴露 —— 换一套作物名（苹果/番茄/玉米…）
+        永远测不出来，属于"数据一变就现形"的 bug；
+      · 筛选值来自 `/api/calendar/crops/`（就是库里 `crop_type` 的原值），
+        所以精确匹配不会漏任何一条。
+    模糊查找的正确入口是 `search=`（名称/症状/描述），本类也顺手确认它没被影响。
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(username='zz_pcf_user', password='pw12345678')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        # 故意用**互相包含**的作物名：桃子 / 樱桃（樱桃里含「桃」）
+        PestInfo.objects.create(name='桃细菌性斑点病', crop_type='桃子', crop_type_en='Peach',
+                                english_identifier='peach_bacterial_spot')
+        PestInfo.objects.create(name='健康桃', crop_type='桃子', crop_type_en='Peach',
+                                english_identifier='peach_healthy')
+        PestInfo.objects.create(name='樱桃白粉病', crop_type='樱桃', crop_type_en='Cherry',
+                                english_identifier='cherry_powdery_mildew')
+        PestInfo.objects.create(name='健康樱桃', crop_type='樱桃', crop_type_en='Cherry',
+                                english_identifier='cherry_healthy')
+        PestInfo.objects.create(name='苹果黑星病', crop_type='苹果', crop_type_en='Apple',
+                                english_identifier='apple_scab')
+
+    def _names(self, params):
+        response = self.client.get('/api/pests/', params)
+        self.assertEqual(response.status_code, 200, response.content)
+        return sorted(row['name'] for row in response.json()['results'])
+
+    def test_peach_filter_does_not_leak_cherry(self):
+        """筛「桃子」不该出现樱桃的病害（就是用户报的那条）"""
+        names = self._names({'crop_type': '桃子'})
+        self.assertEqual(names, ['健康桃', '桃细菌性斑点病'])
+        self.assertNotIn('樱桃白粉病', names, '樱桃的病害被"包含匹配"捞进来了')
+        self.assertNotIn('健康樱桃', names)
+
+    def test_cherry_filter_does_not_leak_peach(self):
+        """反向同样成立：筛「樱桃」不该出现桃子的病害"""
+        names = self._names({'crop_type': '樱桃'})
+        self.assertEqual(names, ['健康樱桃', '樱桃白粉病'])
+        self.assertNotIn('桃细菌性斑点病', names)
+
+    def test_english_name_is_not_the_key(self):
+        """
+        契约：筛选值是 `crop_type` 的**原值**（中文键），不是 i18n 的英文显示名
+
+        英文界面下前端用 `crop_names_en` 只做**显示**，回传的仍是中文键 ——
+        所以传 `Peach` 应当筛不到（它属于 `crop_type_en` 字段）。
+        这条把契约钉住，免得哪天有人"顺手"让英文名也能筛、却没定义冲突时以谁为准。
+        """
+        self.assertEqual(self._names({'crop_type': 'Peach'}), [])
+        self.assertEqual(self._names({'crop_type': 'Peach '}), [])   # 空格会被 strip，但值仍不匹配
+
+    def test_unknown_crop_returns_empty(self):
+        """不存在的作物名：返回空，而不是"包含匹配"出一堆无关的"""
+        self.assertEqual(self._names({'crop_type': '桃'}), [])
+        self.assertEqual(self._names({'crop_type': '不存在作物'}), [])
+
+    def test_search_still_matches_substring(self):
+        """
+        `search=` 仍是**模糊**匹配（作物筛选精确、文本搜索模糊，两者分工不同）
+
+        ⚠️ 断言要按实际语义写：`search=桃` 本来就该同时命中
+        **桃子**（名称「健康桃 / 桃细菌性斑点病」）与**樱桃**那两条 ——
+        用户搜"桃"时想看到的是"所有带这个字的词条"，这是对的、不是 bug。
+        第一版我写成"只该返回桃子的两条"，那是把两种匹配的语义搞混了。
+        """
+        self.assertEqual(self._names({'search': '桃'}),
+                         ['健康桃', '健康樱桃', '桃细菌性斑点病', '樱桃白粉病'])
+        # 换一个只出现在樱桃那两条里的词，验证"模糊匹配真的在工作"
+        self.assertEqual(self._names({'search': '白粉病'}), ['樱桃白粉病'])
+
+
 class CancelDeletionThrottleTests(TestCase):
     """
     取消注销接口必须限流（第 106 批）

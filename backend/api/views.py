@@ -1505,9 +1505,23 @@ class PestEncyclopediaViewSet(viewsets.ModelViewSet):
         queryset = PestInfo.objects.all()
 
         # 支持按作物类型筛选
+        #
+        # ⚠️ 第 190 批：这里原来是 `crop_type__icontains`（**包含**匹配），已改成精确匹配。
+        #    "包含"在中文作物名上是错的：作物名之间会互相包含 ——
+        #    筛「桃子」会把**樱桃**的病害一起捞出来（`桃子` 里含 `桃`），
+        #    筛「樱桃」也会捞出「桃子」那两条。管理员在「病害百科维护」选作物筛选时
+        #    看到的就是这个现象（用户反馈："筛选桃，多出了一个樱桃白粉病"）。
+        #    作物筛选的值来自 `/api/calendar/crops/`（就是库里 `crop_type` 的原值），
+        #    所以精确匹配既正确又不会漏。**要模糊找作物请用 `search=`**（名称/症状/描述）。
+        #
+        # ⚠️ 契约：这里的值就是 `crop_type` 的**原值**（中文键），不是显示名 ——
+        #    英文界面下前端拿 `crop_names_en` 只用来**显示**，回传的仍是这个键
+        #    （第 190 批顺手修了管理端下拉把显示名当值传的问题）。所以这里不需要
+        #    大小写折叠、也不该接受 `Peach` 这种英文名 —— 那属于另一个字段
+        #    （`crop_type_en`）的事，真要支持得先定义清楚冲突时以谁为准。
         crop_type = self.request.query_params.get('crop_type', None)
         if crop_type:
-            queryset = queryset.filter(crop_type__icontains=crop_type)
+            queryset = queryset.filter(crop_type=crop_type.strip())
 
         # 支持按病害名称搜索
         search = self.request.query_params.get('search', None)

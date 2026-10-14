@@ -59,7 +59,12 @@ export async function fetchPestDetail(id) {
  *
  * 与农户端百科页的区别：那一页是把整库拉下来在内存里筛（因为要按页签切作物、
  * 还要离线缓存）；管理端要的是"精确找到某一条"，所以走后端已有的
- * `?search=`（名称/症状/描述）与 `?crop_type=`（icontains）加标准分页。
+ * `?search=`（名称/症状/描述）与 `?crop_type=`（**精确匹配**）加标准分页。
+ *
+ * ⚠️ 第 190 批：`crop_type` 在后端原本是 `icontains`（包含匹配），中文作物名会互相包含 ——
+ *    筛「桃子」会把**樱桃**的病害一起捞出来（用户反馈："筛选桃，多出了一个樱桃白粉病"）。
+ *    已改成 `iexact`。筛选项的值来自 `/api/calendar/crops/`（就是库里 `crop_type` 原值），
+ *    所以精确匹配不会漏；要模糊找请用上面的 `search=`。
  *
  * @param {{search?: string, crop_type?: string, page?: number, page_size?: number}} params
  * @returns {Promise<{count:number, next:string|null, previous:string|null, results:object[]}>}

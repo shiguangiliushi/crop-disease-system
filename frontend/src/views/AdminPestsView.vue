@@ -69,7 +69,19 @@
         @change="handleFilter"
         @clear="handleFilter"
       >
-        <el-option v-for="crop in cropOptions" :key="crop" :label="crop" :value="crop" />
+        <!--
+          ⚠️ 第 190 批：`value` 必须是**作物键**（库里 `crop_type` 的原值，中文），
+          `label` 才是给人看的显示名。原来 value/label 都直接用 crops 数组里的中文，
+          所以中文界面下没问题；但一旦把 label 本地化（英文界面显示 Peach），
+          若 value 也跟着变成显示名，后端按 `crop_type` 精确匹配就会**一条都筛不到**。
+          这里的写法与农户端百科页一致（那边用 { key, name } 两个字段）。
+        -->
+        <el-option
+          v-for="crop in cropOptions"
+          :key="crop.key"
+          :label="crop.label"
+          :value="crop.key"
+        />
       </el-select>
 
       <el-button type="primary" plain @click="handleFilter">{{ t('pestAdmin.query') }}</el-button>
@@ -258,10 +270,37 @@ export default {
       }
     };
 
+    /**
+     * 作物筛选项：**键**用库里的原值（中文），**显示名**按当前语言取
+     *
+     * ⚠️ 第 190 批：原来直接把 `/api/calendar/crops/` 返回的中文数组当成 {label, value}，
+     * 英文界面下管理员看到的作物筛选是中文（同一个项目里农户端百科页早就用
+     * `crop_type_en` 显示了，见 PestEncyclopediaView 的 cropOptions）。
+     * 现在补上英文显示名 —— 但**值仍然是中文键**：后端 `?crop_type=` 是按
+     * `crop_type` 字段**精确匹配**的，把显示名当值传过去会一条都筛不到。
+     * 英文名从病害列表里的 `crop_type_en` 取（与百科页同一个来源）。
+     */
     const loadCropOptions = async () => {
       try {
         const data = await fetchCalendarCrops();
-        cropOptions.value = Array.isArray(data?.crops) ? data.crops : [];
+        const keys = Array.isArray(data?.crops) ? data.crops : [];
+
+        // 英文显示名：从一份"每作物取一条"的病害列表里拿 crop_type_en
+        const enMap = {};
+        try {
+          const page = await fetchPestList({ page: 1, page_size: 200 });
+          for (const row of page?.results || []) {
+            if (row?.crop_type && row?.crop_type_en) enMap[row.crop_type] = row.crop_type_en;
+          }
+        } catch (error) {
+          // 拿不到英文名不影响筛选能用，回落成中文显示名
+          console.warn('获取作物英文名失败，回落中文显示:', error);
+        }
+
+        cropOptions.value = keys.map((key) => ({
+          key,
+          label: localizedField({ crop_type: key, crop_type_en: enMap[key] || '' }, 'crop_type'),
+        }));
       } catch (error) {
         console.warn('获取作物类型失败:', error);
         cropOptions.value = [];

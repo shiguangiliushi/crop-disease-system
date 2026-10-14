@@ -295,7 +295,18 @@ const handleSubmit = async () => {
                   :placeholder="t('pestEdit.cropPlaceholder')"
                   style="width: 100%"
                 >
-                  <el-option v-for="crop in cropTypes" :key="crop" :label="crop" :value="crop" />
+                  <!--
+                    ⚠️ 第 190 批：`cropTypes` 的每一项是 `{ key, label }`（键=库里 crop_type 原值，
+                    显示名按语言取）。原来这里把数组项当**字符串**用（`v-for="crop in cropTypes"` +
+                    `:value="crop"`），一旦上游改成对象，下拉里就会显示成 `[object Object]`。
+                    `allow-create` 保留：管理员可以录入库里还没有的新作物名。
+                  -->
+                  <el-option
+                    v-for="crop in cropTypes"
+                    :key="crop.key"
+                    :label="crop.label"
+                    :value="crop.key"
+                  />
                 </el-select>
               </el-form-item>
             </el-col>
