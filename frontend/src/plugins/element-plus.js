@@ -39,6 +39,9 @@ import {
   ElDatePicker,
   ElDialog,
   ElDivider,
+  // 第 194 批：助手追问抽屉。检查脚本 `check:components` 当场报出"用了没注册"——
+  // 漏注册不会报错，只会渲染成未知元素、点了没反应（本文件里已踩过三次）。
+  ElDrawer,
   ElDropdown,
   ElDropdownItem,
   ElDropdownMenu,
@@ -99,6 +102,7 @@ const components = [
   ElDatePicker,  // 第 78 批：日期选择器（历史记录页的日期筛选）
   ElDialog,
   ElDivider,
+  ElDrawer,  // 第 194 批：助手追问抽屉（漏注册会渲染成未知元素）
   ElDropdown,
   ElDropdownItem,
   ElDropdownMenu,

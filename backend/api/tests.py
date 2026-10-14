@@ -12834,14 +12834,23 @@ class AssistantTests(TestCase):
         """与农业无关的问题：检索必须返回空，好让上层走"无来源"分支"""
         self.assertEqual(retriever.search('帮我写一首关于春天的诗'), [])
 
-    # ── 六、上下文：中英文拼接要被挡住 ───────────────────────────────────
+    # ── 六、上下文：中英混排要被挡住（防御性，非已知污染）────────────────
     def test_context_takes_chinese_only(self):
-        """K3 把英文拼进了主字段：进提示词/引用前必须只留中文段"""
+        """守卫：万一英文段被并进主字段，也不能漏到提示词与引用片段里。
+
+        ⚠️ 注意这条**不是**在修补一个已知问题 —— 实测 38 条词条的 symptoms /
+        description 里没有成段英文（详见 `assistant/context.py` 的模块说明）。
+        更要紧的是下半段：中文行文里的**学名夹注必须保留**，
+        那是正文的一部分（"分生孢子器 pycnidia"），切掉就是丢内容。
+        """
         mixed = '叶片初现淡黄绿色斑点。 Apple scab is a fungal disease of apple.'
         self.assertEqual(context.chinese_only(mixed), '叶片初现淡黄绿色斑点。')
         # 中文行文里的学名夹注**不能**被切掉（它是正文的一部分）
         keep = '病斑上散生黑色小粒点（分生孢子器 pycnidia）。'
         self.assertEqual(context.chinese_only(keep), keep)
+        # 真实数据里的另一种夹注形态：整句都是中文，拉丁词在括号里
+        keep2 = '急性发作（apoplexy）时全株突然萎蔫。'
+        self.assertEqual(context.chinese_only(keep2), keep2)
 
     def test_context_is_empty_when_no_hits(self):
         built = context.build([])

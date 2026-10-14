@@ -922,6 +922,12 @@ class DetectView(APIView):
                     detection_result = {
                         'disease': disease_name,
                         'disease_en': disease_name_en,
+                        # 第 194 批：把模型输出的类名标识也带上。
+                        # 前端"追问助手"要靠它把该病害在知识库里直接置顶
+                        # （`assistant/retriever.py` 的"识别结果直连"）。
+                        # 此前响应里没有这个字段，于是用户问"这个病打什么药"时
+                        # 检索匹配不到任何词条，助手永远答"词条未收录"。
+                        'identifier': disease_identifier,
                         'confidence': confidence,
                         'description': description,
                         'description_en': description_en,

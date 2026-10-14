@@ -223,6 +223,20 @@
                   <i class="bi bi-info-circle"></i> {{ t('detect.confidenceHint') }}
                 </p>
 
+                <!-- 第 194 批：追问入口。
+                     放在"置信度说明"之后、"症状"之前 —— 这是用户看完识别结论、
+                     自然产生"那怎么办"的位置；再往下放就会被长正文淹没。
+                     未登录时不显示：助手接口需要登录（会话与限流都挂在用户上）。 -->
+                <div v-if="isLoggedIn" class="ask-assistant-entry">
+                  <div class="ask-assistant-text">
+                    <strong>{{ t('assistant.emptyTitle') }}</strong>
+                    <span>{{ t('assistant.emptyDesc') }}</span>
+                  </div>
+                  <el-button type="primary" plain @click="openAssistant(disease)">
+                    <i class="bi bi-chat-dots me-1"></i>{{ t('assistant.open') }}
+                  </el-button>
+                </div>
+
                 <div class="mb-4">
                   <h5 class="border-bottom pb-2"><i class="bi bi-exclamation-triangle me-2"></i>{{ t('detect.symptoms') }}</h5>
                   <p class="ms-4">{{ localizedField(disease, 'symptoms') || t('detect.noSymptoms') }}</p>
@@ -330,11 +344,19 @@
       </div>
     </div>
 
+    <!-- 第 194 批：追问抽屉。用 v-model:visible 显式控制，
+         不让它跟着别的状态意外弹出；pest_identifier 让后端把该病害直接置顶。 -->
+    <AskAssistantDrawer
+      v-model:visible="assistantVisible"
+      :disease-name="assistantDiseaseName"
+      :pest-identifier="assistantPestIdentifier"
+    />
+
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useToast } from 'vue-toast-notification';
 import axios from 'axios';
 import api from '@/utils/axios';  // 使用自定义的 axios 实例
@@ -353,6 +375,8 @@ import { downloadDetectionReportPdf } from '@/utils/pdfReport';  // 第 73 批�
 // 第 75 批：应用内拍照（实时取景 + 快门 + 前后摄像头切换）
 import CameraCapture from '@/components/CameraCapture.vue';
 import { hasInAppCamera } from '@/utils/camera';
+// 第 194 批：智能回答助手的追问抽屉（识别结果页入口）
+import AskAssistantDrawer from '@/components/AskAssistantDrawer.vue';
 // 第 91 批：识别纠错要选"正确是哪一种"，否则反馈成不了训练样本
 import { fetchPestOptions } from '@/api/content';
 
@@ -388,6 +412,40 @@ const previewUrl = ref('');
 const isDragging = ref(false);
 const isDetecting = ref(false);
 const detectionResult = ref(null);
+
+// 第 194 批：追问抽屉的状态。三样都跟着"当前这条识别结果"走 ——
+// 换一张图重新识别后，抽屉里问的必须是新病害，不能把上一个病害的标识带过去。
+const assistantVisible = ref(false);
+const assistantDisease = ref(null);
+
+/** 登录状态决定追问入口是否显示（助手接口需要登录：会话与限流挂在用户上） */
+const isLoggedIn = computed(() => !!authStore.isAuthenticated);
+
+const assistantDiseaseName = computed(() => {
+  const disease = assistantDisease.value;
+  return disease ? localizedField(disease, 'name') : '';
+});
+
+/** 识别结果直连的标识：后端据此把该病害直接置顶（见 assistant/retriever.py） */
+const assistantPestIdentifier = computed(() => {
+  const disease = assistantDisease.value;
+  if (!disease) return '';
+  return disease.english_identifier || disease.identifier || '';
+});
+
+/** 打开追问抽屉。`disease` 就是结果卡片里那一条。 */
+const openAssistant = (disease) => {
+  assistantDisease.value = disease || null;
+  assistantVisible.value = true;
+};
+
+// 重新识别后关掉抽屉并清掉旧病害：否则抽屉里会继续问上一张图的结果
+watch(detectionResult, (value) => {
+  if (!value) {
+    assistantVisible.value = false;
+    assistantDisease.value = null;
+  }
+});
 
 const selectedFile = ref(null);
 const progress = ref(0);
@@ -829,6 +887,12 @@ const detectDisease = async () => {
         name: detectionData.disease || t('detect.unknownDisease'),
         name_en: detectionData.disease_en || '',
         confidence: detectionData.confidence || 0,
+        // 第 194 批：把病害标识也带进结果对象。
+        // ⚠️ 这是"追问抽屉"能精确回答的前提 —— 助手接口靠 `pest_identifier` 把该病害
+        //    直接置顶（见 backend/api/assistant/retriever.py 的"识别结果直连"）。
+        //    漏了它不会报错，只是抽屉每次都答"词条未收录"（用户问"这个病打什么药"
+        //    在词条正文里匹配不到任何东西）—— 实测就是这个现象，靠 e2e 日志才发现。
+        english_identifier: detectionData.english_identifier || detectionData.identifier || '',
         // 使用后端返回的症状和防治建议，如果没有则显示默认值
         symptoms: detectionData.symptoms || detectionData.description || '',
         symptoms_en: detectionData.symptoms_en || detectionData.description_en || '',
@@ -1806,6 +1870,37 @@ textarea.form-control {
 .result-detail-card .card-body li {
   font-size: var(--font-size-base, 16px);
   line-height: 1.85;
+}
+
+/* 第 194 批：追问入口。做成"可点的一条"而不是纯按钮 ——
+   左侧一句话说明它能干什么，右侧才是按钮，避免用户不知道点它会发生什么。 */
+.ask-assistant-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1.25rem;
+  background: var(--brand-50, #eef7f1);
+  border: 1px solid var(--brand-200, #cfe6d8);
+  border-radius: 8px;
+}
+
+.ask-assistant-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ask-assistant-text strong {
+  font-size: var(--font-size-base, 16px);
+  color: var(--ink-700, #35473d);
+}
+
+.ask-assistant-text span {
+  font-size: var(--font-size-xs, 13px);
+  color: var(--ink-500, #78897f);
 }
 </style>
 
