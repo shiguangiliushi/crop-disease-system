@@ -626,6 +626,10 @@ REST_FRAMEWORK = {  # REST框架配置
     'DEFAULT_RENDERER_CLASSES': [  # 默认渲染器类
         'rest_framework.renderers.JSONRenderer',  # JSON渲染器
         'rest_framework.renderers.BrowsableAPIRenderer',  # 可浏览API渲染器
+        # 第 195 批：助手流式接口（SSE）需要它，否则 DRF 的内容协商找不到
+        # `text/event-stream` 的渲染器 → 直接 406（实测过）。
+        # 见 api/renderers.py 的说明：它只为让协商通过，不参与真正的响应体生成。
+        'api.renderers.EventStreamRenderer',
     ],
     'DEFAULT_CHARSET': 'utf-8',  # 默认字符集
     'UNICODE_JSON': True,  # 使用Unicode JSON

@@ -12903,3 +12903,186 @@ class AssistantTests(TestCase):
         self.assertTrue(message.degraded)
         self.assertEqual(message.degrade_reason, 'no_source')
         self.assertEqual(message.prompt_version, '')
+
+
+# ============================================================================
+# 智能回答助手 · 流式（第 195 批）
+# ----------------------------------------------------------------------------
+# 为什么要单独一组：流式与同步是**两条生成路径**，共用"决策阶段"（`orchestrator._prepare`）
+# 但分叉在"怎么产出"。共享部分靠 `AssistantTests` 覆盖，这里只验分叉点：
+#   · SSE 帧格式与事件顺序（前端解析器依赖它）；
+#   · `Content-Encoding: identity` —— 这条最容易被后来者"清理"掉，
+#     而删了它 GZipMiddleware 会把流攒住（实测 5 块压成 2 块，"逐字"就没了）；
+#   · 降级时是否也走流（整段一次给），以及**不调模型**；
+#   · 中途断流是否保留已生成内容（用户已经看到的字不能凭空消失）。
+# ============================================================================
+class AssistantStreamTests(TestCase):
+    """助手流式接口：帧格式 / 头部 / 降级 / 断流。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        # 与 AssistantTests 同一份最小语料（流式也要有词条可检索）
+        cls.pest = PestInfo.objects.create(
+            name='番茄晚疫病', name_en='Tomato late blight', crop_type='番茄', crop_type_en='Tomato',
+            english_identifier='tomato_late_blight',
+            symptoms='危害叶、茎和青果。叶片多从叶尖或叶缘开始发病。',
+            description='病菌以菌丝体在带菌种薯中越冬。',
+        )
+        PreventionMethod.objects.create(
+            pest=cls.pest, category='CHEMICAL',
+            measure='发病初期喷施烯酰吗啉，间隔5-7天喷1次。',
+        )
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_stream', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        cache.delete('sensitive_words:active')
+
+    # ── 工具：解析 SSE 响应体 ────────────────────────────────────────────
+    @staticmethod
+    def _parse(body: bytes):
+        """把响应体解析成 `[(event, data_dict)]`。**与前端解析器同一套规则**：
+        按空行切事件，事件内按 `event:` / `data:` 取。"""
+        events = []
+        text = body.decode('utf-8')
+        for raw in text.split('\n\n'):
+            if not raw.strip():
+                continue
+            name, data_line = 'message', ''
+            for line in raw.split('\n'):
+                if line.startswith('event:'):
+                    name = line[6:].strip()
+                elif line.startswith('data:'):
+                    data_line += line[5:].strip()
+            if data_line:
+                events.append((name, json.loads(data_line)))
+        return events
+
+    def _stream(self, question='番茄晚疫病怎么打药', **extra):
+        resp = self.client_auth.post('/api/assistant/ask/stream/',
+                                     {'question': question, **extra}, format='json')
+        if resp.streaming:
+            body = b''.join(resp.streaming_content)
+        else:
+            body = resp.content
+        return resp, self._parse(body)
+
+    # ── 一、头部（3 条都是"删了就坏"的）──────────────────────────────────
+    def test_stream_response_headers(self):
+        """必须声明 identity 绕过 GZip，并让代理不缓冲 —— 删掉就没有逐字效果"""
+        resp, _events = self._stream()
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('text/event-stream', resp['Content-Type'])
+        self.assertEqual(resp['Content-Encoding'], 'identity')
+        self.assertEqual(resp['X-Accel-Buffering'], 'no')
+
+    # ── 二、帧格式与顺序 ────────────────────────────────────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_event_order_and_shape(self):
+        """顺序必须是 meta → delta… → citations → done；meta 要先带出 session/message id"""
+        def fake_stream(_messages, **_kwargs):
+            yield {'text': '番茄'}
+            yield {'text': '晚疫病'}
+            yield {'usage': {'prompt_tokens': 11, 'completion_tokens': 2}}
+            yield {'model': 'deepseek-flash'}
+
+        with patch('api.assistant.llm.chat_stream', side_effect=fake_stream):
+            _resp, events = self._stream()
+
+        names = [name for name, _data in events]
+        self.assertEqual(names[0], 'meta')
+        self.assertEqual(names[-1], 'done')
+        self.assertIn('citations', names)
+        self.assertGreaterEqual(names.count('delta'), 2)
+
+        meta = events[0][1]
+        self.assertIsInstance(meta['session_id'], int)
+        self.assertIsInstance(meta['message_id'], int)
+        self.assertFalse(meta['degraded'])
+
+        self.assertEqual(''.join(d['text'] for n, d in events if n == 'delta'), '番茄晚疫病')
+        done = events[-1][1]
+        self.assertEqual(done['usage']['prompt_tokens'], 11)
+        self.assertEqual(done['model'], 'deepseek-flash')
+
+    def test_stream_answer_is_persisted(self):
+        """流完后要落库：内容 = 各 delta 拼接，且与 done 事件一致"""
+        def fake_stream(_messages, **_kwargs):
+            yield {'text': '先看症状。'}
+            yield {'text': '再谈用药。【1】'}
+
+        with override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                               LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat'):
+            with patch('api.assistant.llm.chat_stream', side_effect=fake_stream):
+                resp, events = self._stream()
+
+        message = AssistantMessage.objects.get(pk=events[0][1]['message_id'])
+        self.assertEqual(message.content, '先看症状。再谈用药。【1】')
+        self.assertFalse(message.degraded)
+        # 桩没给 usage：所以只有我们自己补的字段，不该凭空出现 prompt_tokens
+        self.assertNotIn('prompt_tokens', message.usage)
+        self.assertIn('citation_marked', message.usage)   # 引用校验的结果必须记下来
+        self.assertTrue(resp['Content-Type'].startswith('text/event-stream'))
+
+    # ── 三、降级也走流（整段一次给）─────────────────────────────────────
+    def test_degraded_stream_sends_single_delta(self):
+        """LLM 关着时：1 个 delta（整段档案原文）+ done 标 degraded，且**不调模型**"""
+        self.assertFalse(settings.LLM_ENABLED)
+        with patch('api.assistant.llm.chat_stream') as mocked:
+            _resp, events = self._stream()
+            mocked.assert_not_called()
+
+        names = [name for name, _d in events]
+        self.assertEqual(names.count('delta'), 1)
+        self.assertTrue(events[0][1]['degraded'])
+        self.assertEqual(events[0][1]['degrade_reason'], 'llm_disabled')
+        self.assertTrue(events[-1][1]['degraded'])
+
+    def test_no_source_stream_does_not_call_model(self):
+        """与农业无关的问题：不调模型，给出"未收录"整段"""
+        with patch('api.assistant.llm.chat_stream') as mocked:
+            _resp, events = self._stream(question='帮我写一首关于春天的诗')
+            mocked.assert_not_called()
+        self.assertEqual(events[0][1]['degrade_reason'], 'no_source')
+        self.assertIn('未收录', events[1][1]['text'])
+
+    def test_empty_question_stream_has_no_message_id(self):
+        """空问题：不建会话也不落库，但**仍返回合法 SSE**（前端解析器不能因此报错）"""
+        _resp, events = self._stream(question='   ')
+        self.assertEqual([n for n, _d in events], ['meta', 'delta', 'done'])
+        self.assertIsNone(events[0][1]['message_id'])
+        self.assertEqual(events[0][1]['degrade_reason'], 'empty')
+        self.assertEqual(AssistantMessage.objects.count(), 0)
+
+    # ── 四、中途断流：已生成的内容不能丢 ────────────────────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_midway_break_keeps_partial_answer(self):
+        """流到一半抛错：保留已吐出的字（用户已经看到了，不能凭空消失）"""
+        def broken_stream(_messages, **_kwargs):
+            yield {'text': '已经吐出的半句'}
+            raise llm.LLMError('模拟中途断流')
+
+        with patch('api.assistant.llm.chat_stream', side_effect=broken_stream):
+            _resp, events = self._stream()
+
+        answer = ''.join(d['text'] for n, d in events if n == 'delta')
+        self.assertIn('已经吐出的半句', answer)
+        # 中途断流**不是**整段降级：已生成内容优先保留，只标记"中途出错"
+        # （`llm_error_partial` 是第 195 批新增的降级原因，与"一个字都没吐出来"区分开）
+        message = AssistantMessage.objects.get(pk=events[0][1]['message_id'])
+        self.assertIn('已经吐出的半句', message.content)
+        self.assertEqual(message.degrade_reason, 'llm_error_partial')
+
+    # ── 五、鉴权与参数校验与同步接口一致 ────────────────────────────────
+    def test_stream_requires_authentication(self):
+        resp = APIClient().post('/api/assistant/ask/stream/', {'question': '番茄晚疫病'}, format='json')
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_stream_rejects_bad_session_id(self):
+        resp = self.client_auth.post('/api/assistant/ask/stream/',
+                                     {'question': '番茄晚疫病', 'session_id': 'abc'}, format='json')
+        self.assertEqual(resp.status_code, 400)

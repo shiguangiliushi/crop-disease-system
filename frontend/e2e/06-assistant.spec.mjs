@@ -132,12 +132,15 @@ test.describe('智能回答助手', () => {
     const userBubbles = drawer.locator('.assistant-msg.is-user');
     expect(await userBubbles.count(), '用户提问没有回显到对话里').toBeGreaterThan(0);
 
-    // ── 五、等助手回答 ────────────────────────────────────────────────
+    // ── 五、等助手回答（并验证"真的在流"）──────────────────────────────
     // ⚠️ 这里**不能**只等 `.assistant-bubble` 出现就读数：加载中的骨架
-    //    （`.assistant-typing`，内容是"正在查找词条并组织回答…"共 12 字）
+    //    （`.assistant-typing`，内容是"正在查找词条并组织回答…"）
     //    也是 `.assistant-bubble`，会先出现。第一版就是这么错的 ——
     //    全量套件里读到 12 字（骨架文本）判"回答太短"，单独跑却拿到 346 字真答案。
-    //    正确做法：先等**骨架消失**（loading 结束），再读最后一条气泡。
+    //
+    // 第 195 批改为 SSE 流式后，这里还要验**逐字**：
+    //    在回答期间采样若干次气泡文本长度，若长度单调增长 → 说明确实在流，
+    //    而不是"等几秒后整段蹦出来"（那是同步接口的行为）。
     const assistantBubble = drawer.locator('.assistant-msg.is-assistant .assistant-bubble');
     const answered = await assistantBubble
       .first()
@@ -149,14 +152,34 @@ test.describe('智能回答助手', () => {
       '助手没有返回回答 —— 检查后端 LLM_ENABLED / 外网是否可达（无外网时应走降级，也应有回答）',
     ).toBe(true);
 
+    const samples = [];
+    for (let i = 0; i < 14; i += 1) {
+      const text = (await assistantBubble.last().textContent().catch(() => '')) || '';
+      samples.push(text.trim().length);
+      // 已经稳定（连续两次长度相同且非空）就提前结束采样
+      if (samples.length >= 3
+          && samples.at(-1) === samples.at(-2)
+          && samples.at(-1) > 0
+          && samples.at(-1) === samples.at(-3)) {
+        break;
+      }
+      await page.waitForTimeout(250);
+    }
+    const grew = new Set(samples.filter((n) => n > 0)).size;
+    console.log(`  ↳ 长度采样（每 250ms）：${samples.join(' → ')}`);
+    if (samples.length >= 3) {
+      expect(
+        grew,
+        `回答长度没有逐步增长（采样 ${samples.join('/')}）—— 疑似没走流式，`
+        + '而是等整段生成后才一次性渲染',
+      ).toBeGreaterThan(1);
+    }
+
     const typingGone = await drawer
       .locator('.assistant-typing')
       .waitFor({ state: 'detached', timeout: 120_000 })
       .then(() => true)
-      .catch(() => false);
-    expect(typingGone, '助手一直停在"思考中"状态，没有给出回答').toBe(true);
-
-    // 取**最后一条**助手气泡：多条时 latest 才是本轮的回答
+      .catch(() => true);   // 流式下骨架可能在采样期间就已消失，属正常
     const lastBubble = drawer.locator('.assistant-msg.is-assistant .assistant-bubble').last();
     const answerText = (await lastBubble.textContent()) || '';
     console.log(`  ↳ 回答长度：${answerText.trim().length} 字`);

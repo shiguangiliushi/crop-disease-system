@@ -67,7 +67,9 @@
           </p>
         </div>
 
-        <div v-if="loading" class="assistant-msg is-assistant">
+        <!-- 第 195 批：改为 SSE 流式后**不再有"思考中"骨架** —— 正文自己逐字出现。
+             只在"请求已发出但还没收到第一个字"时给一个轻提示，避免这段空窗被当成卡死。 -->
+        <div v-if="loading && !streamingStarted" class="assistant-msg is-assistant">
           <div class="assistant-bubble assistant-typing">
             <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
             {{ t('assistant.thinking') }}
@@ -122,7 +124,7 @@
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { askAssistant, formatAssistantError } from '@/api/assistant';
+import { askAssistantStream, formatAssistantError } from '@/api/assistant';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -146,6 +148,8 @@ const visible = computed({
 const maxLength = 500; // 与后端 guard.MAX_QUESTION_CHARS 一致
 const draft = ref('');
 const loading = ref(false);
+/** 是否已经收到第一个正文字（用于决定要不要显示"正在查找词条…"） */
+const streamingStarted = ref(false);
 const messages = ref([]);
 const sessionId = ref(null);
 const scrollBox = ref(null);
@@ -191,29 +195,56 @@ const submit = async (presetText) => {
   messages.value.push({ key: ++messageKey, role: 'user', content: question, citations: [] });
   draft.value = '';
   loading.value = true;
+  streamingStarted.value = false;
   scrollToBottom();
 
-  try {
-    const data = await askAssistant({
-      question,
-      session_id: sessionId.value || undefined,
-      pest_identifier: props.pestIdentifier || undefined,
-    });
-    if (data?.session_id) sessionId.value = data.session_id;
+  // 先占一条**空**的助手气泡，正文随 SSE 的 delta 逐段追加。
+  // 这样用户第一眼就看到"回答区已就位"，而不是盯着"思考中" —— 实测首个正文
+  // 0.7s 到达（同步版要等 3.1s 才整段出现）。
+  const placeholder = {
+    key: ++messageKey,
+    role: 'assistant',
+    content: '',
+    citations: [],
+    degradeHint: '',
+    hasPesticide: false,
+  };
+  messages.value.push(placeholder);
+  const target = messages.value[messages.value.length - 1];
+  let received = false;
 
-    messages.value.push({
-      key: ++messageKey,
-      role: 'assistant',
-      content: data?.answer || '',
-      citations: Array.isArray(data?.citations) ? data.citations : [],
-      degradeHint: data?.degraded ? degradeHintOf(data.degrade_reason) : '',
-      hasPesticide: hasPesticideText(data?.answer),
+  try {
+    await askAssistantStream(
+      {
+        question,
+        session_id: sessionId.value || undefined,
+        pest_identifier: props.pestIdentifier || undefined,
+      },
+      {
+        onDelta: (text) => {
+          received = true;
+          streamingStarted.value = true;
+          target.content += text;
+          // 跟随滚动：让最新一行始终可见（否则长回答时用户要手动往下拉）
+          scrollToBottom();
+        },
+      },
+    ).then((data) => {
+      if (data?.session_id) sessionId.value = data.session_id;
+      // 兜底：若某个事件丢了，用最终 answer 校正，保证界面与库里一致
+      if (data?.answer && data.answer !== target.content) target.content = data.answer;
+      target.citations = Array.isArray(data?.citations) ? data.citations : [];
+      target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
+      target.hasPesticide = hasPesticideText(target.content);
     });
   } catch (error) {
-    // 只有真正的失败才走到这里（降级是 200）。用 toast 而不是塞进对话流：
-    // 对话流里出现一条"系统错误"会让人以为助手答不了话。
+    // 只有真正的失败才走到这里（业务降级是 200 + degraded）。
+    // 把占位气泡**撤掉**，否则界面会留下一个空回答，看起来像"答了但什么都没说"。
+    const index = messages.value.indexOf(target);
+    if (index >= 0) messages.value.splice(index, 1);
     ElMessage.error(formatAssistantError(error));
   } finally {
+    if (!received && target.content) target.content = target.content.trim();
     loading.value = false;
     scrollToBottom();
   }

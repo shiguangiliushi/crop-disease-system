@@ -157,6 +157,106 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
     )
 
 
+def chat_stream(messages: list[dict], *, max_tokens: int | None = None,
+                temperature: float = 0.2, timeout: float | None = None):
+    """流式调用：逐段 yield SSE 事件字典（`{"text": ...}` / `{"usage": ...}` / `{"model": ...}`）。
+
+    ## 为什么用 `iter_lines` 而不是 `iter_content`
+
+    服务端按 SSE 逐行发（`data: {...}\\n\\n`）。`iter_lines` 会按行切分并处理跨包的半行，
+    这正是 SSE 需要的；用 `iter_content` 自己拼缓冲区也行，但等于重写一遍。
+
+    ## 为什么错误处理与 `chat()` 不同
+
+    流式一旦开始吐字，**就不能再"整体失败"**了：用户已经看到半句话。
+    所以这里的约定是：
+      · 连接/HTTP 阶段的错误照旧抛 `LLMError`（此时还没有任何输出，上层可以降级）；
+      · **中途**出错只记日志并结束生成 —— 上层把已收到的文本当作答案保存。
+        否则会出现"看着在答，突然整段消失"的体验，比半句话更糟。
+    """
+    if not enabled():
+        raise LLMError('LLM 未启用或配置不全（LLM_ENABLED / LLM_API_URL / LLM_API_KEY / LLM_MODEL）')
+
+    if max_tokens is None:
+        try:
+            max_tokens = int(_cfg('LLM_MAX_TOKENS', 800))
+        except (TypeError, ValueError):
+            max_tokens = 800
+
+    payload = {
+        'model': model_name(),
+        'messages': messages,
+        'max_tokens': max_tokens,
+        'temperature': temperature,
+        'stream': True,
+        # 让端点在最后一个 chunk 里带 usage（OpenAI 兼容字段）
+        'stream_options': {'include_usage': True},
+    }
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {_cfg("LLM_API_KEY", "")}',
+        'Accept': 'text/event-stream',
+    }
+
+    try:
+        resp = requests.post(_endpoint(), json=payload, headers=headers,
+                             timeout=timeout or timeout_seconds(), stream=True)
+    except requests.Timeout as exc:
+        raise LLMError(f'调用超时（{timeout or timeout_seconds()}s）') from exc
+    except requests.RequestException as exc:
+        raise LLMError(f'网络错误：{exc}') from exc
+
+    if resp.status_code != 200:
+        detail = ''
+        try:
+            detail = (resp.text or '')[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        raise LLMError(f'HTTP {resp.status_code}：{detail}')
+
+    configured = model_name()
+    actual_model = ''
+    try:
+        for raw in resp.iter_lines(decode_unicode=True):
+            if not raw:
+                continue
+            line = raw.strip()
+            if not line.startswith('data:'):
+                continue
+            data = line[5:].strip()
+            if data == '[DONE]':
+                break
+            try:
+                chunk = json.loads(data)
+            except ValueError:
+                continue
+
+            if chunk.get('model'):
+                actual_model = str(chunk['model'])
+            choices = chunk.get('choices') or []
+            if choices:
+                delta = (choices[0].get('delta') or {}).get('content')
+                if delta:
+                    yield {'text': delta}
+            if chunk.get('usage'):
+                usage = chunk['usage']
+                yield {
+                    'usage': {
+                        'prompt_tokens': int(usage.get('prompt_tokens') or 0),
+                        'completion_tokens': int(usage.get('completion_tokens') or 0),
+                    }
+                }
+    except requests.RequestException as exc:
+        # 中途断流：**不抛**，让上层保留已生成的部分（见函数 docstring）
+        logger.warning('流式生成中途断开，保留已生成内容：%s', exc)
+    finally:
+        resp.close()
+
+    if actual_model and actual_model != configured:
+        logger.warning('LLM 配置模型 %s，实际落到 %s（端点侧重定向）', configured, actual_model)
+    yield {'model': actual_model or configured}
+
+
 def probe() -> dict:
     """连通性自检（给 `check_assistant` 诊断命令用）。**不抛异常**，返回结果字典。"""
     info = {

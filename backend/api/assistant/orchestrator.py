@@ -20,7 +20,10 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import time
+from dataclasses import dataclass, field
 
 from django.db import transaction
 
@@ -98,23 +101,41 @@ def _get_or_create_session(*, user, session, question, pest_identifier):
     return session
 
 
-def ask(*, user, question: str, session: AssistantSession | None = None,
-        pest_identifier: str = '') -> dict:
-    """问一个问题，返回结构化结果。**永不抛异常给调用方**（见模块 docstring）。"""
+def _rate_limit() -> int:
+    """配置统一从 settings 读（settings.py 已经做过 `int()` 转换与默认值，
+    这里再用 os.environ 兜一遍只会让两处口径可能不一致）。"""
     from django.conf import settings as django_settings
 
-    # 配置统一从 settings 读（settings.py 已经做过 `int()` 转换与默认值，
-    # 这里再用 os.environ 兜一遍只会让两处口径可能不一致）。
-    rate_limit = getattr(django_settings, 'ASSISTANT_RATE_PER_MINUTE', None)
-    if rate_limit is None:
-        rate_limit = guard.DEFAULT_RATE_PER_MINUTE
+    value = getattr(django_settings, 'ASSISTANT_RATE_PER_MINUTE', None)
+    return guard.DEFAULT_RATE_PER_MINUTE if value is None else value
 
-    # ── ① 闸门 ────────────────────────────────────────────────────────────
-    guard_result = guard.check(question, user=user, rate_per_minute=rate_limit)
 
-    # 闸门拦下的问题**也要落库**（否则"用户问了什么被挡了"无从复盘），
-    # 但只在有会话时落：空问题连会话都不该建。
-    if not guard_result.ok and guard_result.reason in ('empty',):
+@dataclass
+class Prepared:
+    """同步与流式**共用**的"决策阶段"产物（第 195 批抽出）。
+
+    为什么要有它：`ask()` 与 `ask_stream()` 的区别只在**怎么生成**（一次拿完 vs 逐字）。
+    闸门 / 会话 / 检索 / 上下文 / 降级判定这五步必须完全一致 —— 否则会出现
+    "同步说未收录、流式却说打某某药"这种自相矛盾。抽出来就只有一份实现可改。
+    """
+
+    session: AssistantSession
+    question: str
+    #: 非空表示**不必生成**，直接把这段话当答案（降级）
+    early_answer: str = ''
+    early_reason: str = ''
+    messages: list[dict] = field(default_factory=list)
+    citations: list[dict] = field(default_factory=list)
+    prompt_version: str = ''
+
+
+def _prepare(*, user, question: str, session: AssistantSession | None,
+             pest_identifier: str) -> Prepared | dict:
+    """跑完"决策阶段"。返回 `Prepared`；对**空问题**直接返回响应字典（连会话都不建）。"""
+    guard_result = guard.check(question, user=user, rate_per_minute=_rate_limit())
+
+    # 空问题连会话都不该建（否则问答历史里会积一堆空会话）。
+    if not guard_result.ok and guard_result.reason == 'empty':
         return {
             'session_id': getattr(session, 'pk', None),
             'message_id': None,
@@ -129,84 +150,120 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         user=user, session=session, question=guard_result.question or question,
         pest_identifier=pest_identifier,
     )
+    prepared = Prepared(session=session, question=guard_result.question or question)
+
+    if not guard_result.ok:
+        prepared.early_answer, prepared.early_reason = _guard_reply(guard_result)
+        return prepared
+
+    intent = detect_intent(prepared.question)
+    from django.conf import settings as django_settings
+
+    hits = search(prepared.question, pest_identifier=pest_identifier,
+                  top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 5))
+    built = context_builder.build(hits)
+
+    if built.is_empty:
+        # 无来源不回答：农业场景答错药是事故，不是体验问题
+        prepared.early_answer, prepared.early_reason = prompts.DEGRADE_NO_SOURCE, 'no_source'
+    elif not llm.enabled():
+        prepared.early_answer = prompts.DEGRADE_NO_LLM.format(body=_fallback_body(hits))
+        prepared.early_reason = 'llm_disabled'
+    else:
+        prepared.messages = prompts.build_messages(prepared.question, built.text, intent)
+        prepared.citations = [c.as_dict() for c in built.citations[:MAX_CITATIONS]]
+        prepared.prompt_version = prompts.PROMPT_VERSION
+    return prepared
+
+
+def _persist(session, question: str, *, answer: str, reason: str, model: str = '',
+             latency_ms: int = 0, citations: list | None = None,
+             usage: dict | None = None, prompt_version: str = '') -> AssistantMessage:
+    """落库：用户消息 + 助手消息（单事务，要么都写要么都不写）。"""
+    with transaction.atomic():
+        AssistantMessage.objects.create(session=session, role='user', content=question)
+        message = AssistantMessage.objects.create(
+            session=session,
+            role='assistant',
+            content=answer,
+            model=model,
+            degraded=bool(reason),
+            degrade_reason=reason,
+            latency_ms=latency_ms,
+            citations=citations or [],
+            usage=usage or {},
+            prompt_version=prompt_version,
+        )
+        session.save(update_fields=['updated_at'])   # 触发 auto_now，让会话列表按活跃排序
+    return message
+
+
+def ask(*, user, question: str, session: AssistantSession | None = None,
+        pest_identifier: str = '') -> dict:
+    """问一个问题，返回结构化结果。**永不抛异常给调用方**（见模块 docstring）。"""
+    prepared = _prepare(user=user, question=question, session=session,
+                        pest_identifier=pest_identifier)
+    if isinstance(prepared, dict):
+        return prepared
+
     answer, reason, citations, usage, actual_model, prompt_version = '', '', [], {}, '', ''
     latency_ms = 0
 
     try:
-        if not guard_result.ok:
-            answer, reason = _guard_reply(guard_result)
+        if prepared.early_answer:
+            answer, reason = prepared.early_answer, prepared.early_reason
         else:
-            # ── ②③ 意图 + 检索 ────────────────────────────────────────────
-            intent = detect_intent(guard_result.question)
-            hits = search(guard_result.question, pest_identifier=pest_identifier,
-                          top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 5))
-            built = context_builder.build(hits)
-
-            if built.is_empty:
-                # ④ 无来源不回答：农业场景答错药是事故，不是体验问题
-                answer, reason = prompts.DEGRADE_NO_SOURCE, 'no_source'
-            elif not llm.enabled():
-                answer = prompts.DEGRADE_NO_LLM.format(body=_fallback_body(hits))
-                reason = 'llm_disabled'
+            prompt_version = prepared.prompt_version
+            try:
+                result = llm.chat(prepared.messages)
+            except llm.LLMError as exc:
+                logger.warning('助手生成失败，降级：%s', exc)
+                from .retriever import search as _search
+                hits = _search(prepared.question, pest_identifier=pest_identifier)
+                answer = prompts.DEGRADE_ERROR.format(reason=exc, body=_fallback_body(hits))
+                reason = 'llm_error'
             else:
-                # ── ⑤⑥ 提示词 + 生成 ──────────────────────────────────────
-                messages = prompts.build_messages(guard_result.question, built.text, intent)
-                prompt_version = prompts.PROMPT_VERSION
-                try:
-                    result = llm.chat(messages)
-                except llm.LLMError as exc:
-                    logger.warning('助手生成失败，降级：%s', exc)
-                    answer = prompts.DEGRADE_ERROR.format(reason=exc, body=_fallback_body(hits))
-                    reason = 'llm_error'
+                latency_ms = result.latency_ms
+                actual_model = result.model
+                usage = {
+                    'prompt_tokens': result.prompt_tokens,
+                    'completion_tokens': result.completion_tokens,
+                    'latency_ms': result.latency_ms,
+                    'configured_model': llm.model_name(),
+                }
+                # ── ⑦ 引用校验：模型必须真的引用了上下文里的条目 ──────
+                # 候选引用来自 `_prepare`（那里已按【序号】顺序排好）。
+                # 判断方式：答案里出现【i】就认为第 i 条被引用；一条都没标时
+                # **不判失败**（模型可能只是忘了标序号，内容仍来自上下文），
+                # 但把全部候选带上并在 usage 里如实记 `citation_marked=False`。
+                marked = {
+                    index for index in range(1, len(prepared.citations) + 1)
+                    if f'【{index}】' in result.text
+                }
+                if marked:
+                    citations = [c for index, c in enumerate(prepared.citations, start=1)
+                                 if index in marked]
+                    usage['citation_marked'] = True
                 else:
-                    latency_ms = result.latency_ms
-                    actual_model = result.model
-                    usage = {
-                        'prompt_tokens': result.prompt_tokens,
-                        'completion_tokens': result.completion_tokens,
-                        'latency_ms': result.latency_ms,
-                        'configured_model': llm.model_name(),
-                    }
-                    # ── ⑦ 引用校验：模型必须真的引用了上下文里的条目 ──────
-                    cited = [c for c in built.citations if f'【{built.citations.index(c) + 1}】' in result.text]
-                    if not cited and built.citations:
-                        # 一个引用都没标：不判失败，但**如实记录**。
-                        # 不降级的原因：模型可能只是忘了标序号，内容仍来自上下文；
-                        # 这里把全部候选引用带上，并在 usage 里标记未标注。
-                        cited = built.citations[:MAX_CITATIONS]
-                        usage['citation_marked'] = False
-                    else:
-                        usage['citation_marked'] = True
-                    answer = result.text or prompts.DEGRADE_NO_SOURCE
-                    citations = [c.as_dict() for c in cited[:MAX_CITATIONS]]
-                    if not answer.strip():
-                        answer, reason = prompts.DEGRADE_NO_SOURCE, 'no_source'
+                    citations = list(prepared.citations)
+                    usage['citation_marked'] = False
+                answer = (result.text or '').strip()
+                if not answer:
+                    answer, reason, citations = prompts.DEGRADE_NO_SOURCE, 'no_source', []
     except Exception as exc:  # noqa: BLE001 —— 兜底：任何意外都要变成可读回答
         logger.exception('助手链路出现未预期错误')
         answer = f'（AI 助手暂时不可用：{exc}）'
         reason = 'llm_error'
 
     # ── ⑧ 落库（单事务：用户消息与助手消息要么都写、要么都不写）──────────
-    with transaction.atomic():
-        AssistantMessage.objects.create(
-            session=session, role='user', content=guard_result.question or question,
-        )
-        message = AssistantMessage.objects.create(
-            session=session,
-            role='assistant',
-            content=answer,
-            model=actual_model,
-            degraded=bool(reason),
-            degrade_reason=reason,
-            latency_ms=latency_ms,
-            citations=citations,
-            usage=usage,
-            prompt_version=prompt_version,
-        )
-        session.save(update_fields=['updated_at'])   # 触发 auto_now，让会话列表按活跃排序
+    message = _persist(
+        prepared.session, prepared.question, answer=answer, reason=reason,
+        model=actual_model, latency_ms=latency_ms, citations=citations,
+        usage=usage, prompt_version=prompt_version,
+    )
 
     return {
-        'session_id': session.pk,
+        'session_id': prepared.session.pk,
         'message_id': message.pk,
         'answer': answer,
         'degraded': bool(reason),
@@ -214,3 +271,144 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         'citations': citations,
         'usage': usage,
     }
+
+
+def _sse(event: str, data: dict) -> bytes:
+    """拼一个 SSE 事件。
+
+    ⚠️ `ensure_ascii=False` + UTF-8 编码：中文若被转义成 `\\uXXXX`，前端能解析但
+    体积大且调试时看不懂；直接发 UTF-8 更直观（SSE 规范本身就是 UTF-8）。
+    """
+    payload = json.dumps(data, ensure_ascii=False)
+    return f'event: {event}\ndata: {payload}\n\n'.encode('utf-8')
+
+
+def ask_stream(*, user, question: str, session: AssistantSession | None = None,
+               pest_identifier: str = ''):
+    """流式问答：yield SSE 事件字节串。
+
+    事件序列（与 `docs/智能回答助手框架.md` 第五节一致）：
+
+        meta       {session_id, message_id?, degraded, degrade_reason, citations}
+        delta      {text}                     ← 多条（降级时只有一条，整段给）
+        citations  {citations}                ← 生成结束后的校验结果
+        done       {usage, degraded, degrade_reason, model, latency_ms}
+
+    ## 落库时机（这里刻意与"先答完再存"不同）
+
+    助手消息**在开始流式之前就建好**（内容为空、`degraded` 先按"是否降级"填），
+    生成结束后再 update。理由：这样 `meta` 事件里能立刻带上 `message_id`，
+    前端断流后仍能定位这条消息；而如果等流完再存，中途刷新就什么都没留下。
+    代价是"空内容的助手消息"会短暂存在 —— 但它必然被同一个请求补全。
+    """
+    prepared = _prepare(user=user, question=question, session=session,
+                        pest_identifier=pest_identifier)
+    if isinstance(prepared, dict):
+        # 空问题：不落库，只把同一套响应翻译成 SSE
+        yield _sse('meta', {'session_id': prepared['session_id'], 'message_id': None,
+                            'degraded': True, 'degrade_reason': 'empty', 'citations': []})
+        yield _sse('delta', {'text': prepared['answer']})
+        yield _sse('done', {'usage': {}, 'degraded': True, 'degrade_reason': 'empty'})
+        return
+
+    started = time.time()
+
+    # ── 降级路径：不调模型，整段一次给 ────────────────────────────────────
+    if prepared.early_answer:
+        message = _persist(prepared.session, prepared.question,
+                           answer=prepared.early_answer, reason=prepared.early_reason,
+                           citations=[], prompt_version=prepared.prompt_version)
+        yield _sse('meta', {'session_id': prepared.session.pk, 'message_id': message.pk,
+                            'degraded': True, 'degrade_reason': prepared.early_reason,
+                            'citations': []})
+        yield _sse('delta', {'text': prepared.early_answer})
+        yield _sse('done', {'usage': {}, 'degraded': True,
+                            'degrade_reason': prepared.early_reason,
+                            'latency_ms': message.latency_ms})
+        return
+
+    # ── 生产路径：先建消息行（内容待补），拿到 id 后再开始流 ─────────────
+    with transaction.atomic():
+        AssistantMessage.objects.create(session=prepared.session, role='user',
+                                        content=prepared.question)
+        message = AssistantMessage.objects.create(
+            session=prepared.session, role='assistant', content='', degraded=False,
+            prompt_version=prepared.prompt_version,
+        )
+        prepared.session.save(update_fields=['updated_at'])
+
+    yield _sse('meta', {'session_id': prepared.session.pk, 'message_id': message.pk,
+                        'degraded': False, 'degrade_reason': '',
+                        'citations': prepared.citations})
+
+    pieces: list[str] = []
+    usage: dict = {}
+    actual_model = ''
+    error_reason = ''
+    try:
+        for event in llm.chat_stream(prepared.messages):
+            if 'text' in event:
+                pieces.append(event['text'])
+                yield _sse('delta', {'text': event['text']})
+            elif 'usage' in event:
+                usage.update(event['usage'])
+            elif 'model' in event:
+                actual_model = event['model']
+    except llm.LLMError as exc:
+        # ⚠️ 关键判断：**已经吐出去的字不能收回**。
+        #    如果已经有内容，就保留它并如实标记中途出错；只有"一个字都没发出去"时
+        #    才整段降级成档案原文。
+        #    第一版没做这个区分 —— 直接把部分回答替换成降级文本，
+        #    结果是"用户已经看到的半句话凭空消失"（被单测抓出来）。
+        logger.warning('助手流式生成失败：%s', exc)
+        error_reason = 'llm_error'
+        if not pieces:
+            hits = search(prepared.question, pest_identifier=pest_identifier)
+            text = prompts.DEGRADE_ERROR.format(reason=exc, body=_fallback_body(hits))
+            pieces = [text]
+            yield _sse('delta', {'text': text})
+        else:
+            error_reason = 'llm_error_partial'
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('助手流式链路出现未预期错误')
+        error_reason = 'llm_error'
+        if not pieces:
+            text = f'（AI 助手暂时不可用：{exc}）'
+            pieces = [text]
+            yield _sse('delta', {'text': text})
+        else:
+            # 同上：已有内容就保留，只标记中途出错
+            error_reason = 'llm_error_partial'
+
+    answer = ''.join(pieces).strip()
+    latency_ms = int((time.time() - started) * 1000)
+    reason = error_reason
+    citations = list(prepared.citations)
+
+    if not answer:
+        # 模型一个字都没吐（例如上下文过长被拒）：按"未收录"处理并如实记录
+        answer, reason, citations = prompts.DEGRADE_NO_SOURCE, 'no_source', []
+
+    usage['latency_ms'] = latency_ms
+    if actual_model:
+        usage['configured_model'] = llm.model_name()
+    marked = {i for i in range(1, len(prepared.citations) + 1) if f'【{i}】' in answer}
+    if marked:
+        citations = [c for i, c in enumerate(prepared.citations, start=1) if i in marked]
+        usage['citation_marked'] = True
+    else:
+        usage['citation_marked'] = False
+
+    message.content = answer
+    message.model = actual_model
+    message.degraded = bool(reason)
+    message.degrade_reason = reason
+    message.latency_ms = latency_ms
+    message.citations = citations
+    message.usage = usage
+    message.save(update_fields=['content', 'model', 'degraded', 'degrade_reason',
+                               'latency_ms', 'citations', 'usage'])
+
+    yield _sse('citations', {'citations': citations})
+    yield _sse('done', {'usage': usage, 'degraded': bool(reason), 'degrade_reason': reason,
+                        'model': actual_model, 'latency_ms': latency_ms})
