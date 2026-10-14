@@ -1,8 +1,13 @@
 """`load_kb` —— 把校准版知识库导入系统的命令。
 
-# 这一批（K1）只实现 `--dry-run`：**只读、绝不写库**
+## 两种模式（**必须显式选一个**，不选会被拒绝）
 
-## 为什么先做 dry-run
+    python manage.py load_kb --dry-run              # 只读比对（K1），不写任何数据
+    python manage.py load_kb --apply                # 真正写库（K3）
+    python manage.py load_kb --dry-run --verbose    # 额外打印每个字段的 旧长度→新长度
+    python manage.py load_kb --dry-run --strict     # 有任何未匹配/缺失就退出码 1
+
+## 为什么必须先跑 dry-run
 
 语料入库是"一写就落地、错了要回滚"的操作，而它有两个**只能靠比对发现**的错配点：
 
@@ -13,21 +18,24 @@
    否则百科里会出现两条「南瓜白粉病」。
 
 所以 `--dry-run` 的输出目标是：**让每一处匹配/未匹配都能被人一眼核对**，
-包括"用哪种方式匹配上的"（identifier / 顺带的中文名 / 别名表）。
+包括"用哪种方式匹配上的"（中文名 / 别名表）以及"会删掉多少旧数据"。
+
+## `--apply` 的有损点（只有一个，且是刻意的）
+
+每个病害名下**先删旧防治再写新版**：`PreventionMethod` 没有唯一约束，
+不先删就会每次导入翻倍。代价是旧措施被清掉 —— 所以**写入前必须有备份**：
+
+    python manage.py backend_backup --label before-kb-import
+    python manage.py backup_verify --strict
+
+写入整体在**一个事务**里：任何一条失败都全部回滚，不会留下半套数据。
+写完**再跑一次 `--dry-run`**，"将被替换"应当变成 0 —— 这就是幂等性的验收标准。
 
 ## 与 `docs/tools/check_kb_coverage.py` 的分工
 
 那个脚本核对的是「模型 38 类 ↔ 词条 ↔ 校准版」的**覆盖面**（不读 Django）；
 本命令核对的是「**落到哪一行、改哪几个字段、写几条防治**」（要走 ORM）。
 两者互补：前者回答"有没有漏"，后者回答"写到哪去"。
-
-## 用法
-
-    python manage.py load_kb --dry-run              # 只读比对（当前唯一实现的模式）
-    python manage.py load_kb --dry-run --verbose    # 额外打印每个字段的 旧长度→新长度
-    python manage.py load_kb --dry-run --strict     # 有任何未匹配/字段缺失就退出码 1
-
-退出码：0 = 可以安全入库；1 = 有需要人工确认的问题（仅 `--strict` 时才影响退出码）。
 """
 from __future__ import annotations
 
@@ -35,8 +43,9 @@ import json
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 
-from api.models import PestInfo, PreventionMethod
+from api.models import CropHealthProfile, PestInfo, PreventionMethod
 
 #: JSON 维度 → 落点。`PestInfo` 用字段名，防治用 category。**改这里就是改口径。**
 DISEASE_FIELD_MAP = {
@@ -69,12 +78,17 @@ DEFAULT_JSON = Path('..') / 'docs' / 'knowledge_base' / '作物病害知识库_�
 
 
 class Command(BaseCommand):
-    help = '导入手册知识库（校准版）。当前只实现 --dry-run：只读比对，不写库'
+    help = ('导入校准版知识库：--dry-run 只读比对；--apply 真正写库（先删后写，需先备份）')
 
     def add_arguments(self, parser):
         parser.add_argument(
             '--dry-run', action='store_true',
-            help='只读比对并打印报告，不写任何数据（当前唯一实现的模式）',
+            help='只读比对并打印报告，不写任何数据',
+        )
+        parser.add_argument(
+            '--apply', action='store_true',
+            help='真正写库（K3）。**有损**：先删每个病害名下的旧防治再写新版；'
+                 '执行前请先备份（python manage.py backend_backup --label before-kb-import）',
         )
         parser.add_argument(
             '--json', default=str(DEFAULT_JSON),
@@ -104,23 +118,30 @@ class Command(BaseCommand):
         self.to_pest_fields = 0      # 将更新的 PestInfo 字段数
         self.to_prevent = 0          # 将写入的防治条数
         self.unchanged = 0           # 内容已一致的字段/防治
-        self.healthy_records = 0     # healthy 记录（K2 才有落点）
-        self.prev_old = 0            # 现有防治总条数（将被删）
+        self.healthy_records = 0     # healthy 记录（K2 后落 CropHealthProfile）
+        self.healthy_matched = 0     # 其中能接上 PestInfo 的
+        self.prev_old = 0            # 本轮涉及词条名下的现有防治条数（将被删）
         self.prev_new = 0            # 计划写入的防治条数
         self.prev_identical = 0      # 其中内容其实没变的
         self.prev_deleted = 0        # 会被真正删掉（内容不同）的
 
-        if not options['dry_run']:
+        dry_run = options['dry_run']
+        apply_mode = options['apply']
+        if not dry_run and not apply_mode:
             raise CommandError(
-                '当前只实现了 --dry-run（K1）。真实写入（--apply）属于 K3，'
-                '需要先完成 K2 的迁移（scientific_name / sources / CropHealthProfile）。'
+                '请显式选择模式：--dry-run（只读比对，推荐先跑）或 --apply（真正写库）。'
             )
+        if dry_run and apply_mode:
+            raise CommandError('--dry-run 与 --apply 不能同时使用。')
 
         self._check_llm_channel()
         payload = self._load_json(Path(options['json']))
         self._compare(payload)
         self._summary()
         self._maybe_report_duplicate_names()
+
+        if apply_mode:
+            self._apply(payload)
 
         if options['strict'] and (self.problems or self.warnings):
             raise CommandError(
@@ -143,9 +164,14 @@ class Command(BaseCommand):
         fields = [f.name for f in PestInfo._meta.get_fields()]
         for name in ('scientific_name', 'sources'):
             if name in fields:
-                self._ok(f'PestInfo.{name} 已存在（K2 迁移已完成）')
+                self._ok(f'PestInfo.{name} 已存在')
             else:
-                self._warn(f'PestInfo.{name} **不存在** —— JSON 的该字段本轮无处安放（K2 迁移后启用）')
+                self._bad(f'PestInfo.{name} **不存在** —— 请先完成 K2 迁移（makemigrations + migrate）')
+                self.problems.append(f'缺字段 PestInfo.{name}（K2 迁移未做）')
+        if CropHealthProfile._meta.db_table:
+            self._ok(f'CropHealthProfile 已建（表 {CropHealthProfile._meta.db_table}）')
+        else:
+            self.problems.append('缺表 CropHealthProfile（K2 迁移未做）')
 
     # ── 步骤 2：读 JSON ──────────────────────────────────────────────────
     def _load_json(self, path: Path) -> dict:
@@ -199,14 +225,18 @@ class Command(BaseCommand):
                 pest, how = self._resolve(record)
                 label = pest.name if pest else '（未匹配）'
                 missing = [d for d in HEALTHY_DIMENSIONS if not dims.get(d)]
-                note = '待 K2（CropHealthProfile 未建）'
-                if not pest:
+                if pest:
+                    self.healthy_matched += 1
+                    # K2 之后有了落点：这一条会写进 CropHealthProfile（按 pest 一对一）
+                    existing = CropHealthProfile.objects.filter(pest=pest).first()
+                    note = '将更新档案' if existing else '将新建档案'
+                else:
                     note = '⚠ 未匹配到词条'
                     self.warnings.append(f'healthy 记录未匹配：{name}')
                 if missing:
                     self.warnings.append(f'{name} 缺少维度：{missing}')
                 self.stdout.write(
-                    f'  {index:>3}  {name:<14} {label:<12} {how:<22} {"—":<14} {note}'
+                    f'  {index:>3}  {name:<14} {label:<12} {how:<22} {"—":<16} {"档案":<12} {note}'
                 )
                 continue
 
@@ -310,7 +340,8 @@ class Command(BaseCommand):
             f'      将被替换                  {self.prev_deleted} 条（**内容与新版不同，删除后以新版覆盖**）'
         )
         self.stdout.write('')
-        self._ok(f'healthy 记录 {self.healthy_records} 条 —— 本轮不落库（等 K2 建 CropHealthProfile）')
+        self._ok(f'healthy 记录 {self.healthy_records} 条，其中 {self.healthy_matched} 条能接上词条'
+                 f'（写入 CropHealthProfile，按 pest 一对一）')
         if self.prev_deleted > 0:
             self.warnings.append(
                 f'将有 {self.prev_deleted} 条旧防治被替换（设计使然：新语料是重写版），'
@@ -353,3 +384,75 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f'      · {item}'))
         if not self.problems and not self.warnings:
             self._ok('比对通过，可以进入 K2/K3')
+
+    # ── 步骤 7：真正写库（K3）──────────────────────────────────────────────
+    def _apply(self, payload: dict) -> None:
+        """把语料写进库。**整体一个事务**：任何一条失败都全部回滚。
+
+        有损点只有一个，且是刻意的：每个病害名下**先删旧防治再写新版**。
+        `PreventionMethod` 没有唯一约束，不先删就会每次导入翻倍；
+        而"先删后写"意味着旧措施会被清掉 —— 所以写入前必须有备份。
+        """
+        self._section('七、写入（--apply）')
+        if self.problems:
+            raise CommandError(
+                f'存在 {len(self.problems)} 个问题，拒绝写入。请先解决（可用 --dry-run 查看）。'
+            )
+
+        pests_updated = pest_created = prevent_created = profile_new = profile_upd = 0
+        with transaction.atomic():
+            for record in payload['records']:
+                pest, _how = self._resolve(record)
+                if pest is None:
+                    raise CommandError(f'写入中断：{record["name"]} 未匹配到词条')
+                dims = record.get('dimensions', {})
+
+                if record.get('category') == 'healthy':
+                    profile, was_created = CropHealthProfile.objects.get_or_create(pest=pest)
+                    profile.crop_type = (record.get('host_crop') or '').split(' ')[0] or pest.crop_type
+                    profile.name = record['name']
+                    profile.scientific_name = record.get('scientific_name', '')
+                    for dim_key, field in CropHealthProfile.DIMENSION_FIELDS.items():
+                        setattr(profile, field, (dims.get(dim_key) or '').strip())
+                    profile.sources = record.get('sources', [])
+                    profile.save()
+                    profile_new += was_created
+                    profile_upd += (not was_created)
+                    continue
+
+                # ① 两个知识字段 + 学名 + 来源
+                changed = False
+                for dim_key, (target, field) in DISEASE_FIELD_MAP.items():
+                    if target != 'pest':
+                        continue
+                    value = (dims.get(dim_key) or '').strip()
+                    if value and getattr(pest, field) != value:
+                        setattr(pest, field, value)
+                        changed = True
+                if record.get('scientific_name') and pest.scientific_name != record['scientific_name']:
+                    pest.scientific_name = record['scientific_name']
+                    changed = True
+                if record.get('sources') and pest.sources != record['sources']:
+                    pest.sources = record['sources']
+                    changed = True
+                if changed:
+                    pest.save(update_fields=['symptoms', 'description', 'scientific_name', 'sources'])
+
+                # ② 防治：先删后写（该表无唯一约束，这是唯一的幂等做法）
+                PreventionMethod.objects.filter(pest=pest).delete()
+                for dim_key, (target, category_code) in DISEASE_FIELD_MAP.items():
+                    if target != 'prevention':
+                        continue
+                    value = (dims.get(dim_key) or '').strip()
+                    if not value:
+                        continue
+                    PreventionMethod.objects.create(pest=pest, category=category_code, measure=value)
+                    prevent_created += 1
+
+        self._ok(f'PestInfo 已更新 {pests_updated} 条（含学名/来源）')
+        self._ok(f'PreventionMethod 已重建 {prevent_created} 条')
+        self._ok(f'CropHealthProfile 新建 {profile_new} 条 / 更新 {profile_upd} 条')
+        self._ok('写入完成（单事务，已提交）。建议紧接着再跑一次 --dry-run 验证幂等性：'
+                 '"将被替换"应变为 0')
+
+    # ── 步骤 8：写入后的自查 ──────────────────────────────────────────────

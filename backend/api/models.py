@@ -459,6 +459,12 @@ class PestInfo(models.Model):  # 定义病害信息模型
     description = models.TextField(verbose_name="详细描述", default="暂无详细描述")  # 详细描述字段
     description_en = models.TextField(blank=True, default='', verbose_name="详细描述（英文）")
 
+    # 第 192 批（K2）：校准版知识库带来的两个新字段。
+    scientific_name = models.TextField(blank=True, default='', verbose_name="拉丁学名")
+    # sources 是**来源 URL 列表**（校准版每条附 3~4 条权威来源）——助手回答要能引用它，
+    # 所以用 JSONField 存数组而不是拼接成一个 TextField：拼接后前端无法逐条渲染成可点链接。
+    sources = models.JSONField(default=list, blank=True, verbose_name="数据来源（URL 列表）")
+
     def __str__(self):  # 定义对象字符串表示
         return f"{self.crop_type} - {self.name}"  # 返回作物类型和病害名称
 
@@ -466,6 +472,69 @@ class PestInfo(models.Model):  # 定义病害信息模型
         verbose_name = "病害信息"  # 单数名称
         verbose_name_plural = verbose_name  # 复数名称
         unique_together = ('name', 'crop_type')  # 定义唯一约束
+
+
+class CropHealthProfile(models.Model):  # 定义作物健康管理档案模型
+    """
+    作物健康管理档案（第 192 批新增）—— 落校准版知识库里的 12 条 `healthy` 记录。
+
+    为什么**不**塞进已有的两张表（这是 K2 唯一需要决策的地方）：
+      · `PestInfo` 是**病害**表：它的词条由识别结果反查（`pest_lookup`），把"健康栽培"
+        内容并进去会让"识别用词条"与"栽培管理档案"互相污染；
+      · `CropVariety` 是**品种**表（`name` + `description`），语义是"某个品种怎么样"，
+        而这里是"某个作物的健康形态与五类管理"，完全不是一回事。
+
+    与 `PestInfo` 的关系：库里已有 12 条 `*_healthy` 词条（如「健康番茄」），
+    那是**识别用**的；本表是**栽培管理用**的，用 `pest` 外键把两者接起来，
+    不合并 —— 这样"识别命中健康叶片的用户"也能被引导到对应作物的管理建议。
+    """
+
+    #: healthy 记录的 7 个维度 → 字段名。迁移/导入/翻译都按这张表走。
+    DIMENSION_FIELDS = {
+        '健康形态特征': 'morphology',
+        '健康生长条件': 'growing_conditions',
+        '农业健康管理': 'care_agricultural',
+        '化学保护': 'care_chemical',
+        '生态健康管理': 'care_ecological',
+        '物理保护': 'care_physical',
+        '健康监测': 'care_monitoring',
+    }
+
+    pest = models.OneToOneField(
+        PestInfo, null=True, blank=True, on_delete=models.SET_NULL, related_name='health_profile',
+        verbose_name="对应词条",  # 指向 12 条 *_healthy 词条之一
+    )
+    crop_type = models.CharField(max_length=100, db_index=True, verbose_name="作物类型")
+    name = models.CharField(max_length=255, verbose_name="档案名称")  # 如「健康番茄」
+    crop_type_en = models.CharField(max_length=100, blank=True, default='', verbose_name="作物类型（英文）")
+    name_en = models.CharField(max_length=255, blank=True, default='', verbose_name="档案名称（英文）")
+    scientific_name = models.TextField(blank=True, default='', verbose_name="拉丁学名")
+
+    morphology = models.TextField(blank=True, default='', verbose_name="健康形态特征")
+    morphology_en = models.TextField(blank=True, default='', verbose_name="健康形态特征（英文）")
+    growing_conditions = models.TextField(blank=True, default='', verbose_name="健康生长条件")
+    growing_conditions_en = models.TextField(blank=True, default='', verbose_name="健康生长条件（英文）")
+
+    care_agricultural = models.TextField(blank=True, default='', verbose_name="农业健康管理")
+    care_agricultural_en = models.TextField(blank=True, default='', verbose_name="农业健康管理（英文）")
+    care_chemical = models.TextField(blank=True, default='', verbose_name="化学保护")
+    care_chemical_en = models.TextField(blank=True, default='', verbose_name="化学保护（英文）")
+    care_ecological = models.TextField(blank=True, default='', verbose_name="生态健康管理")
+    care_ecological_en = models.TextField(blank=True, default='', verbose_name="生态健康管理（英文）")
+    care_physical = models.TextField(blank=True, default='', verbose_name="物理保护")
+    care_physical_en = models.TextField(blank=True, default='', verbose_name="物理保护（英文）")
+    care_monitoring = models.TextField(blank=True, default='', verbose_name="健康监测")
+    care_monitoring_en = models.TextField(blank=True, default='', verbose_name="健康监测（英文）")
+
+    sources = models.JSONField(default=list, blank=True, verbose_name="数据来源（URL 列表）")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    def __str__(self):  # 定义对象字符串表示
+        return self.name  # 返回档案名称
+
+    class Meta:  # 定义模型元数据
+        verbose_name = "作物健康管理"  # 单数名称
+        verbose_name_plural = verbose_name  # 复数名称
 
 
 class PreventionMethod(models.Model):  # 定义防治方法模型
