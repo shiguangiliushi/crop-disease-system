@@ -417,10 +417,15 @@ class Command(BaseCommand):
                     {'category': 'MONITORING', 'measure': '定期检查植株，注意观察叶片症状。重点监测木虱数量。建立病害预警系统。发现病株立即处理。'}
                 ]
             },
-            # 桃病害
+            # 桃子病害
+            # ⚠️ 作物名统一用「桃子」（第 190 批按用户要求改的：原来只写一个「桃」字）。
+            #    它同时是**百科的作物筛选值**与**识别结果里的作物名**，所以要跟库里的
+            #    `PestInfo.crop_type`、前端 i18n（`home.cropPeach`）保持一致；
+            #    病害名 `桃细菌性斑点病` 保持原名不动（那是 PlantVillage 的病害名，
+            #    改它会牵动 `cleanup_pests.py` 的白名单与既有数据）。
             {
                 'name': '桃细菌性斑点病',
-                'crop_type': '桃',
+                'crop_type': '桃子',
                 'english_identifier': 'peach_bacterial_spot',
                 'symptoms': '叶片和果实出现褐色斑点，周围有水渍状边缘。严重时叶片穿孔，果实腐烂。',
                 'description': '由桃细菌性斑点病菌(Xanthomonas arboricola pv. pruni)引起的细菌性病害。病菌在病残体上越冬，通过风雨传播。高温高湿条件易发病。',
@@ -434,7 +439,7 @@ class Command(BaseCommand):
             },
             {
                 'name': '健康桃',
-                'crop_type': '桃',
+                'crop_type': '桃子',
                 'english_identifier': 'peach_healthy',
                 'symptoms': '叶片绿色，生长健壮。果实发育正常，无病斑。树势健壮。',
                 'description': '健康的桃植株，未受病害侵染。保持健康状态需要良好的栽培管理。',

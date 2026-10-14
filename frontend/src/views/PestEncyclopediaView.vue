@@ -276,7 +276,7 @@ const cropTypeMap = {
    'corn': '玉米',
    'potato': '马铃薯',
   'cherry': '樱桃',
-  'peach': '桃',
+  'peach': '桃子',   // 第 190 批：与库里的 crop_type 对齐（原来只写一个「桃」字）
   'strawberry': '草莓',
   'squash': '南瓜',
 };

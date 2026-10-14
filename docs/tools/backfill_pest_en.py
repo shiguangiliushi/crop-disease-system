@@ -49,7 +49,8 @@ CROP_ALIASES = {
     '马铃薯': 'Potato',
     '玉米': 'Corn',
     '樱桃': 'Cherry',
-    '桃': 'Peach',
+    # 第 190 批：作物名从「桃」改成「桃子」（与库里的 crop_type 对齐）
+    '桃子': 'Peach',
     '大豆': 'Soybean',
     '蓝莓': 'Blueberry',
     '树莓': 'Raspberry',

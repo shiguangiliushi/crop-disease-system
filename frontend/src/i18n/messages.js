@@ -356,7 +356,8 @@ export const zhCN = {
     cropStrawberry: '草莓',
     cropPepper: '甜椒',
     cropCitrus: '柑橘',
-    cropPeach: '桃',
+    // 第 190 批：作物名统一用「桃子」（原来只写一个「桃」字），与库里的 crop_type 对齐
+    cropPeach: '桃子',
     cropPumpkin: '南瓜',
     diseaseAppleScab: '苹果黑星病',
     diseaseAppleBlackRot: '苹果黑腐病',
@@ -2919,6 +2920,8 @@ export const zhCN = {
     cropsStrawberry: '支持草莓叶焦病等病害识别',
     cropsPepper: '支持甜椒细菌性斑点病等病害识别',
     cropsCitrus: '支持柑橘黄龙病等病害识别',
+    // 第 190 批：作物名改了「桃子」，但**病害名仍是「桃细菌性斑点病」**
+    // （PlantVillage 的病害名，不带"子"字），所以这句话照旧 —— 改它会与百科词条不符
     cropsPeach: '支持桃细菌性斑点病等病害识别',
     cropsPumpkin: '支持南瓜白粉病等病害识别',
   },

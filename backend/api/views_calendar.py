@@ -83,9 +83,10 @@ def _serialize_task(task):
 
 
 #: 中文作物名 → 英文（与百科里的 crop_type_en 保持一致，这里作为兜底）
+#: 第 190 批：补上「桃子」（作物名从「桃」改成「桃子」，与库里的 crop_type 对齐）
 _CROP_EN = {
     '柑橘': 'Citrus', '玉米': 'Corn', '番茄': 'Tomato', '苹果': 'Apple',
-    '草莓': 'Strawberry', '葡萄': 'Grape', '马铃薯': 'Potato',
+    '草莓': 'Strawberry', '葡萄': 'Grape', '马铃薯': 'Potato', '桃子': 'Peach',
 }
 
 
