@@ -53,6 +53,10 @@ from .models_report import Report  # 第 41 批：举报
 from .models_calendar import CalendarTask  # 第 47 批：种植日历
 from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志
 from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
+# 第 193 批：智能回答助手（会话/消息）+ 闸门/检索/上下文/LLM 四个可单独测的模块
+from .models_assistant import AssistantMessage, AssistantSession
+from .assistant import context, guard, llm, retriever
+from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
 from .pest_lookup import (  # noqa: E402  第 159 批：类名 → 词条匹配
     find_pest_info,
     normalize as normalize_pest_key,
@@ -12638,3 +12642,255 @@ class PostRestoreAfterUnpublishTests(APITestCase):
         self.assertEqual(resp.data['succeeded'], 0)
         post.refresh_from_db()
         self.assertEqual(post.status, 'published')
+
+
+# ============================================================================
+# 智能回答助手（第 193 批，K5）
+# ----------------------------------------------------------------------------
+# 这些用例**全部不联网**：要么走降级分支（LLM 关着），要么把 `llm.chat` 换成桩。
+# 理由与翻译那批一样（见 settings.py 里 _IS_TESTING 那段）：测试一旦依赖外部模型，
+# 就会变慢、花钱、断网即挂，而且断言会受生成结果影响而随机失败。
+#
+# 每条用例都对应一个**真实故障模式**，不是为了凑覆盖率：
+#   · 闸门四条：空/超长/敏感词/限频 —— 都是"不该花模型额度"的输入；
+#   · 无来源不回答 —— 农业场景答错药是事故；
+#   · 降级：LLM 关 / LLM 抛错 —— 助手挂了不能让识别结果页跟着 500；
+#   · 上下文只取中文段 —— 防止引用里串出英文（见 assistant/context.py）；
+#   · 锚点场景的弱命中过滤 —— 实测过"这个病用什么药"会捞出 score=1 的路人词条。
+# ============================================================================
+class AssistantTests(TestCase):
+    """智能回答助手：闸门 / 检索 / 降级 / 引用 / 接口。"""
+
+    @classmethod
+    def setUpTestData(cls):
+        """造**最小**词条数据集。
+
+        为什么要造：`PestInfo` 的内容是 K3 从校准版知识库导入的**数据**，
+        不是迁移建立的**结构** —— 所以测试库默认是空的。第一次跑这套用例时
+        21 个里挂了 7 个，全是"依赖词条存在"的那些。
+
+        这里只造用例真正要用的两条，**不导入整个知识库**：导入 38 条 × 5 类防治
+        会让整套测试明显变慢，而本类要验的是**链路**而不是语料（语料另有
+        `docs/tools/check_kb_coverage.py` 负责核对）。
+        """
+        cls.pest_late_blight = PestInfo.objects.create(
+            name='番茄晚疫病', name_en='Tomato late blight', crop_type='番茄', crop_type_en='Tomato',
+            english_identifier='tomato_late_blight',
+            symptoms='危害叶、茎和青果。叶片多从叶尖或叶缘开始发病，初为暗绿色水渍状不规则病斑。',
+            description='病菌主要以菌丝体在带菌种薯中越冬，冷凉高湿条件下流行快。',
+            scientific_name='Phytophthora infestans (Mont.) de Bary',
+            sources=['https://example.org/late-blight'],
+        )
+        cls.pest_potato = PestInfo.objects.create(
+            name='马铃薯晚疫病', name_en='Potato late blight', crop_type='马铃薯', crop_type_en='Potato',
+            english_identifier='potato_late_blight',
+            symptoms='叶片出现水渍状暗绿色病斑，潮湿时病健交界处生白色霉层。',
+            description='我国第一号农作物病害，病源主要来自带菌种薯。',
+        )
+        for category, measure in (
+            ('AGRICULTURAL', '选用抗病品种；使用无病种薯。'),
+            ('CHEMICAL', '发病初期喷施烯酰吗啉、氟菌·霜霉威，间隔5-7天喷1次。'),
+        ):
+            PreventionMethod.objects.create(pest=cls.pest_late_blight, category=category, measure=measure)
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_user', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        # 缓存里可能残留敏感词表，清掉以免用例间互相影响
+        cache.delete('sensitive_words:active')
+
+    # ── 一、输入闸门 ────────────────────────────────────────────────────
+    def test_empty_question_returns_prompt_and_writes_nothing(self):
+        """空问题：给可操作提示，且**不建会话**（连一条垃圾会话都不该留下）"""
+        resp = self.client_auth.post('/api/assistant/ask/', {'question': '   '}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data['degraded'])
+        self.assertEqual(resp.data['degrade_reason'], 'empty')
+        self.assertIsNone(resp.data['session_id'])
+        self.assertEqual(AssistantSession.objects.count(), 0)
+        self.assertEqual(AssistantMessage.objects.count(), 0)
+
+    def test_too_long_question_gets_actionable_reply(self):
+        """超长问题：给出上限数字（可操作），且同为降级而非 HTTP 错误"""
+        resp = self.client_auth.post('/api/assistant/ask/',
+                                     {'question': '病' * (guard.MAX_QUESTION_CHARS + 1)},
+                                     format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['degrade_reason'], 'too_long')
+        self.assertIn(str(guard.MAX_QUESTION_CHARS), resp.data['answer'])
+
+    def test_oversized_body_is_400(self):
+        """body 超过硬上限才是 HTTP 400（这是"别把超长 body 读进内存"，不是业务规则）"""
+        resp = self.client_auth.post('/api/assistant/ask/',
+                                     {'question': 'x' * (views_assistant.MAX_BODY_CHARS + 1)},
+                                     format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_sensitive_question_never_reaches_retrieval(self):
+        """命中敏感词：直接给话术，**不检索也不调模型**"""
+        SensitiveWord.objects.create(word='测试敏感词', category='other', is_active=True)
+        cache.delete('sensitive_words:active')
+        with patch('api.assistant.orchestrator.search') as mocked_search:
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '这里有测试敏感词'}, format='json')
+            mocked_search.assert_not_called()
+        self.assertEqual(resp.data['degrade_reason'], 'sensitive')
+        self.assertIn('测试敏感词', resp.data['answer'])
+
+    @override_settings(ASSISTANT_RATE_PER_MINUTE=2)
+    def test_rate_limit_blocks_third_question(self):
+        """限频：第 3 次被挡，且**挡在检索之前**（不花额度）"""
+        for _ in range(2):
+            self.client_auth.post('/api/assistant/ask/', {'question': '帮我写一首诗'}, format='json')
+        with patch('api.assistant.orchestrator.search') as mocked_search:
+            resp = self.client_auth.post('/api/assistant/ask/', {'question': '再写一首'}, format='json')
+            mocked_search.assert_not_called()
+        self.assertEqual(resp.data['degrade_reason'], 'rate_limited')
+
+    # ── 二、无来源不回答 ────────────────────────────────────────────────
+    def test_no_source_question_does_not_call_llm(self):
+        """知识库里没有的问题：明确说"词条未收录"，且**不调模型**（不许它自由发挥）"""
+        with patch('api.assistant.orchestrator.llm.chat') as mocked_chat:
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '帮我写一首关于春天的诗'}, format='json')
+            mocked_chat.assert_not_called()
+        self.assertEqual(resp.data['degrade_reason'], 'no_source')
+        self.assertEqual(resp.data['citations'], [])
+        self.assertIn('未收录', resp.data['answer'])
+
+    # ── 三、降级：助手挂了，接口仍然 200 ─────────────────────────────────
+    def test_llm_disabled_falls_back_to_archive_text(self):
+        """LLM 关着（测试环境的默认）：回答降级成词条原文，并**说明这不是 AI 回答**"""
+        self.assertFalse(settings.LLM_ENABLED)          # 测试环境必须关着
+        resp = self.client_auth.post('/api/assistant/ask/',
+                                     {'question': '番茄晚疫病怎么打药'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['degrade_reason'], 'llm_disabled')
+        self.assertIn('AI 助手暂时不可用', resp.data['answer'])
+        self.assertIn('番茄晚疫病', resp.data['answer'])   # 原文里要有东西，不能是空壳
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_llm_error_is_degraded_not_500(self):
+        """模型调用抛错（超时/HTTP 错误）：仍 200 + degraded，并把原因写进库"""
+        with patch('api.assistant.llm.chat', side_effect=llm.LLMError('模拟超时')):
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '番茄晚疫病怎么打药'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['degrade_reason'], 'llm_error')
+        self.assertIn('模拟超时', resp.data['answer'])
+        message = AssistantMessage.objects.get(pk=resp.data['message_id'])
+        self.assertTrue(message.degraded)
+        self.assertEqual(message.degrade_reason, 'llm_error')
+
+    # ── 四、生产路径（用桩替换模型）──────────────────────────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_success_path_keeps_citation_and_usage(self):
+        """正常路径：答案原样返回，引用命中【1】，用量与模型名落库"""
+        stub = llm.ChatResult(text='番茄晚疫病要早打药，间隔5-7天喷1次。【1】',
+                              model='deepseek-flash', prompt_tokens=1234,
+                              completion_tokens=56, latency_ms=2345)
+        with patch('api.assistant.llm.chat', return_value=stub) as mocked:
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '番茄晚疫病怎么打药'}, format='json')
+            self.assertEqual(mocked.call_count, 1)
+        self.assertFalse(resp.data['degraded'])
+        self.assertEqual(resp.data['answer'], stub.text)
+        self.assertEqual(len(resp.data['citations']), 1)
+        self.assertEqual(resp.data['usage']['prompt_tokens'], 1234)
+        message = AssistantMessage.objects.get(pk=resp.data['message_id'])
+        self.assertEqual(message.model, 'deepseek-flash')      # 实到的模型，不是配置的
+        self.assertEqual(message.usage['configured_model'], 'deepseek-chat')
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_unmarked_citation_is_recorded_but_not_treated_as_failure(self):
+        """模型忘了标【1】：不判失败（内容仍来自上下文），但要**如实记录**未标注"""
+        stub = llm.ChatResult(text='番茄晚疫病要早打药。', model='deepseek-flash')
+        with patch('api.assistant.llm.chat', return_value=stub):
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '番茄晚疫病怎么打药'}, format='json')
+        self.assertFalse(resp.data['degraded'])
+        self.assertFalse(resp.data['usage']['citation_marked'])
+        self.assertTrue(resp.data['citations'])                # 仍带上候选引用，便于溯源
+
+    # ── 五、锚点与弱命中过滤 ────────────────────────────────────────────
+    def test_anchor_hit_is_ranked_first(self):
+        """识别结果直连：`pest_identifier` 命中的词条必须排第一"""
+        hits = retriever.search('这个病用什么药', pest_identifier='tomato___late_blight')
+        self.assertTrue(hits)
+        self.assertEqual(hits[0].pest.english_identifier, 'tomato_late_blight')
+        self.assertIn('识别结果直连', hits[0].why)
+
+    def test_weak_hits_are_filtered_out(self):
+        """锚点场景不该把 score=1 的路人词条带进上下文（实测过这个污染）"""
+        hits = retriever.search('这个病用什么药', pest_identifier='tomato___late_blight')
+        self.assertEqual(len(hits), 1, [f'{h.pest.name}:{h.score}' for h in hits])
+
+    def test_irrelevant_question_returns_nothing(self):
+        """与农业无关的问题：检索必须返回空，好让上层走"无来源"分支"""
+        self.assertEqual(retriever.search('帮我写一首关于春天的诗'), [])
+
+    # ── 六、上下文：中英文拼接要被挡住 ───────────────────────────────────
+    def test_context_takes_chinese_only(self):
+        """K3 把英文拼进了主字段：进提示词/引用前必须只留中文段"""
+        mixed = '叶片初现淡黄绿色斑点。 Apple scab is a fungal disease of apple.'
+        self.assertEqual(context.chinese_only(mixed), '叶片初现淡黄绿色斑点。')
+        # 中文行文里的学名夹注**不能**被切掉（它是正文的一部分）
+        keep = '病斑上散生黑色小粒点（分生孢子器 pycnidia）。'
+        self.assertEqual(context.chinese_only(keep), keep)
+
+    def test_context_is_empty_when_no_hits(self):
+        built = context.build([])
+        self.assertTrue(built.is_empty)
+        self.assertEqual(built.citations, [])
+
+    # ── 七、接口约定 ────────────────────────────────────────────────────
+    def test_ask_requires_authentication(self):
+        resp = APIClient().post('/api/assistant/ask/', {'question': '番茄晚疫病'}, format='json')
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_session_id_must_be_int(self):
+        resp = self.client_auth.post('/api/assistant/ask/',
+                                     {'question': '番茄晚疫病', 'session_id': 'abc'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_other_users_session_is_404(self):
+        """不能续别人的会话 —— 且返回 404 而不是 403，避免泄漏"该会话存在" """
+        other = User.objects.create_user(username='asst_other', password='pw12345678')
+        foreign = AssistantSession.objects.create(user=other, title='别人的会话')
+        resp = self.client_auth.post('/api/assistant/ask/',
+                                     {'question': '番茄晚疫病', 'session_id': foreign.pk},
+                                     format='json')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_continue_own_session_appends_messages(self):
+        """续自己的会话：消息追加到同一会话，而不是新建"""
+        first = self.client_auth.post('/api/assistant/ask/',
+                                      {'question': '番茄晚疫病怎么打药'}, format='json')
+        session_id = first.data['session_id']
+        self.client_auth.post('/api/assistant/ask/',
+                              {'question': '那马铃薯晚疫病呢', 'session_id': session_id},
+                              format='json')
+        self.assertEqual(AssistantSession.objects.count(), 1)
+        self.assertEqual(AssistantMessage.objects.filter(session_id=session_id).count(), 4)
+
+    def test_pest_identifier_binds_session_pest(self):
+        """从识别结果页进来：会话要绑定到该病害，后续提问都带着这个锚点"""
+        resp = self.client_auth.post('/api/assistant/ask/',
+                                     {'question': '这个病用什么药',
+                                      'pest_identifier': 'tomato___late_blight'}, format='json')
+        session = AssistantSession.objects.get(pk=resp.data['session_id'])
+        self.assertIsNotNone(session.pest)
+        self.assertEqual(session.pest.english_identifier, 'tomato_late_blight')
+
+    def test_degraded_answer_is_recorded_in_db(self):
+        """降级也要落库（否则"用户看到的差答案"事后无从复盘）"""
+        self.client_auth.post('/api/assistant/ask/', {'question': '帮我写一首诗'}, format='json')
+        message = AssistantMessage.objects.filter(role='assistant').first()
+        self.assertTrue(message.degraded)
+        self.assertEqual(message.degrade_reason, 'no_source')
+        self.assertEqual(message.prompt_version, '')

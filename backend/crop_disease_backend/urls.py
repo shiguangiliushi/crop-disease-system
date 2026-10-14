@@ -132,6 +132,8 @@ QuestionDetailView = import_view('api.views_expert', 'QuestionDetailView')
 AnswerCreateView = import_view('api.views_expert', 'AnswerCreateView')
 AnswerAcceptView = import_view('api.views_expert', 'AnswerAcceptView')
 ExpertListView = import_view('api.views_expert', 'ExpertListView')
+# 第 193 批：智能回答助手（语料 = 校准版知识库，见 docs/知识库入库方案.md）
+AssistantAskView = import_view('api.views_assistant', 'AssistantAskView')
 # 第 50 批：离线资料包
 PestOfflinePackView = import_view('api.views_offline', 'PestOfflinePackView')
 PasswordResetRequestView = import_view('api.views_user', 'PasswordResetRequestView')
@@ -416,6 +418,11 @@ api_urlpatterns = [
     path('consult/answers/<int:pk>/accept/', AnswerAcceptView.as_view(), name='consult-answer-accept'),
     path('consult/experts/', ExpertListView.as_view(), name='consult-expert-list'),
     path('consult/experts/<int:user_id>/', ExpertListView.as_view(), name='consult-expert-detail'),
+
+    # 智能回答助手（第 193 批）
+    #   只有 ask 一个接口：会话与会话历史直接读 AssistantSession / AssistantMessage，
+    #   不另开 REST 端点 —— 前端要用时再加，避免先建一堆没人调的路由。
+    path('assistant/ask/', AssistantAskView.as_view(), name='assistant-ask'),
 
     # 路由已由 router.urls 处理
 ]

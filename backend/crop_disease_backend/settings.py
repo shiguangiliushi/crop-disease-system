@@ -766,6 +766,39 @@ TRANSLATE_ON_WRITE = _env_bool('TRANSLATE_ON_WRITE', True)
 TRANSLATE_GLOSSARY = _env_bool('TRANSLATE_GLOSSARY', True)
 
 # ----------------------------------------------------------------------------
+# 智能回答助手（第 193 批，K5）
+# ----------------------------------------------------------------------------
+# 语料：docs/knowledge_base/作物病害知识库_校准版.json（38 条 × 7 维度，已入库）
+# 设计：docs/智能回答助手框架.md    入库：docs/知识库入库方案.md
+#
+# ⚠️ 这一组**刻意独立于 TRANSLATE_\***：助手与翻译各有自己的降级策略 ——
+#    翻译挂了只是没有英文，助手挂了要降级成"词条原文"。混用同一组配置会让
+#    "改翻译的 provider"顺手把助手弄坏。
+#
+# ⚠️ `LLM_MODEL` **不保证精确选型**：第 192 批实测本端点请求 `deepseek-chat` 时
+#    响应体的 model 字段是 `deepseek-flash`（端点侧重定向）。`assistant/llm.py`
+#    会把实到的模型记进 `ChatResult.model`，`AssistantMessage.model` 留存，
+#    所以"配置与实到不一致"事后可查，而不是静默接受。
+# ----------------------------------------------------------------------------
+#: 总开关。默认**关**（与 TRANSLATE_ENABLED 的默认 True 相反）：助手要花钱，
+#: 没配 key 时打开只会让每次提问都走一遍降级链路，不如显式开。
+LLM_ENABLED = _env_bool('LLM_ENABLED', False)
+LLM_API_URL = os.environ.get('LLM_API_URL', 'https://api.deepseek.com/v1')
+LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'deepseek-chat')
+#: 单次生成超时（秒）。真实回答带 7 维度上下文（800~1500 字），比极短请求慢得多。
+LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '20'))
+#: 单次生成的最大输出 token。800 够写"结论+依据+五类防治+免责"，再多就是啰嗦。
+LLM_MAX_TOKENS = int(os.environ.get('LLM_MAX_TOKENS', '800'))
+
+#: 单个会话最多多少条消息（到顶就建议新开会话，不做摘要压缩 —— 见框架文档"明确不做"）
+ASSISTANT_SESSION_MAX_MESSAGES = int(os.environ.get('ASSISTANT_SESSION_MAX_MESSAGES', '50'))
+#: 每用户每分钟提问上限（0 = 不限）。闸门在**动模型之前**执行，所以拒绝不花额度。
+ASSISTANT_RATE_PER_MINUTE = int(os.environ.get('ASSISTANT_RATE_PER_MINUTE', '10'))
+#: 检索取前几条进上下文。5 条约 2000~3000 字，是"够用且不跑题"的平衡点。
+ASSISTANT_TOP_K = int(os.environ.get('ASSISTANT_TOP_K', '5'))
+
+# ----------------------------------------------------------------------------
 # 测试环境必须**关掉**自动翻译（第 85 批）
 # ----------------------------------------------------------------------------
 # 单元测试里大量用例会通过接口发帖/评论。若让它们真的去调第三方翻译接口：
@@ -780,6 +813,12 @@ TRANSLATE_GLOSSARY = _env_bool('TRANSLATE_GLOSSARY', True)
 if _IS_TESTING:
     TRANSLATE_ENABLED = False
     TRANSLATE_ON_WRITE = False
+    # 第 193 批：助手也必须**关掉**。否则一旦本机 .env 配了 LLM_API_KEY，
+    # 跑测试就会真的去调外部模型：断言受生成结果影响而随机失败、每次跑测试都花钱、
+    # 而且离线环境直接挂（与上面翻译那段是同一个理由）。
+    # 需要验证"真实生成"的用例自己用 @override_settings(LLM_ENABLED=True) 打开，
+    # 并用 unittest.mock 把 llm.chat 换成桩 —— 见 AssistantTests。
+    LLM_ENABLED = False
 
 # ----------------------------------------------------------------------------
 # 测试期间把 MEDIA_ROOT 挪到临时目录（第 110 批）
