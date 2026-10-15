@@ -759,10 +759,11 @@ EN = {
         "and prune promptly to improve ventilation."
     ),
     ("tomato_bacterial_spot", "MONITORING"): (
-        "1) Survey the leaves at regular intervals after transplanting and spray as soon as dark spots are "
-        "first seen. 2) Spray preventively before spells of cool, rainy weather (16-24 °C with "
-        "continuous rain). 3) Check the disease promptly after rain. 4) Take care to distinguish it from "
-        "bacterial spot and, where necessary, send samples for laboratory testing."
+        "1) Survey the leaves at regular intervals after transplanting and spray as soon as dark spots "
+        "are first seen. 2) Spray preventively before spells of high temperature and high humidity (25-30 "
+        "°C, continuous rain or high humidity). 3) Check the disease promptly after rain. 4) Take care to "
+        "distinguish it from tomato bacterial speck and, where necessary, send samples for laboratory "
+        "testing."
     ),
     ("tomato_bacterial_spot", "PHYSICAL"): (
         "1) Treat seed with hot water or disinfect with hydrochloric acid or sodium hypochlorite. 2) Use "
