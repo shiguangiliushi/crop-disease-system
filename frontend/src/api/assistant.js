@@ -203,10 +203,40 @@ export async function escalateSession(sessionId, note = '') {
   return response.data;
 }
 
+/**
+ * 我的问答历史（第 198 批，独立问答页用）
+ *
+ * @param {{page?: number, page_size?: number}} params
+ * @returns {Promise<{count, page, page_size, has_more, results: Array}>}
+ */
+export async function listAssistantSessions(params = {}) {
+  const response = await http.get('/assistant/sessions/', { params });
+  return response.data;
+}
+
+/**
+ * 取一次会话的完整问答（含引用与评价）
+ *
+ * 流式回答在生成前会先落一条**空消息行**再回填，后端已在详情里过滤掉，
+ * 所以这里拿到的每一条 `content` 都非空。
+ */
+export async function getAssistantSession(sessionId) {
+  const response = await http.get(`/assistant/sessions/${sessionId}/`);
+  return response.data;
+}
+
+/** 删除一次会话（消息随会话级联删除，不留孤儿） */
+export async function deleteAssistantSession(sessionId) {
+  await http.delete(`/assistant/sessions/${sessionId}/`);
+}
+
 export default {
   askAssistant,
   askAssistantStream,
   sendAssistantFeedback,
   escalateSession,
+  listAssistantSessions,
+  getAssistantSession,
+  deleteAssistantSession,
   formatAssistantError,
 };

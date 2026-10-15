@@ -13,6 +13,8 @@ import { runLeaveGuards } from '@/composables/useUnsavedChanges'
 // 使用动态导入实现路由懒加载
 const HomeView = () => import('@/views/HomeView.vue')
 const DetectView = () => import('@/views/DetectView.vue')
+// 第 198 批：独立问答页（此前助手只能从识别结果页打开抽屉，没有识别结果时无法提问）
+const AssistantView = () => import('@/views/AssistantView.vue')
 const HistoryView = () => import('@/views/HistoryView.vue')
 const EditPostView = () => import('@/views/EditPostView.vue')
 const PestEncyclopediaView = () => import('@/views/PestEncyclopediaView.vue')
@@ -259,6 +261,16 @@ const router = createRouter({
         requiresAuth: true,
         title: '病害识别',
         breadcrumb: ['识别']
+      }
+    },
+    {
+      path: '/assistant',
+      name: 'assistant',
+      component: AssistantView,
+      meta: {
+        requiresAuth: true,
+        title: '智能问答',
+        breadcrumb: ['问答']
       }
     },
     {

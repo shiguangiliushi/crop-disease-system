@@ -54,11 +54,12 @@ const router = useRouter();
  * ========================================================================== */
 const { t } = useI18n();
 
-//: 导航分组（组间画一条竖线；分组只影响视觉，10 个入口全部保留）
+//: 导航分组（组间画一条竖线；分组只影响视觉，入口全部保留）
 const NAV_GROUPS = [
   [{ to: '/', key: 'home' }],
   [
     { to: '/detect', key: 'detect' },
+    { to: '/assistant', key: 'assistant' },  // 第 198 批：独立问答页
     { to: '/pests', key: 'pests' },
     { to: '/history', key: 'history' },
   ],

@@ -233,6 +233,10 @@ const linesOf = (content) => String(content || '').split('\n').filter((line) => 
 /** 降级原因 → 给用户的一句人话（不是错误码） */
 const degradeHintOf = (reason) => {
   if (!reason) return '';
+  // ⚠️ `llm_error_partial` 必须单独处理（第 198 批修）：它表示"AI 已经答了一部分，
+  //    中途断了"，界面上是**被截断的 AI 回答**。若也套用"以上为档案原文"，
+  //    用户会以为这段是词条原文 —— 那是**说错了内容的来源**。
+  if (reason === 'llm_error_partial') return t('assistant.hintTruncated');
   if (['llm_disabled', 'llm_error', 'no_citation'].includes(reason)) {
     return t('assistant.hintArchiveOnly');
   }

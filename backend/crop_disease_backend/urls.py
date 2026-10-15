@@ -139,6 +139,9 @@ AssistantAskStreamView = import_view('api.views_assistant', 'AssistantAskStreamV
 # 第 196 批：反馈闭环（打分 / 转人工）
 AssistantFeedbackView = import_view('api.views_assistant', 'AssistantFeedbackView')
 AssistantEscalateView = import_view('api.views_assistant', 'AssistantEscalateView')
+# 第 198 批：会话列表 / 详情 / 删除（独立问答页要用）
+AssistantSessionListView = import_view('api.views_assistant_sessions', 'AssistantSessionListView')
+AssistantSessionDetailView = import_view('api.views_assistant_sessions', 'AssistantSessionDetailView')
 # 第 50 批：离线资料包
 PestOfflinePackView = import_view('api.views_offline', 'PestOfflinePackView')
 PasswordResetRequestView = import_view('api.views_user', 'PasswordResetRequestView')
@@ -435,6 +438,10 @@ api_urlpatterns = [
          name='assistant-message-feedback'),
     path('assistant/sessions/<int:pk>/escalate/', AssistantEscalateView.as_view(),
          name='assistant-session-escalate'),
+    # 问答历史（第 198 批）：列表倒序分页；详情取完整消息；DELETE 删除一次会话
+    path('assistant/sessions/', AssistantSessionListView.as_view(), name='assistant-session-list'),
+    path('assistant/sessions/<int:pk>/', AssistantSessionDetailView.as_view(),
+         name='assistant-session-detail'),
 
     # 路由已由 router.urls 处理
 ]

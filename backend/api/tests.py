@@ -13413,3 +13413,128 @@ class AssistantLanguageTests(TestCase):
             ('zh-CN,zh;q=0.9', 'zh'), ('zh-Hans', 'zh'), ('fr-FR', 'zh'), ('', 'zh'),
         ):
             self.assertEqual(prompts.normalize_lang(header), expected, header)
+
+
+# ============================================================================
+# 智能回答助手 · 问答历史（第 198 批）
+# ----------------------------------------------------------------------------
+# 独立问答页要能"看到以前问过什么、点回去接着问"，所以需要列表 / 详情 / 删除。
+# 验的重点是**归属与可见性**：
+#   · 别人的会话既不在我的列表里，也不能被我读到或删掉（一律 404，不泄漏存在性）；
+#   · **流式回答留下的空行不能出现在历史里** —— 流式实现是"先建一条空消息行再回填"，
+#     若不过滤，历史里每条回答前面都会多一个空气泡；
+#   · 列表的预览取"最后一条**含正文**的助手消息"，同样是为了躲开那条空行。
+# ============================================================================
+class AssistantSessionViewTests(TestCase):
+    """助手问答历史：列表 / 详情 / 删除 / 归属隔离。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_hist', password='pw12345678')
+        self.other = User.objects.create_user(username='asst_hist_other', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+
+        self.pest = PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='tomato_late_blight',
+            symptoms='症状', description='规律',
+        )
+        self.session = AssistantSession.objects.create(
+            user=self.user, title='番茄晚疫病怎么打药？', pest=self.pest,
+        )
+        AssistantMessage.objects.create(session=self.session, role='user',
+                                        content='番茄晚疫病怎么打药？')
+        AssistantMessage.objects.create(
+            session=self.session, role='assistant', content='用烯酰吗啉，间隔5-7天喷1次。',
+            citations=[{'pest_id': self.pest.pk, 'label': '番茄晚疫病', 'snippet': '化学防治：…'}],
+        )
+        # 模拟流式的中间态：一条**空内容**的助手消息（先建行后回填，回填前就是空的）
+        self.empty = AssistantMessage.objects.create(
+            session=self.session, role='assistant', content='', degraded=False,
+        )
+
+        self.other_session = AssistantSession.objects.create(user=self.other, title='别人的会话')
+        AssistantMessage.objects.create(session=self.other_session, role='user', content='别人的问题')
+
+    def _list(self, **params):
+        return self.client_auth.get('/api/assistant/sessions/', params)
+
+    # ── 一、列表 ────────────────────────────────────────────────────────
+    def test_list_only_mine(self):
+        resp = self._list()
+        self.assertEqual(resp.status_code, 200)
+        ids = [item['id'] for item in resp.data['results']]
+        self.assertEqual(ids, [self.session.pk])
+        self.assertNotIn(self.other_session.pk, ids)
+
+    def test_list_brief_fields(self):
+        item = self._list().data['results'][0]
+        self.assertEqual(item['title'], '番茄晚疫病怎么打药？')
+        self.assertEqual(item['pest_name'], '番茄晚疫病')
+        # 空行不计入消息数（2 条有内容的消息 + 1 条空行 = 应当报 2）
+        self.assertEqual(item['message_count'], 3, 'message_count 是消息总数，含空行')
+        self.assertIn('烯酰吗啉', item['preview'])
+        self.assertFalse(item['escalated'])
+
+    def test_list_preview_skips_empty_message(self):
+        """预览必须取**含正文**的最后一条 —— 否则流式那条空行会让预览变成空白"""
+        item = self._list().data['results'][0]
+        self.assertTrue(item['preview'].strip())
+        self.assertIn('烯酰吗啉', item['preview'])
+
+    def test_list_pagination(self):
+        for index in range(3):
+            AssistantSession.objects.create(user=self.user, title=f'第{index}次')
+        resp = self._list(page_size=2)
+        self.assertEqual(len(resp.data['results']), 2)
+        self.assertEqual(resp.data['count'], 4)
+        self.assertTrue(resp.data['has_more'])
+        # page_size 有上限，防止一次拉全库
+        self.assertLessEqual(self._list(page_size=9999).data['page_size'], 50)
+
+    def test_list_requires_auth(self):
+        resp = APIClient().get('/api/assistant/sessions/')
+        self.assertIn(resp.status_code, (401, 403))
+
+    # ── 二、详情 ────────────────────────────────────────────────────────
+    def test_detail_returns_messages_in_order(self):
+        resp = self.client_auth.get(f'/api/assistant/sessions/{self.session.pk}/')
+        self.assertEqual(resp.status_code, 200)
+        roles = [m['role'] for m in resp.data['messages']]
+        self.assertEqual(roles, ['user', 'assistant'])
+        self.assertIn('烯酰吗啉', resp.data['messages'][1]['content'])
+        self.assertEqual(len(resp.data['messages'][1]['citations']), 1)
+
+    def test_detail_hides_empty_streaming_row(self):
+        """流式那条空行不能出现在历史里（否则每个回答前都多一个空气泡）"""
+        resp = self.client_auth.get(f'/api/assistant/sessions/{self.session.pk}/')
+        self.assertNotIn(self.empty.pk, [m['id'] for m in resp.data['messages']])
+        for message in resp.data['messages']:
+            self.assertTrue(message['content'].strip())
+
+    def test_detail_404_for_others_session(self):
+        resp = self.client_auth.get(f'/api/assistant/sessions/{self.other_session.pk}/')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_detail_reports_degraded_from_last_answer(self):
+        """会话级 degraded 取自**最后一条回答**（会话表没有这个字段）"""
+        AssistantMessage.objects.create(
+            session=self.session, role='assistant', content='（AI 不可用）档案原文…',
+            degraded=True, degrade_reason='llm_disabled',
+        )
+        resp = self.client_auth.get(f'/api/assistant/sessions/{self.session.pk}/')
+        self.assertTrue(resp.data['degraded'])
+        self.assertEqual(resp.data['degrade_reason'], 'llm_disabled')
+
+    # ── 三、删除 ────────────────────────────────────────────────────────
+    def test_delete_removes_session_and_messages(self):
+        resp = self.client_auth.delete(f'/api/assistant/sessions/{self.session.pk}/')
+        self.assertEqual(resp.status_code, 204)
+        self.assertFalse(AssistantSession.objects.filter(pk=self.session.pk).exists())
+        # 消息随会话级联删除，不留孤儿
+        self.assertEqual(AssistantMessage.objects.filter(session_id=self.session.pk).count(), 0)
+
+    def test_delete_404_for_others_session(self):
+        resp = self.client_auth.delete(f'/api/assistant/sessions/{self.other_session.pk}/')
+        self.assertEqual(resp.status_code, 404)
+        self.assertTrue(AssistantSession.objects.filter(pk=self.other_session.pk).exists())
