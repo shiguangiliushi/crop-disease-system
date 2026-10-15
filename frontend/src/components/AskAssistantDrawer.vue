@@ -449,7 +449,15 @@ defineExpose({ submit });
 }
 
 .assistant-bubble {
-  display: inline-block;
+  /* ⚠️ 第 203 批：**固定宽度**，不再由内容决定。
+     原来是 `display: inline-block; max-width: 100%` —— 收缩到内容宽度，
+     于是同一次对话里短回答占不到半行、长回答撑满整行（实测 46% vs 73%），
+     每条消息宽度都不同，看着参差不齐；流式出字时宽度还会**边写边长**。
+     现在固定 88%，靠左右对齐区分提问与回答。
+     抽屉比页面窄（默认 30% 视口），所以这里用百分比而非像素。 */
+  width: 88%;
+  box-sizing: border-box;
+  display: block;
   max-width: 100%;
   padding: 0.6rem 0.8rem;
   border-radius: 10px;

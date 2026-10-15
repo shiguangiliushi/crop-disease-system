@@ -647,7 +647,17 @@ onMounted(async () => {
 .assistant-msg.is-assistant { align-items: flex-start; }
 
 .assistant-bubble {
-  max-width: 78%;
+  /* ⚠️ 第 203 批：**固定宽度**，不再由内容决定。
+     原来是 `display: inline-block; max-width: 78%` —— 那是"收缩到内容宽度"，
+     于是一条 13 字的回答占 46%、50 字的占 73%（实测，对话区 462px），
+     每条消息宽度都不一样，整屏看着参差不齐。
+     现在固定 88%，靠**左右对齐**区分提问与回答（12% 的空档在 462px 下有 55px，
+     足够看出方向，又不至于像两块通栏色块）。
+     `box-sizing: border-box` 是必需的：否则 width 之外还要加上左右 padding，
+     实际渲染会超过 88%。 */
+  width: 88%;
+  box-sizing: border-box;
+  max-width: 100%;
   padding: 0.65rem 0.85rem;
   border-radius: 10px;
   font-size: 0.9rem;
@@ -675,7 +685,10 @@ onMounted(async () => {
   align-items: center;
   gap: 0.4rem;
   margin-top: 0.4rem;
-  max-width: 78%;
+  /* 与气泡同宽（第 203 批）：原来 78% 是按"气泡最多 78%"定的，
+     气泡改成固定 88% 后，引用会比气泡窄一截、左边缘对不齐。 */
+  width: 88%;
+  box-sizing: border-box;
 }
 .assistant-cites-label { font-size: 0.72rem; color: #9ca3af; }
 .assistant-cite {
@@ -708,7 +721,8 @@ onMounted(async () => {
   background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  max-width: 78%;
+  width: 88%;
+  box-sizing: border-box;
 }
 .assistant-note-label { font-size: 0.78rem; color: #4b5563; margin-bottom: 0.35rem; }
 .assistant-note-actions { display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.45rem; }
@@ -733,6 +747,10 @@ onMounted(async () => {
   .assistant-side.is-hidden-mobile { display: none; }
   .assistant-main.is-hidden-mobile { display: none; }
   .assistant-back { display: inline-flex; }
-  .assistant-bubble, .assistant-cites, .assistant-note { max-width: 92%; }
+  /* ⚠️ 第 203 批：气泡改成固定宽度后，这里必须**改 width 而不是 max-width** ——
+     原来写的是 `max-width: 92%`，在固定宽度下等于没生效（宽度还是 88%）。
+     窄屏本就该让气泡更宽一些。 */
+  .assistant-bubble { width: 92%; }
+  .assistant-cites, .assistant-note { width: 92%; }
 }
 </style>

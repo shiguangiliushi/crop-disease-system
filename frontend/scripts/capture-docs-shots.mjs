@@ -120,6 +120,11 @@ const seedOutput = runDjango([
   "from django.utils import timezone",
   "from api.models_assistant import AssistantMessage, AssistantSession",
   "from api.models import PestInfo",
+  // ⚠️⚠️ 这一行会**删掉 admin 的全部问答历史**（不只是本次演示）。
+  //    这是有意为之：本脚本用 `admin` 当**演示账号**（README 配图里不出现临时机器名），
+  //    历史里混着历次开发调试留下的临时问答，不清就会出现在配图里。
+  //    写在这里以免误解：**admin 名下的助手问答不是"个人数据"**，它就是这个项目的演示账号
+  //    （第 203 批有一次我误以为删掉了用户数据，核对备份后才确认那条会话同样是调试留下的）。
   "print('cleared admin assistant history:', AssistantSession.objects.filter(user=admin).delete()[0])",
   // ⚠️ 演示问题的长度是**照着侧栏能显示下的量**定的：第一版写
   //    "苹果黑星病打什么药？稀释倍数和安全间隔期是多少？"（23 字），侧栏显示成
