@@ -71,11 +71,19 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
    "您没有说明是哪种作物/哪个病害"。用户很可能是从识别结果页点进来的，
    系统已经知道是哪个病害（这一条就是），再问一遍会让用户觉得系统不认识自己刚识别出的结果。
 
-回答结构（简洁，不要长篇大论）：
+回答结构（**简洁是硬要求**，见第 9、10 条）：
 - 先给结论（这是什么 / 该怎么办）
 - 再给依据（症状特征、发病条件）
 - 再给措施（按农业/化学/生态/物理/监测分类，与词条一致）
 - 最后说明何时需要找人工（如"发病严重或无法判断时建议咨询当地植保站"）
+
+9. **控制篇幅：整段回答不超过约 600 字。** 每一节只讲最关键的 2～3 条，
+   不要把词条逐条复述一遍 —— 读者要的是"我该怎么办"，不是档案全文。
+10. **问题里出现多个作物/病害时，不要一个个全部展开。** 挑与问题最相关的 1 个讲透，
+    其余的用一句话点到即可（例如"另外您提到的葡萄，如果叶片是先下部、后向上蔓延的褐斑，
+    更可能是叶枯病，可以再问一次"）。**<knowledge> 里有多条、而问题只指向一个时，同样只答那一个。**
+    逐个展开会把回答撑到一两千字：既读不完，末尾也更容易被长度上限截断
+    （第 204 批实测："苹果跟葡萄"曾写到 2736 字并被截在半句话）。
 
 语言：中文。不要输出 Markdown 表格；用短段落和编号列表。"""
 
@@ -106,11 +114,22 @@ Hard rules:
    result page, so the system already knows the disease. Asking again feels like the system
    does not recognise the result it just produced.
 
-Structure (keep it short):
+Structure (keep it short — rules 9 and 10 are hard requirements):
 - conclusion first (what this is / what to do)
 - then the evidence (symptoms, conditions favouring the disease)
 - then the measures, grouped as in the entry (cultural / chemical / ecological / physical / monitoring)
 - finally say when to ask a human (e.g. severe outbreak or uncertain diagnosis → local plant protection station)
+
+9. **Keep the whole answer under about 600 Chinese characters / 400 words.** Give only the
+   2–3 most important points per section. Do not restate the entry line by line — the reader
+   wants "what should I do", not a transcript of the archive.
+10. **When the question names several crops or diseases, do not expand them all.** Explain the
+   single most relevant one properly and mention the rest in one sentence
+   (e.g. "For the grape you also mentioned: if the brown spots start on the lower leaves and
+   work upwards, it is more likely leaf blight — feel free to ask about it separately").
+   **If <knowledge> has several entries but the question points at one, answer only that one.**
+   Expanding them all pushes the answer past 2,000 characters, which nobody finishes reading
+   and which is more likely to be cut off at the end by the output limit.
 
 Language: English. No Markdown tables; use short paragraphs and numbered lists."""
 
@@ -199,8 +218,9 @@ def degrade_text(key: str, lang: str = DEFAULT_LANG, **params) -> str:
 
 
 #: 提示词版本：改了措辞就改它，便于事后区分"哪版提示词产出的答案"。
-#: 第 197 批加英文时升到 v2 —— 同一批数据在 v1/v2 下的答案不具备可比性。
-PROMPT_VERSION = 'v2-2026-10-15'
+#: 第 197 批加英文时升到 v2；第 204 批加"控制篇幅 + 多作物只展开一个"两条硬要求，升到 v3
+#: —— 同一批数据在 v2/v3 下的答案长度与结构都不同，不具可比性。
+PROMPT_VERSION = 'v3-2026-10-16'
 
 
 def build_messages(question: str, knowledge: str, intent: str = 'general',

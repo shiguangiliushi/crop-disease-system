@@ -791,9 +791,16 @@ LLM_API_URL = os.environ.get('LLM_API_URL', 'https://api.deepseek.com/v1')
 LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'deepseek-chat')
 #: 单次生成超时（秒）。真实回答带 7 维度上下文（800~1500 字），比极短请求慢得多。
-LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '20'))
-#: 单次生成的最大输出 token。800 够写"结论+依据+五类防治+免责"，再多就是啰嗦。
-LLM_MAX_TOKENS = int(os.environ.get('LLM_MAX_TOKENS', '800'))
+#: ⚠️ 第 204 批：输出上限提到 2000 token 后，长回答的生成时间也变长 ——
+#:    20 秒对"跨两个词条"的问题偏紧，提到 30 秒（仍远低于前端 60 秒超时）。
+LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '30'))
+#: 单次生成的最大输出 token。
+#: ⚠️ 第 204 批从 800 提到 2000。原注释写"800 够写结论+依据+五类防治+免责"，
+#:    那是**按单条词条**估的；实测用户会问"苹果跟葡萄"这类**跨两条词条**的问题，
+#:    答案 1400+ 字，800 直接把它截在半句话（端点回 `finish_reason='length'`）。
+#:    中文大致 1 字 ≈ 1 token，2000 约可写 1800 字，覆盖跨词条的长回答。
+#:    被截断时不再"静默"—— `AssistantMessage.truncated` 会记下来、界面会提示。
+LLM_MAX_TOKENS = int(os.environ.get('LLM_MAX_TOKENS', '2000'))
 
 #: 单个会话最多多少条消息（到顶就建议新开会话，不做摘要压缩 —— 见框架文档"明确不做"）
 ASSISTANT_SESSION_MAX_MESSAGES = int(os.environ.get('ASSISTANT_SESSION_MAX_MESSAGES', '50'))

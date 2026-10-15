@@ -146,6 +146,9 @@ class AssistantSessionDetailView(APIView):
                     'content': m.content,
                     'degraded': bool(m.degraded),
                     'degrade_reason': m.degrade_reason,
+                    # 第 204 批：当初是否被长度上限截断 —— 历史里的回答也要一直提示，
+                    # 不能只在刚生成那一瞬间提示（用户回头看时更需要知道它是半句话）
+                    'truncated': bool(m.truncated),
                     'citations': m.citations or [],
                     'verdict': m.verdict,
                     'feedback_note': m.feedback_note,

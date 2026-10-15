@@ -45,14 +45,30 @@ class LLMError(RuntimeError):
 class ChatResult:
     """一次调用的结果。`usage` 与 `model` 都要留下来：
     · `usage` → 用量台账（框架文档第六节）；
-    · `model` → 发现"配置的模型与实到的模型不一致"（本端点就会发生）。"""
+    · `model` → 发现"配置的模型与实到的模型不一致"（本端点就会发生）；
+    · `finish_reason` → **判断答案有没有被长度上限截断**（第 204 批补）。
+
+    ## 为什么必须留 `finish_reason`
+
+    第 204 批发现：回答被 `max_tokens` 截断时，**接口与界面都毫无表示** ——
+    用户看到的是半句话（"具体用药请以…"之前就断了），而系统以为答完了、
+    还照常提示"已生成"。**用药建议被截尾比"答得短"严重得多**，
+    所以这个字段必须一路传到前端。
+    """
 
     text: str
     model: str = ''
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: int = 0
+    #: OpenAI 兼容字段：`'stop'` 正常结束、`'length'` 触到 max_tokens 被截断
+    finish_reason: str = ''
     raw: dict = field(default_factory=dict)
+
+    @property
+    def truncated(self) -> bool:
+        """是否被长度上限截断（`finish_reason == 'length'`）。"""
+        return self.finish_reason == 'length'
 
 
 def _cfg(name: str, default):
@@ -137,6 +153,8 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
     try:
         data = resp.json()
         text = data['choices'][0]['message']['content']
+        # 第 204 批：`finish_reason == 'length'` 表示触到了 max_tokens、答案被截断
+        finish_reason = str(data['choices'][0].get('finish_reason') or '')
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise LLMError(f'响应结构不符合预期：{(resp.text or "")[:200]}') from exc
 
@@ -153,13 +171,21 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
         prompt_tokens=int(usage.get('prompt_tokens') or 0),
         completion_tokens=int(usage.get('completion_tokens') or 0),
         latency_ms=latency_ms,
+        finish_reason=finish_reason,
         raw=data,
     )
 
 
 def chat_stream(messages: list[dict], *, max_tokens: int | None = None,
                 temperature: float = 0.2, timeout: float | None = None):
-    """流式调用：逐段 yield SSE 事件字典（`{"text": ...}` / `{"usage": ...}` / `{"model": ...}`）。
+    """流式调用：逐段 yield SSE 事件字典。
+
+    事件种类：`{"text": ...}`（正文增量）/ `{"usage": ...}` / 
+    `{"model": ..., "finish_reason": ...}`（**最后一个事件**，第 204 批补 `finish_reason`）。
+
+    `finish_reason == 'length'` 表示**被 max_tokens 截断** —— 上层据此如实告知用户，
+    否则界面上就是"半句话 + 看起来答完了"。
+    
 
     ## 为什么用 `iter_lines` 而不是 `iter_content`
 
@@ -216,6 +242,7 @@ def chat_stream(messages: list[dict], *, max_tokens: int | None = None,
 
     configured = model_name()
     actual_model = ''
+    finish_reason = ''
     try:
         for raw in resp.iter_lines(decode_unicode=True):
             if not raw:
@@ -238,6 +265,12 @@ def chat_stream(messages: list[dict], *, max_tokens: int | None = None,
                 delta = (choices[0].get('delta') or {}).get('content')
                 if delta:
                     yield {'text': delta}
+                # 第 204 批：流式的 finish_reason 出现在**最后一个** chunk 上
+                # （通常是空 delta + finish_reason='stop'/'length'）。
+                # 原来只取 delta.content，于是"被 max_tokens 截断"这件事完全看不见。
+                reason = choices[0].get('finish_reason')
+                if reason:
+                    finish_reason = str(reason)
             if chunk.get('usage'):
                 usage = chunk['usage']
                 yield {
@@ -254,7 +287,7 @@ def chat_stream(messages: list[dict], *, max_tokens: int | None = None,
 
     if actual_model and actual_model != configured:
         logger.warning('LLM 配置模型 %s，实际落到 %s（端点侧重定向）', configured, actual_model)
-    yield {'model': actual_model or configured}
+    yield {'model': actual_model or configured, 'finish_reason': finish_reason}
 
 
 def probe() -> dict:

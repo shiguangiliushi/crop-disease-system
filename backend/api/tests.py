@@ -13538,3 +13538,114 @@ class AssistantSessionViewTests(TestCase):
         resp = self.client_auth.delete(f'/api/assistant/sessions/{self.other_session.pk}/')
         self.assertEqual(resp.status_code, 404)
         self.assertTrue(AssistantSession.objects.filter(pk=self.other_session.pk).exists())
+
+
+# ============================================================================
+# 智能回答助手 · 回答被长度上限截断（第 204 批）
+# ----------------------------------------------------------------------------
+# 起因是一个真实的用户问题："苹果跟葡萄" —— 跨两条词条的回答写到 1400+ 字，
+# 被 `max_tokens` 截在**半句话**（"具体用药请以…"之前就断了），
+# 而**接口与界面都毫无表示**，看起来就像"答完了"。
+#
+# 用药建议被截尾比"答得短"严重得多，所以要三件事都有测试守：
+#   ① 端点回来的 `finish_reason` 真的被读到了（两条路径：同步/流式）；
+#   ② 被截断这件事**落库**（否则"历史里的回答为什么是半句"永远查不清）；
+#   ③ 接口如实告诉前端（`truncated` 字段 + 历史详情里也带）。
+# ============================================================================
+class AssistantTruncationTests(TestCase):
+    """助手：识别并如实上报"回答被长度上限截断"。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_trunc', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        cache.delete('sensitive_words:active')
+        self.pest = PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='apple_scab',
+            symptoms='症状', description='规律',
+        )
+        PreventionMethod.objects.create(pest=self.pest, category='CHEMICAL', measure='用药…')
+
+    # ── 一、`ChatResult.truncated` 的语义 ───────────────────────────────
+    def test_chat_result_truncated_property(self):
+        """只有 `finish_reason == 'length'` 才算截断；`stop` / 空都算正常结束"""
+        self.assertTrue(llm.ChatResult(text='x', finish_reason='length').truncated)
+        self.assertFalse(llm.ChatResult(text='x', finish_reason='stop').truncated)
+        self.assertFalse(llm.ChatResult(text='x').truncated)
+
+    # ── 二、同步路径：读 finish_reason 并落库 ──────────────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_sync_answer_marks_truncated(self):
+        truncated_result = llm.ChatResult(text='苹果黑星病的关键施药窗口是…（被截断）',
+                                          model='deepseek-flash', prompt_tokens=10,
+                                          completion_tokens=2000, finish_reason='length')
+        with patch('api.assistant.llm.chat', return_value=truncated_result):
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '苹果跟葡萄', 'pest_identifier': 'apple_scab'},
+                                         format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data['truncated'], '接口没把"被截断"告诉前端')
+
+        message = AssistantMessage.objects.get(pk=resp.data['message_id'])
+        self.assertTrue(message.truncated)
+        # ⚠️ 截断 ≠ 降级：这条回答是模型真的生成的，不该被标成 degraded
+        self.assertFalse(message.degraded)
+        self.assertEqual(message.usage.get('finish_reason'), 'length')
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_normal_answer_is_not_marked_truncated(self):
+        """正常结束（`stop`）不能被误标 —— 否则每条回答都挂个警告"""
+        normal = llm.ChatResult(text='正常回答。【1】', model='deepseek-flash',
+                                prompt_tokens=10, completion_tokens=100, finish_reason='stop')
+        with patch('api.assistant.llm.chat', return_value=normal):
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '苹果黑星病怎么治', 'pest_identifier': 'apple_scab'},
+                                         format='json')
+        self.assertFalse(resp.data['truncated'])
+        self.assertFalse(AssistantMessage.objects.get(pk=resp.data['message_id']).truncated)
+
+    # ── 三、流式路径：`done` 事件要带 truncated ────────────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_stream_done_event_carries_truncated(self):
+        """流式的 `finish_reason` 在**最后一个**事件里 —— 原来只取 delta.content，
+        于是"被截断"完全看不见（这正是本批要修的缺陷）"""
+        def fake_stream(_messages, **_kwargs):
+            yield {'text': '苹果黑星病'}
+            yield {'text': '的关键窗口是…'}
+            yield {'model': 'deepseek-flash', 'finish_reason': 'length'}
+
+        with patch('api.assistant.llm.chat_stream', side_effect=fake_stream):
+            resp = self.client_auth.post('/api/assistant/ask/stream/',
+                                         {'question': '苹果跟葡萄', 'pest_identifier': 'apple_scab'},
+                                         format='json')
+            body = b''.join(resp.streaming_content).decode('utf-8')
+
+        done = [line for line in body.split('\n\n') if line.startswith('event: done')]
+        self.assertEqual(len(done), 1, body[-300:])
+        self.assertIn('"truncated": true', done[0])
+
+        message = AssistantMessage.objects.filter(role='assistant').order_by('-id').first()
+        self.assertTrue(message.truncated)
+        self.assertEqual(message.usage.get('finish_reason'), 'length')
+
+    # ── 四、历史详情也要带（回头看时更需要知道那是半句话）─────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_session_detail_includes_truncated(self):
+        truncated_result = llm.ChatResult(text='被截断的回答…', model='deepseek-flash',
+                                          prompt_tokens=10, completion_tokens=2000,
+                                          finish_reason='length')
+        with patch('api.assistant.llm.chat', return_value=truncated_result):
+            ask = self.client_auth.post('/api/assistant/ask/',
+                                        {'question': '苹果跟葡萄', 'pest_identifier': 'apple_scab'},
+                                        format='json')
+        session_id = ask.data['session_id']
+        detail = self.client_auth.get(f'/api/assistant/sessions/{session_id}/')
+        self.assertEqual(detail.status_code, 200)
+        answers = [m for m in detail.data['messages'] if m['role'] == 'assistant']
+        self.assertTrue(answers and answers[0]['truncated'],
+                        '历史详情没带 truncated，用户回头看时不知道那是半句话')

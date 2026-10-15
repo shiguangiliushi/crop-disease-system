@@ -163,6 +163,7 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
             'degrade_reason': 'empty',
             'citations': [],
             'usage': {},
+            'truncated': False,
         }
 
     session = _get_or_create_session(
@@ -199,7 +200,7 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
 def _persist(session, question: str, *, answer: str, reason: str, model: str = '',
              latency_ms: int = 0, citations: list | None = None,
              usage: dict | None = None, prompt_version: str = '',
-             lang: str = prompts.DEFAULT_LANG) -> AssistantMessage:
+             lang: str = prompts.DEFAULT_LANG, truncated: bool = False) -> AssistantMessage:
     """落库：用户消息 + 助手消息（单事务，要么都写要么都不写）。"""
     with transaction.atomic():
         AssistantMessage.objects.create(session=session, role='user', content=question)
@@ -215,6 +216,8 @@ def _persist(session, question: str, *, answer: str, reason: str, model: str = '
             usage=usage or {},
             prompt_version=prompt_version,
             lang=prompts.normalize_lang(lang),
+            # 第 204 批：被 max_tokens 截断时如实记下来（界面据此提示"回答可能不完整"）
+            truncated=truncated,
         )
         session.save(update_fields=['updated_at'])   # 触发 auto_now，让会话列表按活跃排序
     return message
@@ -229,6 +232,7 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         return prepared
 
     answer, reason, citations, usage, actual_model, prompt_version = '', '', [], {}, '', ''
+    truncated = False
     latency_ms = 0
 
     try:
@@ -248,11 +252,14 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
             else:
                 latency_ms = result.latency_ms
                 actual_model = result.model
+                # 第 204 批：触到 max_tokens 时 finish_reason='length'，答案被截断
+                truncated = result.truncated
                 usage = {
                     'prompt_tokens': result.prompt_tokens,
                     'completion_tokens': result.completion_tokens,
                     'latency_ms': result.latency_ms,
                     'configured_model': llm.model_name(),
+                    'finish_reason': result.finish_reason,
                 }
                 # ── ⑦ 引用校验：模型必须真的引用了上下文里的条目 ──────
                 # 候选引用来自 `_prepare`（那里已按【序号】顺序排好）。
@@ -283,6 +290,7 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         prepared.session, prepared.question, answer=answer, reason=reason,
         model=actual_model, latency_ms=latency_ms, citations=citations,
         usage=usage, prompt_version=prompt_version, lang=prepared.lang,
+        truncated=truncated,
     )
 
     return {
@@ -293,6 +301,8 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         'degrade_reason': reason,
         'citations': citations,
         'usage': usage,
+        # 第 204 批：答案是否被长度上限截断（前端据此提示"回答可能不完整"）
+        'truncated': truncated,
     }
 
 
@@ -331,7 +341,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
         yield _sse('meta', {'session_id': prepared['session_id'], 'message_id': None,
                             'degraded': True, 'degrade_reason': 'empty', 'citations': []})
         yield _sse('delta', {'text': prepared['answer']})
-        yield _sse('done', {'usage': {}, 'degraded': True, 'degrade_reason': 'empty'})
+        yield _sse('done', {'usage': {}, 'degraded': True, 'degrade_reason': 'empty',
+                            'truncated': False})
         return
 
     started = time.time()
@@ -369,6 +380,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     usage: dict = {}
     actual_model = ''
     error_reason = ''
+    # 第 204 批：`finish_reason == 'length'` = 被 max_tokens 截断，答案不完整
+    truncated = False
     try:
         for event in llm.chat_stream(prepared.messages):
             if 'text' in event:
@@ -378,6 +391,10 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
                 usage.update(event['usage'])
             elif 'model' in event:
                 actual_model = event['model']
+                # 与 `model` 同一个事件（流的最后一个），见 llm.chat_stream 的 docstring
+                truncated = event.get('finish_reason') == 'length'
+                if event.get('finish_reason'):
+                    usage['finish_reason'] = event['finish_reason']
     except llm.LLMError as exc:
         # ⚠️ 关键判断：**已经吐出去的字不能收回**。
         #    如果已经有内容，就保留它并如实标记中途出错；只有"一个字都没发出去"时
@@ -431,9 +448,13 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     message.latency_ms = latency_ms
     message.citations = citations
     message.usage = usage
+    # 第 204 批：被截断这件事要落库 —— 否则"历史里的回答为什么是半句"永远查不清
+    message.truncated = truncated
     message.save(update_fields=['content', 'model', 'degraded', 'degrade_reason',
-                               'latency_ms', 'citations', 'usage'])
+                               'latency_ms', 'citations', 'usage', 'truncated'])
 
     yield _sse('citations', {'citations': citations})
     yield _sse('done', {'usage': usage, 'degraded': bool(reason), 'degrade_reason': reason,
-                        'model': actual_model, 'latency_ms': latency_ms})
+                        'model': actual_model, 'latency_ms': latency_ms,
+                        # 前端据此在气泡下方提示"回答可能不完整"
+                        'truncated': truncated})

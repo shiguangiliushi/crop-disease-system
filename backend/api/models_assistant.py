@@ -83,6 +83,11 @@ class AssistantMessage(models.Model):
     #: True = 没走大模型（词条原文兜底 / 无来源 / 命中敏感词）
     degraded = models.BooleanField(default=False, verbose_name="是否降级")
     degrade_reason = models.CharField(max_length=30, blank=True, default='', verbose_name="降级原因")
+    #: 答案是否被**长度上限**截断（端点回 `finish_reason == 'length'`）。第 204 批加。
+    #: ⚠️ 与 `degraded` 是**两件不同的事**：降级是"没调用模型 / 调用失败"，
+    #: 截断是"调用了模型、但它没说完"。用户看到的都是"这答案有问题"，
+    #: 成因却完全不同 —— 分开记，否则事后排查会把两者混为一谈。
+    truncated = models.BooleanField(default=False, verbose_name="回答是否被截断")
     latency_ms = models.PositiveIntegerField(default=0, verbose_name="耗时（毫秒）")
     #: 引用与用量都是**快照**，没有独立查询需求，所以放 JSON 而不建表（见模块 docstring）
     citations = models.JSONField(default=list, blank=True, verbose_name="引用来源")

@@ -155,6 +155,11 @@
             <i class="bi bi-info-circle me-1"></i>{{ msg.degradeHint }}
           </p>
 
+          <!-- 回答被长度上限截断（与"降级"是两件事：降级=没调用模型，截断=模型没说完） -->
+          <p v-if="msg.truncated" class="assistant-truncated">
+            <i class="bi bi-exclamation-triangle me-1"></i>{{ t('assistant.hintTruncatedAnswer') }}
+          </p>
+
           <!-- 反馈闭环（与抽屉走同一套接口） -->
           <div v-if="msg.role === 'assistant' && msg.messageId && !isStreaming(msg)" class="assistant-feedback">
             <template v-if="msg.verdict">
@@ -382,6 +387,8 @@ const applySession = (data) => {
     content: item.content,
     citations: item.citations || [],
     degradeHint: item.degraded ? degradeHintOf(item.degrade_reason) : '',
+    // 历史里的回答也可能当初就被截断过 —— 要一直提示，不能只在刚生成时提示
+    truncated: Boolean(item.truncated),
     hasPesticide: item.role === 'assistant' && hasPesticideText(item.content),
     // 只有助手消息能评价；历史里的 id 就是真实消息 id
     messageId: item.role === 'assistant' ? item.id : null,
@@ -472,6 +479,8 @@ const submit = async (presetText) => {
     target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
     target.hasPesticide = hasPesticideText(target.content);
     target.messageId = data?.message_id || null;
+    // 第 204 批：回答被长度上限截断时如实提示（否则用户看到的是"半句话 + 好像答完了"）
+    target.truncated = Boolean(data?.truncated);
   } catch (error) {
     const index = messages.value.indexOf(target);
     if (index >= 0) messages.value.splice(index, 1);
@@ -702,6 +711,16 @@ onMounted(async () => {
 .assistant-cite:hover { background: #dcece2; }
 
 .assistant-degrade-hint { font-size: 0.75rem; color: #8a6d3b; margin: 0.35rem 0 0; }
+.assistant-truncated {
+  font-size: 0.75rem;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  margin: 0.35rem 0 0;
+  max-width: 88%;
+}
 
 .assistant-feedback {
   display: flex;

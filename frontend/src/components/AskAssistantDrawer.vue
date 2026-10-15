@@ -47,6 +47,14 @@
             {{ msg.degradeHint }}
           </p>
 
+          <!-- 回答被长度上限截断（第 204 批）。
+               ⚠️ 与"降级"是**两件事**：降级=没调用模型，截断=模型没说完。
+               两者都会让用户觉得"答案有问题"，但成因完全不同，提示也要分开。 -->
+          <p v-if="msg.role === 'assistant' && msg.truncated" class="assistant-truncated">
+            <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+            {{ t('assistant.hintTruncatedAnswer') }}
+          </p>
+
           <!-- 来源引用 -->
           <div v-if="msg.citations && msg.citations.length" class="assistant-citations">
             <span class="assistant-citations-label">{{ t('assistant.sources') }}</span>
@@ -332,6 +340,7 @@ const submit = async (presetText) => {
     content: '',
     citations: [],
     degradeHint: '',
+    truncated: false,
     hasPesticide: false,
     messageId: null,
     verdict: '',
@@ -366,6 +375,8 @@ const submit = async (presetText) => {
       target.citations = Array.isArray(data?.citations) ? data.citations : [];
       target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
       target.hasPesticide = hasPesticideText(target.content);
+      // 第 204 批：被长度上限截断时提示（否则用户看到"半句话 + 好像答完了"）
+      target.truncated = Boolean(data?.truncated);
       // 拿到 message_id 之后评价按钮才会出现（见 isStreaming）
       target.messageId = data?.message_id || null;
     });
@@ -489,6 +500,19 @@ defineExpose({ submit });
   font-size: 0.78rem;
   color: #8a6d3b;
   margin: 0.35rem 0 0;
+}
+
+/* 被长度上限截断的提示：用琥珀色与"降级"的棕黄区分开 */
+.assistant-truncated {
+  font-size: 0.75rem;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  margin: 0.35rem 0 0;
+  width: 88%;
+  box-sizing: border-box;
 }
 
 .assistant-disclaimer {
