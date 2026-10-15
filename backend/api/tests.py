@@ -12807,15 +12807,50 @@ class AssistantTests(TestCase):
 
     @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
                        LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
-    def test_unmarked_citation_is_recorded_but_not_treated_as_failure(self):
-        """模型忘了标【1】：不判失败（内容仍来自上下文），但要**如实记录**未标注"""
+    def test_unmarked_citation_is_recorded_and_sources_hidden(self):
+        """模型忘了标【1】：如实记录未标注，并且**不显示来源**。
+
+        ⚠️ 第 207 批改了契约（原断言是"仍带上候选引用，便于溯源"）。
+        原处置会造出一种误导：问"苹果跟葡萄"时检索到 4 条、正文只覆盖 2 条，
+        而来源区列着 4 条 —— 用户以为"答全了"，实际另外两条根本没写。
+        **来源区是"这段回答依据了什么"的承诺**，不能拿它当候选清单用。
+        现在的取舍：宁可**不显示来源**，也不显示可能没被用到的来源。
+
+        （"降级文本"例外：`no_llm`/`llm_error` 那种"档案原文"不是模型生成的、
+        本来就不带 `【n】`，那时保留候选来源是对的 —— 由
+        `test_degraded_answer_keeps_candidate_citations` 守着。）
+        """
         stub = llm.ChatResult(text='番茄晚疫病要早打药。', model='deepseek-flash')
         with patch('api.assistant.llm.chat', return_value=stub):
             resp = self.client_auth.post('/api/assistant/ask/',
                                          {'question': '番茄晚疫病怎么打药'}, format='json')
         self.assertFalse(resp.data['degraded'])
         self.assertFalse(resp.data['usage']['citation_marked'])
-        self.assertTrue(resp.data['citations'])                # 仍带上候选引用，便于溯源
+        self.assertEqual(resp.data['citations'], [], '未标注时不该显示来源')
+        # 但候选数量要记下来，便于事后判断"是模型没标、还是本来就没有候选"
+        self.assertIn('citation_candidates', resp.data['usage'])
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_degraded_answer_keeps_candidate_citations(self):
+        """**降级文本**要保留候选来源 —— 它与"模型忘标引号"是两回事。
+
+        降级（`no_llm` / `llm_error`）时给的是**词条原文**，不是模型生成的，
+        本来就不会带 `【n】`；而那段原文的出处**确实**就是这些词条，
+        所以来源区必须保留。这条测试守住第 207 批那个例外的边界：
+        若有人把"未标注就清空来源"一律套上去，降级回答的来源会凭空消失。
+
+        ⚠️ 必须 `override_settings(LLM_ENABLED=True)`：测试环境里
+        `settings.py` 强制把 LLM 关掉，否则根本走不到 `llm.chat`，
+        降级原因会是 `llm_disabled` 而不是这里要验的 `llm_error`（第一版就是这么失败的）。
+        """
+        with patch('api.assistant.llm.chat', side_effect=llm.LLMError('模拟不可用')):
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '番茄晚疫病怎么打药'}, format='json')
+        self.assertTrue(resp.data['degraded'])
+        self.assertEqual(resp.data['degrade_reason'], 'llm_error')
+        self.assertIn('档案原文', resp.data['answer'])
+        self.assertTrue(resp.data['citations'], '降级文本的出处必须保留')
 
     # ── 五、锚点与弱命中过滤 ────────────────────────────────────────────
     def test_anchor_hit_is_ranked_first(self):

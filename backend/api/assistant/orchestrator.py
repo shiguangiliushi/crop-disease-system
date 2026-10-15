@@ -55,7 +55,10 @@ def _fallback_body(hits, lang: str = prompts.DEFAULT_LANG) -> str:
 
     english = lang == 'en'
     blocks: list[str] = []
-    for index, hit in enumerate(hits[:2], start=1):
+    # ⚠️ 第 207 批：这里原来写死 `hits[:2]`，而引用列表给的是**全部命中** ——
+    #    于是又出现"来源多于正文实际用到的"（正文 2 条、来源 5 条），
+    #    与本批刚修掉的缺陷同源。降级正文就该把**它将会被引用的那几条**都列出来。
+    for index, hit in enumerate(hits[:MAX_CITATIONS], start=1):
         pest = hit.pest
         head = (f'[{index}] {pest.name_en or pest.name} (Crop: {pest.crop_type_en or pest.crop_type})'
                 if english else f'【{index}】{pest.name}（作物：{pest.crop_type}）')
@@ -190,11 +193,61 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
     elif not llm.enabled():
         prepared.early_answer = prompts.degrade_text('no_llm', code, body=_fallback_body(hits, code))
         prepared.early_reason = 'llm_disabled'
+        # 第 207 批：降级给的是**档案原文**，出处就是这些命中 —— 必须带上引用
+        prepared.citations = _citations_from_hits(hits, code)
     else:
         prepared.messages = prompts.build_messages(prepared.question, built.text, intent, code)
         prepared.citations = [c.as_dict() for c in built.citations[:MAX_CITATIONS]]
         prepared.prompt_version = prompts.PROMPT_VERSION
     return prepared
+
+
+def _citations_from_hits(hits, lang: str = prompts.DEFAULT_LANG) -> list[dict]:
+    """从检索命中直接造引用列表（**降级路径用**）。
+
+    ## 为什么需要它（第 207 批补的一个真缺陷）
+
+    降级（`llm_disabled` / `llm_error`）时给的是 `_fallback_body(hits)` 生成的
+    **档案原文**（形如"【1】番茄晚疫病（作物：番茄）症状描述：…"）——
+    这段话的出处**就是这些词条**，可原来两条降级路径都**没填 `citations`**，
+    于是界面上"来源"是空的：**明明在引用档案，却不标出处**。
+    而引用校验里那句"降级文本保留候选来源是对的"因此从未生效过 —— 因为压根没有候选。
+
+    `snippet` 取与 `context.build()` 同源的字段文本（英文优先 `*_en`、为空回落中文），
+    这样降级回答的来源展示与非降级时一致。
+    """
+    from .context import (DISEASE_SECTIONS, PREVENTION_LABELS_EN, _localized_pair,
+                          field_text, section_label)
+
+    english = lang == 'en'
+    out: list[dict] = []
+    for hit in hits[:MAX_CITATIONS]:
+        pest = hit.pest
+        label = pest.name or f'词条#{pest.pk}'
+        parts: list[str] = []
+        for title, attr in DISEASE_SECTIONS:
+            value = _localized_pair(pest, attr, f'{attr}_en', lang)
+            if value:
+                shown = section_label(title, lang) if english else title
+                sep = ': ' if english else '：'
+                parts.append(f'{shown}{sep}{value[:80]}')
+        for method in pest.prevention_methods.all().order_by('category'):
+            en_value = field_text(method.measure_en or '', 'en')
+            zh_value = field_text(method.measure or '', 'zh')
+            value = (en_value or zh_value) if english else zh_value
+            if not value:
+                continue
+            title = (PREVENTION_LABELS_EN.get(method.category, method.category) if english
+                     else method.get_category_display())
+            sep = ': ' if english else '：'
+            parts.append(f'{title}{sep}{value[:80]}')
+        joiner = ' | ' if english else ' ｜ '
+        out.append({
+            'pest_id': pest.pk,
+            'label': label,
+            'snippet': joiner.join(parts)[:200] if parts else label,
+        })
+    return out
 
 
 def _persist(session, question: str, *, answer: str, reason: str, model: str = '',
@@ -249,6 +302,8 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                 answer = prompts.degrade_text('error', prepared.lang, reason=exc,
                                              body=_fallback_body(hits, prepared.lang))
                 reason = 'llm_error'
+                # 同上：这段是档案原文，出处必须带上（原来这里是空的）
+                citations = _citations_from_hits(hits, prepared.lang)
             else:
                 latency_ms = result.latency_ms
                 actual_model = result.model
@@ -263,9 +318,16 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                 }
                 # ── ⑦ 引用校验：模型必须真的引用了上下文里的条目 ──────
                 # 候选引用来自 `_prepare`（那里已按【序号】顺序排好）。
-                # 判断方式：答案里出现【i】就认为第 i 条被引用；一条都没标时
-                # **不判失败**（模型可能只是忘了标序号，内容仍来自上下文），
-                # 但把全部候选带上并在 usage 里如实记 `citation_marked=False`。
+                # 判断方式：答案里出现【i】就认为第 i 条被引用。
+                #
+                # ⚠️ 第 207 批改了"一条都没标"时的处置。原来是**照单全带上全部候选**，
+                #    理由是"模型可能只是忘了标序号，内容仍来自上下文"——
+                #    但实测（20 条回答里 4 条）这会造出一种误导：
+                #    问"苹果跟葡萄"检索到 4 条、正文只覆盖 2 条，而来源区列着 4 条，
+                #    用户以为"答全了"，实际另外两条根本没写。
+                #    **来源区是"这段回答依据了什么"的承诺**，不能拿它当候选清单用。
+                #    现在的处置：宁可**不显示来源**（并在系统里标记 unmarked），
+                #    也不显示可能没被用到的来源。
                 marked = {
                     index for index in range(1, len(prepared.citations) + 1)
                     if f'【{index}】' in result.text
@@ -274,8 +336,16 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                     citations = [c for index, c in enumerate(prepared.citations, start=1)
                                  if index in marked]
                     usage['citation_marked'] = True
+                elif prepared.citations and not reason:
+                    # 有候选、却一个都没标：不冒充"有来源"，让界面如实提示。
+                    # ⚠️ `not reason` 是必需的：**降级文本**（`no_llm`/`llm_error` 那种
+                    #     "档案原文"）不是模型生成的，本来就不带 `【n】`，此时保留候选来源
+                    #     是正确的 —— 那确实是这段话的出处。
+                    citations = []
+                    usage['citation_marked'] = False
+                    usage['citation_candidates'] = len(prepared.citations)
                 else:
-                    citations = list(prepared.citations)
+                    citations = list(prepared.citations) if reason else []
                     usage['citation_marked'] = False
                 answer = (result.text or '').strip()
                 if not answer:
@@ -382,6 +452,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     error_reason = ''
     # 第 204 批：`finish_reason == 'length'` = 被 max_tokens 截断，答案不完整
     truncated = False
+    # 第 207 批：降级成"档案原文"时的出处（重新检索命中的那些词条）
+    degrade_citations: list[dict] = []
     try:
         for event in llm.chat_stream(prepared.messages):
             if 'text' in event:
@@ -408,6 +480,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
             text = prompts.degrade_text('error', prepared.lang, reason=exc,
                                                 body=_fallback_body(hits, prepared.lang))
             pieces = [text]
+            # 第 207 批：这段是档案原文，出处必须带上（与同步路径一致）
+            degrade_citations = _citations_from_hits(hits, prepared.lang)
             yield _sse('delta', {'text': text})
         else:
             error_reason = 'llm_error_partial'
@@ -425,7 +499,9 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     answer = ''.join(pieces).strip()
     latency_ms = int((time.time() - started) * 1000)
     reason = error_reason
-    citations = list(prepared.citations)
+    # 第 207 批：降级成"档案原文"时，出处是**重新检索到的那些命中**，
+    # 而不是首次检索的候选（两者可能不同：失败后是按问题重查的）。
+    citations = degrade_citations if degrade_citations else list(prepared.citations)
 
     if not answer:
         # 模型一个字都没吐（例如上下文过长被拒）：按"未收录"处理并如实记录
@@ -439,6 +515,12 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
         citations = [c for i, c in enumerate(prepared.citations, start=1) if i in marked]
         usage['citation_marked'] = True
     else:
+        # 与同步路径同一处置（第 207 批）：有候选却一个都没标 → **不冒充有来源**。
+        # 但**降级文本**（`no_llm` / `llm_error` 那种"档案原文"）不同：它不是模型生成的，
+        # 本来就不会带 `【n】`，此时保留候选来源是正确的，不该被清掉。
+        if prepared.citations and not reason:
+            citations = []
+            usage['citation_candidates'] = len(prepared.citations)
         usage['citation_marked'] = False
 
     message.content = answer
