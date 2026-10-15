@@ -44,6 +44,9 @@ const OUT = path.resolve('dsh-shots');
 const LEAF_IMAGE = path.resolve('..', 'backend', 'pests', 'Apple___Apple_scab14.jpg');
 const ADMIN = 'admin';
 
+//: 截图前把 admin 的问答历史快照到这里，跑完**原样还原**（第 205 批加）
+const SNAPSHOT_PATH = path.resolve('..', 'backend', '_assistant_history_snapshot.json');
+
 fs.mkdirSync(OUT, { recursive: true });
 
 const log = (text) => console.log(text);
@@ -120,11 +123,35 @@ const seedOutput = runDjango([
   "from django.utils import timezone",
   "from api.models_assistant import AssistantMessage, AssistantSession",
   "from api.models import PestInfo",
-  // ⚠️⚠️ 这一行会**删掉 admin 的全部问答历史**（不只是本次演示）。
-  //    这是有意为之：本脚本用 `admin` 当**演示账号**（README 配图里不出现临时机器名），
-  //    历史里混着历次开发调试留下的临时问答，不清就会出现在配图里。
-  //    写在这里以免误解：**admin 名下的助手问答不是"个人数据"**，它就是这个项目的演示账号
-  //    （第 203 批有一次我误以为删掉了用户数据，核对备份后才确认那条会话同样是调试留下的）。
+  // ⚠️⚠️ 第 205 批事故与修正：这里原来删的是 **admin 的全部问答历史**。
+  //    我在别处用同样的思路清理调试数据时，**误删了用户真实用过的会话**
+  //    （`admin` 与 `admin123456` 两个账号都有人用，我只当它们是演示账号）。
+  //    已从备份恢复 11 条，见 `docs/系统完善记录.md` 第 205 批。
+  //
+  //    现在的做法：**只删"没有标题或标题为空"的兜底行**是不行的 ——
+  //    演示要的是"侧栏干净"，所以改成**先备份、删、跑完再还原**：
+  //    跑之前把 admin 的历史序列化到临时文件，跑完原样写回。
+  //    这样配图干净、又不销毁任何真实记录。
+  "import json, pathlib",
+  "SNAP = pathlib.Path(r'" + SNAPSHOT_PATH.replace('\\', '\\\\') + "')",
+  "def _snapshot():",
+  "    rows = []",
+  "    for s in AssistantSession.objects.filter(user=admin).order_by('id'):",
+  "        rows.append({",
+  "            'title': s.title, 'pest_id': s.pest_id, 'detection_id': s.detection_id,",
+  "            'created_at': s.created_at.isoformat(), 'updated_at': s.updated_at.isoformat(),",
+  "            'escalated_at': s.escalated_at.isoformat() if s.escalated_at else None,",
+  "            'messages': [",
+  "                {'role': m.role, 'content': m.content, 'model': m.model,",
+  "                 'degraded': m.degraded, 'degrade_reason': m.degrade_reason,",
+  "                 'latency_ms': m.latency_ms, 'citations': m.citations, 'usage': m.usage,",
+  "                 'prompt_version': m.prompt_version, 'lang': m.lang,",
+  "                 'truncated': m.truncated, 'created_at': m.created_at.isoformat()}",
+  "                for m in AssistantMessage.objects.filter(session=s).order_by('id')]})",
+  "    SNAP.write_text(json.dumps(rows, ensure_ascii=False), encoding='utf-8')",
+  "    return len(rows)",
+  "print('被替换的演示问答数:', AssistantSession.objects.filter(user=admin).count())",
+  "print('已快照真实历史:', _snapshot(), '条 →', SNAP)",
   "print('cleared admin assistant history:', AssistantSession.objects.filter(user=admin).delete()[0])",
   // ⚠️ 演示问题的长度是**照着侧栏能显示下的量**定的：第一版写
   //    "苹果黑星病打什么药？稀释倍数和安全间隔期是多少？"（23 字），侧栏显示成
@@ -306,11 +333,12 @@ runDjango([
   //    必须同时清掉日志行（按演示帖 id 定位 target_id）。
   `print('cleaned demo audit:', AdminAuditLog.objects.filter(target_id__in=[str(i) for i in demo_ids]).delete()[0])`,
   "from api.models_assistant import AssistantSession",
-  // ⚠️ 演示问答的标题**不带 `zz演示` 前缀**（带了会出现在截图里，像测试数据），
-  //    所以这里按"admin 的全部问答历史"清 —— 与种之前那步"清空历史"是对称的。
-  //    代价是会把 admin 自己问过的记录一并删掉；换来的是**截图可复现**
-  //    （每次都从同样四条演示开始），这个取舍对文档配图是值得的。
-  "print('cleaned assistant sessions:', AssistantSession.objects.filter(user__username='admin').delete()[0])",
+  // ⚠️ 收尾把演示问答清掉；**随后在下一步从快照还原真实历史**（第 205 批）。
+  //    原来这里的注释写的是"按 admin 的全部问答历史清，代价是会把 admin 自己问过的记录一并删掉"
+  //    —— 那个"代价"后来真的造成了事故：我用同样的思路清理调试数据时，
+  //    **误删了用户真实用过的 11 条会话**（`admin` 与 `admin123456` 两个账号都有人用）。
+  //    现在的约定：**任何"清空某人的历史"都必须先快照、跑完还原**，不做不可逆删除。
+  "print('cleaned demo assistant sessions:', AssistantSession.objects.filter(user__username='admin').delete()[0])",
   "print('cleaned audit:', AdminAuditLog.objects.filter(detail__startswith='演示：').delete()[0])",
   // ⚠️ 历次 E2E 留下的临时账号（`zze2e_fa_super_x0sa`、`zzfixc_admin_…` 这类机器名）会出现在
   //    「操作日志」截图里，很难看。它们必须在**截图之前**清掉（只放在收尾清理里没用）。
@@ -323,4 +351,46 @@ runDjango([
   "print('cleaned pre-existing test-target audit:', AdminAuditLog.objects.filter(Q(detail__contains='zz') | Q(target_repr__contains='zz') | Q(target_id__contains='zz')).exclude(detail__startswith='演示：').delete()[0])",
 ]);
 log('演示内容已清理');
+
+// ---------------------------------------------------------------------------
+// ⑥ 从快照**还原** admin 的真实问答历史（第 205 批）
+//
+// 这一步是上面"清空 admin 历史"的配套：快照在 seed 段开头写过一份，
+// 现在原样写回。**没有这一步，这个脚本就是不可逆地销毁数据**。
+// ---------------------------------------------------------------------------
+runDjango([
+  'import json, pathlib',
+  'from datetime import datetime, timezone as dt_timezone',
+  'from django.contrib.auth import get_user_model',
+  'from api.models_assistant import AssistantMessage, AssistantSession',
+  "admin = get_user_model().objects.get(username='admin')",
+  `SNAP = pathlib.Path(r'${SNAPSHOT_PATH.replace(/\\/g, '\\\\')}')`,
+  'if not SNAP.is_file():',
+  "    print('没有快照文件，跳过还原')",
+  'else:',
+  '    rows = json.loads(SNAP.read_text(encoding="utf-8"))',
+  '    def aware(v):',
+  '        if not v:',
+  '            return None',
+  '        dt = datetime.fromisoformat(v)',
+  '        return dt if dt.tzinfo else dt.replace(tzinfo=dt_timezone.utc)',
+  '    restored = 0',
+  '    for row in rows:',
+  '        s = AssistantSession.objects.create(',
+  "            user=admin, title=row['title'], pest_id=row['pest_id'],",
+  "            detection_id=row['detection_id'], escalated_at=aware(row['escalated_at']))",
+  '        AssistantSession.objects.filter(pk=s.pk).update(',
+  "            created_at=aware(row['created_at']), updated_at=aware(row['updated_at']))",
+  "        for m in row['messages']:",
+  '            msg = AssistantMessage.objects.create(',
+  "                session=s, role=m['role'], content=m['content'], model=m['model'],",
+  "                degraded=m['degraded'], degrade_reason=m['degrade_reason'],",
+  "                latency_ms=m['latency_ms'], citations=m['citations'], usage=m['usage'],",
+  "                prompt_version=m['prompt_version'], lang=m['lang'], truncated=m['truncated'])",
+  '            AssistantMessage.objects.filter(pk=msg.pk).update(created_at=aware(m["created_at"]))',
+  '        restored += 1',
+  "    print('restored assistant history:', restored, '条')",
+  '    SNAP.unlink(missing_ok=True)',
+]);
+log('admin 问答历史已还原（快照文件已删除）');
 log('下一步：python docs/tools/optimize_readme_images.py');
