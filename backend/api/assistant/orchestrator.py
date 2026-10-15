@@ -36,8 +36,11 @@ logger = logging.getLogger(__name__)
 
 #: 会话标题取首问前 N 字
 TITLE_CHARS = 30
-#: 单条消息最多带几处引用（前端渲染太多反而看不出重点）
-MAX_CITATIONS = 6
+#: 单条消息最多带几处引用（前端渲染太多反而看不出重点）。
+#: ⚠️ 第 209 批从 6 提到 8：用户会问"苹果跟葡萄的**所有**病害"这类**按作物清点**的问题，
+#:    而苹果 4 条 + 葡萄 4 条 = 8 条。上限卡在 6 时，上下文里明明有 8 条、来源却只给 6 条
+#:    —— 又一次"来源少于实际用到的"，与本批刚修的 `_fallback_body` 是同一类问题。
+MAX_CITATIONS = 8
 
 
 def _fallback_body(hits, lang: str = prompts.DEFAULT_LANG) -> str:
@@ -183,7 +186,8 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
     from django.conf import settings as django_settings
 
     hits = search(prepared.question, pest_identifier=pest_identifier,
-                  top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 5))
+                  top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 8))
+    hits = _trim_dominated_hits(hits)
     built = context_builder.build(hits, lang=code)
 
     if built.is_empty:
@@ -200,6 +204,39 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
         prepared.citations = [c.as_dict() for c in built.citations[:MAX_CITATIONS]]
         prepared.prompt_version = prompts.PROMPT_VERSION
     return prepared
+
+
+#: 命中分数低于"最高分 × 此比例"的条目在**单一主角**场景下被丢弃。
+#: 0.5 的来历（第 209 批实测分数分布）：
+#:   · 单一病害："番茄晚疫病怎么打药？" → 104 / 34 / 32 / 20 / 20 …
+#:     次高只有最高分的 33%，`< 52` 被丢 → 上下文里只剩真正相关的那两条；
+#:   · 按作物清点："苹果跟葡萄病害防治方法" → 20 / 20 / 19 / 19 / 19 / 19 / 18 / 18
+#:     全是最高分的 90%~100%，**一条都不会被丢** → 8 条完整清单。
+_DOMINANCE_RATIO = 0.5
+
+
+def _trim_dominated_hits(hits):
+    """有明确主角时，丢掉被主角压制的弱命中。
+
+    ## 为什么需要它（第 209 批）
+
+    为了让"苹果跟葡萄的**所有**病害"能列全，`ASSISTANT_TOP_K` 从 5 提到 8。
+    但这是一个**全局**值 —— 副作用是**单一病害问题也拖进 7 条弱命中**：
+    "番茄晚疫病怎么打药？"的上下文从约 3000 字涨到 8151 字，
+    而且模型会顺手去讲番茄早疫病、斑枯病等**用户根本没问**的病（第一批就踩过这个污染）。
+
+    判据用**分数落差**而不是关键词：一个词条分数远高于其他，说明问题指向它；
+    分数扁平（都靠"作物命中"拿分）说明用户在**清点整个作物**。
+    这样"清点"与"单点"两类问题各自得到合适的上下文，不需要额外的意图分类器。
+    """
+    if len(hits) < 2:
+        return hits
+    top = max(hit.score for hit in hits)
+    if top <= 0:
+        return hits
+    kept = [hit for hit in hits if hit.score >= top * _DOMINANCE_RATIO]
+    # 全部被丢（不可能，因为最高分自己一定 >= 阈值）时保底返回原列表
+    return kept or hits
 
 
 def _citations_from_hits(hits, lang: str = prompts.DEFAULT_LANG) -> list[dict]:

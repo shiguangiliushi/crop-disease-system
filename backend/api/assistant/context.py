@@ -188,12 +188,65 @@ def _disease_en_attrs(attr: str) -> str:
     return f'{attr}_en'
 
 
-def build(hits: list[Hit], *, max_chars: int = 6000, lang: str = 'zh') -> BuiltContext:
+def _condensed_entry(pest, hit, head: str, lang: str) -> str:
+    """把一条词条压缩成"够列清单"的两三行（第 209 批加）。
+
+    ## 为什么要它
+
+    `build()` 的预算装不下全部命中时，原来直接 `break` —— 后面的条目**整块消失**，
+    于是"苹果跟葡萄的所有病害"永远只能答出前 4 条（8 条档案 ≈ 9 450 字 > 6 000 字预算）。
+    清点式问题要的是"**都有哪些**"，不是"某一条的全部细节"，
+    所以给每条保留最核心的两项就足够模型列出完整清单。
+
+    ## 取什么
+
+    - 疾病条目：`症状描述`（识别用）+ 第一条防治措施（能照做的最小信息）；
+    - 健康条目：`健康生长条件` + 第一条栽培管理。
+      健康条目在"某作物都有哪些"里必须**占一行** —— 种好它本身就是防病的一部分，
+      漏掉会让用户觉得清单少了东西。
+    """
+    english = lang == 'en'
+    sep = ': ' if english else '：'
+    lines = [head]
+    first_ok = False  # 只取第一条措施，避免又变成全文
+
+    if hit.is_healthy and hit.profile is not None:
+        for title, attr in HEALTHY_SECTIONS + CARE_SECTIONS:
+            value = _localized_pair(hit.profile, attr, f'{attr}_en', lang)
+            if not value:
+                continue
+            if not first_ok or title in ('健康生长条件', '农业健康管理'):
+                shown = section_label(title, lang) if english else title
+                lines.append(f'{shown}{sep}{value[:120]}')
+                first_ok = True
+            if len(lines) >= 3:
+                break
+    else:
+        symptoms = _localized_pair(pest, 'symptoms', _disease_en_attrs('symptoms'), lang)
+        if symptoms:
+            shown = section_label('症状描述', lang) if english else '症状描述'
+            lines.append(f'{shown}{sep}{symptoms[:120]}')
+        for method in pest.prevention_methods.all().order_by('category'):
+            en_value = field_text(method.measure_en or '', 'en')
+            zh_value = field_text(method.measure or '', 'zh')
+            value = (en_value or zh_value) if english else zh_value
+            if not value:
+                continue
+            title = (PREVENTION_LABELS_EN.get(method.category, method.category) if english
+                     else method.get_category_display())
+            lines.append(f'{title}{sep}{value[:120]}')
+            break  # 只要一条措施
+    return '\n'.join(lines)
+
+
+def build(hits: list[Hit], *, max_chars: int = 9000, lang: str = 'zh') -> BuiltContext:
     """把命中拼成 `<knowledge>` 块 + 引用列表。
 
     `max_chars` 是硬上限：化学防治单条最长 353 字，5 条命中就能到 2000+ 字，
-    再加发病规律会撑大输入（费钱且容易让模型跑题）。超限时**按条目顺序截断**
-    并在文本里留一行说明，而不是静默丢弃 —— 让"答案为什么没提某一点"可复盘。
+    再加发病规律会撑大输入（费钱且容易让模型跑题）。
+    超限时**不再丢弃条目**，而是把装不下的条目改成"精简版"（见 `_condensed_entry`）——
+    第 209 批的修正：原来直接 `break`，导致"按作物清点"类问题只能答出前几条。
+    真实清点需求是 8 条（苹果 4 + 葡萄 4）≈ 9 450 字，所以预算从 6 000 提到 9 000。
 
     `lang='en'` 时（第 197 批）：维度名与防治类别名换成英文，字段优先取 `*_en`，
     **该字段为空则回落中文原文** —— 宁可让用户看到中文，也不要给一个空段落。
@@ -222,16 +275,16 @@ def build(hits: list[Hit], *, max_chars: int = 6000, lang: str = 'zh') -> BuiltC
         if hit.is_healthy:
             profile = hit.profile
             if profile is not None:
-                for title, attr in HEALTHY_SECTIONS:
+                for title, attr in HEALTHY_SECTIONS + CARE_SECTIONS:
                     value = _localized_pair(profile, attr, f'{attr}_en', lang)
-                    if value:
-                        part.append(f'{section_label(title, lang)}: {value}' if english
-                                    else f'{title}：{value}')
-                for title, attr in CARE_SECTIONS:
-                    value = _localized_pair(profile, attr, f'{attr}_en', lang)
-                    if value:
-                        part.append(f'{section_label(title, lang)}: {value}' if english
-                                    else f'{title}：{value}')
+                    if not value:
+                        continue
+                    shown = section_label(title, lang) if english else title
+                    part.append(f'{shown}: {value}' if english else f'{shown}：{value}')
+                    # ⚠️ 第 209 批补：健康条目**从来没往 `cit_parts` 里写过**，
+                    #    于是界面上"来源"里健康条目的摘要只剩名字（"健康苹果"四个字）。
+                    #    疾病条目一直有摘要、健康条目没有 —— 纯属漏写，不是有意。
+                    cit_parts.append(f'{shown}{": " if english else "："}{value[:80]}')
                 if profile.scientific_name:
                     latin = profile.scientific_name.split('（')[0].strip()
                     part.append(wrap(f'this crop: {latin}' if english else f'该作物学名：{latin}'))
@@ -262,13 +315,35 @@ def build(hits: list[Hit], *, max_chars: int = 6000, lang: str = 'zh') -> BuiltC
 
         block = '\n'.join(part)
         if len(block) > budget:
-            omitted = len(hits) - index + 1
-            blocks.append(f'({omitted} more entries omitted: context length limit)' if english
-                          else f'（以下条目因上下文长度上限被省略，共 {omitted} 条）')
-            break
+            # ⚠️ 第 209 批：这里原来是 `break` —— **把剩下的条目整块丢掉**，
+            #    只留一行"共 N 条被省略"。后果是"清点式"问题（"苹果跟葡萄的所有病害"）
+            #    永远答不全：8 条档案约 9 450 字、预算 6 000 字，于是只有前 4 条进上下文，
+            #    模型**看不到**另外 4 条 —— 无论提示词怎么写都列不全。
+            #    而且引用也跟着只有 4 条（用户看到的"来源"比实际条数少）。
+            #
+            #    现在的做法：**预算内先给全文，装不下的条目改成"简短但一条不落"**。
+            #    清点式问题要的是"都有哪些病"，不是"某一条的全部细节" ——
+            #    每条给"症状要点 + 一条最关键措施"就够模型列出完整清单，
+            #    而且这几条的 snippet 也用这段精简文本（**展示与依据一致**）。
+            short = _condensed_entry(pest, hit, head, lang)
+            if len(short) <= budget:
+                block = short
+            elif blocks:
+                # 连精简都放不下：到此为止，并**明确说清**省略了几条（不许静默）
+                omitted = len(hits) - index + 1
+                blocks.append(
+                    f'({omitted} more entries omitted: context length limit)' if english
+                    else f'（以下条目因上下文长度上限被省略，共 {omitted} 条）')
+                break
+            else:
+                # 第一条就超预算（预算被调得极小）：保留原文，不要交白卷
+                pass
         budget -= len(block)
         blocks.append(block)
 
+        # 精简过的条目：引用摘要用同一段精简文本，避免"依据"与"展示"两张皮
+        if block.startswith(head) and len(block) < len('\n'.join(part)):
+            cit_parts = [block[len(head):].strip()]
         joiner = ' | ' if english else ' ｜ '
         snippet = joiner.join(cit_parts)[:200] if cit_parts else label
         result.citations.append(Citation(

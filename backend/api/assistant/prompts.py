@@ -77,8 +77,9 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
 - 再给措施（按农业/化学/生态/物理/监测分类，与词条一致）
 - 最后说明何时需要找人工（如"发病严重或无法判断时建议咨询当地植保站"）
 
-9. **控制篇幅：整段回答不超过约 1200 字。** 每一节只讲最关键的 2～3 条，
-   不要把词条逐条复述一遍 —— 读者要的是"我该怎么办"，不是档案全文。
+9. **控制篇幅：整段回答通常不超过约 1200 字**（"清点式"问题见第 12 条）。
+   每一节只讲最关键的 2～3 条，不要把词条逐条复述一遍 ——
+   读者要的是"我该怎么办"，不是档案全文。
 10. **问题里出现多个作物/病害时，每一条都要答，但每条都简短**（各 2～3 句：
     结论 + 关键时机 + 最关键的一两条措施）。**不要只讲透一个、把其余的带过** ——
     用户列了两样就是想两样都知道；只答一个会让他觉得答案不完整。
@@ -88,6 +89,22 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
 11. **每一个结论后面都必须紧跟 `【序号】`**，序号对应 <knowledge> 里的条目编号。
     没标序号的句子等于没有来源 —— 系统会因此判定"引用缺失"并把来源整块隐藏。
     引用是**内联**的（写在句子末尾），不要在结尾另起一段集中罗列。
+12. **"清点式"问题要给完整概览**：当用户问的是某个作物的**全部/所有**病害、
+    "有哪些病"，或一次点名多个作物并要防治方法时，**把 <knowledge> 里相关的每一条都列到**，
+    一条都不许省略（这正是他问这个问题的原因）。写法：
+
+    **作物A**
+    1. **病名** —— 最典型的识别特征（十字以内，如"叶背黄褐色毛丛状锈孢子器"）；
+       关键措施（时机 + 一两个药或做法）。【序号】
+    2. …（同理）
+
+    **作物B**
+    3. …（同理）
+
+    每条控制在 **2 行以内**；概览总长上限约 **1600 字**。若 <knowledge> 里条目太多、
+    确实放不下，**要在末尾说明"还有 N 条未列出，可再问"** ——
+    **不允许**默不作声地只列一部分（用户会以为那就是全部）。
+    健康条目也要列一行（种好它本身就是防病的一部分）。
 
 语言：中文。不要输出 Markdown 表格；用短段落和编号列表。"""
 
@@ -124,19 +141,32 @@ Structure (keep it short — rules 9 and 10 are hard requirements):
 - then the measures, grouped as in the entry (cultural / chemical / ecological / physical / monitoring)
 - finally say when to ask a human (e.g. severe outbreak or uncertain diagnosis → local plant protection station)
 
-9. **Keep the whole answer under about 1,200 characters / 700 words.** Give only the
-   2–3 most important points per section. Do not restate the entry line by line — the reader
-   wants "what should I do", not a transcript of the archive.
+9. **Keep the whole answer normally under about 1,200 characters / 700 words**
+   (for "survey" questions see rule 12). Give only the 2–3 most important points per section.
+   Do not restate the entry line by line — the reader wants "what should I do".
 10. **When the question names several crops or diseases, answer every one of them, but keep
-   each short** (2–3 sentences: conclusion + key timing + the one or two most important
-   measures). **Do not expand one fully and merely mention the rest** — if the user listed
-   several, they want all of them; covering only one feels like an incomplete answer.
-   Equally, do not write a thousand characters about a single one: **balanced short answers**
-   are more useful than "one in depth plus one line".
+    each short** (2–3 sentences: conclusion + key timing + the one or two most important
+    measures). **Do not expand one fully and merely mention the rest** — if the user listed
+    several, they want all of them; covering only one feels like an incomplete answer.
 11. **Every conclusion must be followed immediately by `【number】`**, matching the entry
-   numbering in <knowledge>. A sentence with no number counts as having no source — the
-   system will treat the citations as missing and hide them. Citations are **inline**
-   (at the end of the sentence); do not collect them in a separate block at the end.
+    numbering in <knowledge>. A sentence with no number counts as having no source — the
+    system will treat the citations as missing and hide them. Citations are **inline**;
+    do not collect them in a separate block at the end.
+12. **"Survey" questions need the complete list.** When the user asks for **all** the diseases
+    of a crop, "what diseases are there", or names several crops and asks for control methods,
+    **include every relevant entry in <knowledge>** — omitting one defeats the purpose of the
+    question. Format:
+
+    **Crop A**
+    1. **Disease name** — the single most diagnostic feature (a few words);
+       the key measure (timing + one or two products or practices).【number】
+    2. …and so on
+
+    Keep each item to **two lines or less**; the whole survey up to about **1,600 characters**.
+    If there are genuinely too many entries to fit, **say at the end how many were left out
+    and offer to continue** — **never** silently list only part of them (the user will assume
+    that is all there is). Include healthy entries as one line each (growing the crop well is
+    itself part of disease prevention).
 
 Language: English. No Markdown tables; use short paragraphs and numbered lists."""
 
@@ -226,9 +256,10 @@ def degrade_text(key: str, lang: str = DEFAULT_LANG, **params) -> str:
 
 #: 提示词版本：改了措辞就改它，便于事后区分"哪版提示词产出的答案"。
 #: v2（第 197 批）加英文；v3（第 204 批）加"控制篇幅 + 多作物只展开一个"；
-#: **v4（第 207 批）把"只展开一个"改成"每条都答但都简短"，并把"必须内联标 `【序号】`"
-#: 升为独立硬要求** —— 因为实测"只讲一个"会让用户觉得答案不完整（来源列 4 条、正文只覆盖 2 条）。
-PROMPT_VERSION = 'v4-2026-10-16'
+#: v4（第 207 批）把"只展开一个"改成"每条都答但都简短"，并把"必须内联标 `【序号】`"升为独立硬要求；
+#: **v5（第 209 批）新增第 12 条「清点式问题要给完整概览 + 放不下必须说明少了几条」** ——
+#: 起因是用户问"苹果跟葡萄的**所有**病害"，而回答只覆盖了 4/8 条。
+PROMPT_VERSION = 'v5-2026-10-16'
 
 
 def build_messages(question: str, knowledge: str, intent: str = 'general',

@@ -807,7 +807,11 @@ ASSISTANT_SESSION_MAX_MESSAGES = int(os.environ.get('ASSISTANT_SESSION_MAX_MESSA
 #: 每用户每分钟提问上限（0 = 不限）。闸门在**动模型之前**执行，所以拒绝不花额度。
 ASSISTANT_RATE_PER_MINUTE = int(os.environ.get('ASSISTANT_RATE_PER_MINUTE', '10'))
 #: 检索取前几条进上下文。5 条约 2000~3000 字，是"够用且不跑题"的平衡点。
-ASSISTANT_TOP_K = int(os.environ.get('ASSISTANT_TOP_K', '5'))
+#: 单次检索取几条进上下文。
+#: ⚠️ 第 209 批从 5 提到 8：用户会问"苹果跟葡萄的所有病害"这类**按作物清点**的问题，
+#:    苹果 4 条 + 葡萄 4 条 = 8 条。取 5 条时模型根本看不到另外 3 条，
+#:    于是无论提示词怎么写都只能答一部分（这才是"答案不完整"的硬约束）。
+ASSISTANT_TOP_K = int(os.environ.get('ASSISTANT_TOP_K', '8'))
 
 # ----------------------------------------------------------------------------
 # 测试环境必须**关掉**自动翻译（第 85 批）
