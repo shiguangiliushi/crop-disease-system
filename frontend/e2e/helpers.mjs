@@ -75,6 +75,50 @@ export function assertNoProblems() {
   expect(problems, `共 ${problems.length} 项不符合预期：\n  ${problems.join('\n  ')}`).toEqual([]);
 }
 
+/**
+ * 轮询直到 `probe()` 返回真值，返回该值；超时返回最后一次的值。
+ *
+ * **用它是为了替代"等固定时长再读一次"** —— 后者在机器有负载时必然抖。
+ * 第 199 批查到的一条 flaky 就是这么来的：批量删除后 `waitForTimeout(2500)` 再读接口，
+ * 而当时我正在跑后端全量测试，写库还没落地，读到的是旧值。表现是
+ * "单独跑 5/5 通过、全量跑偶发失败"，很容易被误判成并行干扰。
+ *
+ * 轮询既不会慢（条件一满足立即返回），也不会因"恰好这一瞬间没就绪"而假红。
+ *
+ * @param {() => any | Promise<any>} probe 返回真值即结束
+ * @param {{timeout?: number, interval?: number, label?: string}} opts
+ */
+export async function pollUntil(probe, { timeout = 15_000, interval = 300, label = '' } = {}) {
+  const deadline = Date.now() + timeout;
+  let last;
+  let tries = 0;
+  for (;;) {
+    last = await probe();
+    tries += 1;
+    if (last) return last;
+    if (Date.now() >= deadline) {
+      if (label) console.log(`  ↳ 轮询 ${tries} 次仍未满足：${label}`);
+      return last;
+    }
+    await new Promise((resolve) => { setTimeout(resolve, interval); });
+  }
+}
+
+/**
+ * 反复读一个 locator 的文本，直到 `accept(text)` 为真；返回最后读到的文本。
+ *
+ * 用于"表格/分页渲染完再读"：比固定等待可靠，也比"等首行出现"精确 ——
+ * 切换筛选时**旧行还在**，只等首行出现会读到旧数据。
+ */
+export async function waitForText(locator, accept, { timeout = 15_000, interval = 300 } = {}) {
+  let text = '';
+  await pollUntil(async () => {
+    text = (await locator.innerText().catch(() => '')) || '';
+    return accept(text) ? text : '';
+  }, { timeout, interval, label: '文本条件未满足' });
+  return text;
+}
+
 export function resetChecks() {
   checkCount = 0;
   problems.length = 0;

@@ -19,10 +19,12 @@ import {
   expectThat,
   login,
   loginAs,
+  pollUntil,
   registerTempUser,
   resetChecks,
   runDjango,
   TEMP_PREFIX,
+  waitForText,
   watchPageErrors,
 } from './helpers.mjs';
 
@@ -62,30 +64,37 @@ test.describe('管理端：用户管理', () => {
     await loginAs(page, session);
     await page.goto('/admin/users');
     await page.waitForSelector('.el-table__row', { timeout: TABLE_WAIT_MS });
-    await page.waitForTimeout(800);
 
-    const totalAll = await page.locator('.pagination-wrap .el-pagination').first().innerText();
+    // 读分页文本要**等到它稳定**，不能"等 800ms 再读一次"：
+    // 切换筛选时旧数字还在页面上，固定等待可能读到切换前的值（第 199 批加固）。
+    const pageInfo = page.locator('.pagination-wrap .el-pagination').first();
+    const totalAll = await waitForText(pageInfo, (text) => /\d/.test(text));
     const countAll = Number((totalAll.match(/(\d+)/) || [])[1]);
 
     // 选一个角色 → 列表应变化、且地址栏带上 role 参数
     await page.locator('.filter-bar .el-select').first().click();
     await page.waitForTimeout(400);
     await page.locator('.el-select-dropdown__item', { hasText: /普通用户|Normal user/ }).first().click();
-    await page.waitForTimeout(1200);
+    // 等"筛选后的条数"真的渲染出来（与全部不同，或地址栏已带 role）
+    await pollUntil(() => new URL(page.url()).searchParams.get('role') === 'USER',
+                    { label: '地址栏 role 参数' });
 
     const roleParam = new URL(page.url()).searchParams.get('role');
     expectThat('地址栏带 role 参数', roleParam, 'USER');
 
-    const totalFiltered = await page.locator('.pagination-wrap .el-pagination').first().innerText();
+    const totalFiltered = await waitForText(pageInfo, (text) => /\d/.test(text));
     const countFiltered = Number((totalFiltered.match(/(\d+)/) || [])[1]);
     expectThat('筛选后条数不超过全部', countFiltered <= countAll, true);
 
     // 关键：点"全部用户/清除筛选"必须能回到全部（这正是用户报过的问题）
     const resetBtn = page.locator('.filter-bar button', { hasText: /全部用户|All users/ }).first();
     await resetBtn.click();
-    await page.waitForTimeout(1200);
 
-    const afterReset = await page.locator('.pagination-wrap .el-pagination').first().innerText();
+    // 等到条数**真的回到** countAll 再断言（原来是等 1200ms 读一次，切换慢就假红）
+    const afterReset = await waitForText(pageInfo, (text) => {
+      const value = Number((text.match(/(\d+)/) || [])[1]);
+      return value === countAll;
+    });
     const countAfterReset = Number((afterReset.match(/(\d+)/) || [])[1]);
     expectThat('清空筛选后条数回到全部', countAfterReset, countAll);
     expectThat('地址栏不再带筛选参数', new URL(page.url()).searchParams.get('role'), null);
@@ -224,12 +233,28 @@ test.describe('管理端：用户管理', () => {
     expectThat('确认词正确后可点', await confirmBtn.isDisabled(), false);
 
     await confirmBtn.click();
-    await page.waitForTimeout(2500);
 
     // 直接查接口确认真的删了（界面提示可能被改动，数据是硬证据）
-    const after = await api(`/api/admin/users/?search=${TEMP_PREFIX}_bulk&page_size=20`, {
-      token: session.token,
-    });
+    //
+    // ⚠️ 这一段原来是 `waitForTimeout(2500)` + 读**一次**接口，是这条用例唯一
+    // flaky 的地方，根因值得写下来：
+    //   删除走的是**软删除**（`User.soft_delete`），第一步是把用户名改成
+    //   `deleted_<id>`（"用户名必须让出来"）—— 所以"删掉后按原名搜不到"这个断言
+    //   本身是对的。问题在于**时机**：机器有负载时（例如同时在跑后端全量测试）
+    //   2500ms 内这次写库可能还没落地，读到的仍是 2。
+    //   实测证据：单独跑 5/5 通过；全量跑偶发失败，而当时我正在跑后端测试。
+    //   修法：把"等固定时长再读一次"换成**轮询到出现预期结果** ——
+    //   既消除竞态，又仍然是在证明"删除确实生效"（超时后拿到的还是原值就会失败）。
+    const searchAfter = `/api/admin/users/?search=${TEMP_PREFIX}_bulk&page_size=20`;
+    const deadline = Date.now() + 20_000;
+    let after = await api(searchAfter, { token: session.token });
+    let polls = 0;
+    while (after.json?.count > 1 && Date.now() < deadline) {
+      await page.waitForTimeout(400);
+      after = await api(searchAfter, { token: session.token });
+      polls += 1;
+    }
+    console.log(`  ↳ 删除后轮询 ${polls} 次，最终 count=${after.json?.count}`);
     expectThat('少了一个账号（勾了几行就少几个）', after.json?.count, 1);
     assertNoProblems();
   });
