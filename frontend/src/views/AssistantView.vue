@@ -51,7 +51,7 @@
           @click="openSession(item)"
         >
           <div class="assistant-side-title">
-            <span class="text-truncate">{{ item.title || t('assistant.newChat') }}</span>
+            <span class="assistant-side-name">{{ item.title || t('assistant.newChat') }}</span>
             <!-- 降级标记：让用户扫一眼就知道"这次没真的答上来"。
                  ⚠️ 这里**不写"降级"** —— 那是内部术语，用户看不懂；
                  改用已有的"未用 AI 生成"说明短语。 -->
@@ -574,6 +574,18 @@ onMounted(async () => {
   font-weight: 500;
   color: #1f2937;
 }
+/* ⚠️ 标题必须**自己**是省略号的容器，且给 tag 留出空间。
+   第一版把 `text-truncate` 加在 span 上、父级是 flex —— 结果标题被截断后
+   日期挤到了同一行，三行信息糊成一片（截图里才看出来）。
+   flex 子项要能收缩：`min-width: 0` 是必需的。 */
+.assistant-side-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-side-title :deep(.el-tag) { flex: 0 0 auto; }
 .assistant-side-meta { font-size: 0.72rem; color: #9ca3af; margin-top: 0.15rem; }
 .assistant-side-preview {
   font-size: 0.75rem;
