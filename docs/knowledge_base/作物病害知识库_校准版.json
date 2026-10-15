@@ -257,10 +257,10 @@
     {
       "category": "disease",
       "name": "甜椒细菌性斑点病",
-      "scientific_name": "Xanthomonas euvesicatoria（旧分类名 X. axonopodis pv. vesicatoria），黄单胞杆菌属，革兰氏阴性细菌；辣椒上细菌性叶斑病（bacterial spot），区别于番茄细菌性斑疹病（bacterial speck, Pseudomonas syringae pv. tomato）",
+      "scientific_name": "Xanthomonas euvesicatoria（旧分类名 X. axonopodis pv. vesicatoria），黄单胞杆菌属，革兰氏阴性细菌；辣椒上细菌性斑点病（bacterial spot），区别于番茄细菌性斑疹病（bacterial speck, Pseudomonas syringae pv. tomato）",
       "host_crop": "甜椒/辣椒（Capsicum annuum）",
       "dimensions": {
-        "症状描述": "危害叶片、茎和果实。叶片初现水渍状黄绿色小斑点，后扩大为不规则形至角形坏死斑，直径1-4mm，中央淡褐色凹陷，边缘暗褐色略隆起，周围有黄色晕圈；病斑粗糙呈疮痂状（木栓化隆起）。严重时叶片变黄、干枯脱落（俗称落叶瘟）。茎上初生水渍状不规则条斑，后木栓化隆起、纵裂呈疮痂状。果实上初生黑色或暗褐色隆起小斑点，扩大为1-3mm圆形或长圆形黑色疮痂状病斑，边缘有裂口。关键鉴别：病斑较大（1-4mm）且木栓化隆起、疮痂状，与番茄细菌性斑疹病（speck，Pseudomonas引起，病斑极小1mm左右、不隆起）不同。",
+        "症状描述": "危害叶片、茎和果实。叶片初现水渍状黄绿色小斑点，后扩大为不规则形至角形坏死斑，直径1-4mm，中央淡褐色凹陷，边缘暗褐色略隆起，周围有黄色晕圈；病斑粗糙呈疮痂状（木栓化隆起）。严重时叶片变黄、干枯脱落（俗称落叶瘟）。茎上初生水渍状不规则条斑，后木栓化隆起、纵裂呈疮痂状。果实上初生黑色或暗褐色隆起小斑点，扩大为1-3mm圆形或长圆形黑色疮痂状病斑，边缘有裂口。关键鉴别：病斑较大（1-4mm）且木栓化隆起、疮痂状，与番茄细菌性斑疹病（Pseudomonas引起，病斑极小1mm左右、不隆起）不同。",
         "发病规律": "病原细菌在种子表面和内部越冬，种子带菌是最主要初侵染源；也可在病残体和土壤中存活。借雨水反溅、风雨和灌溉水传播，从气孔或伤口侵入。高温高湿（25-30℃）、多雨大风、叶面结露时间长时发病重。农事操作（整枝、采收）在植株带露水时进行可传播病害。连作田、排水不良、偏施氮肥田块发病重。",
         "农业防治": "①选用抗病品种和无病种子；②种子消毒：55℃温汤浸种30min，或用1%盐酸浸种5-10min后洗净，或200mg/L农用硫酸链霉素浸种2h；③与非茄科作物（豆科、十字花科）实行2-3年轮作；④高垄栽培，沟灌或滴灌，避免大水漫灌和雨水反溅；⑤及时清除病残体，收获后集中深埋或烧毁；⑥整枝打杈等农事操作在叶面露水干后进行。",
         "化学防治": "①发病初期喷施铜制剂：77%氢氧化铜可湿性粉剂500-800倍液、20%噻唑锌悬浮剂500倍液；②抗生素类：中生菌素、春雷霉素、农用硫酸链霉素（注意链霉素已限用）；③保护剂：代森锰锌、百菌清；④雨后或初见病斑立即喷药，间隔7-10天1次，连喷2-3次；⑤铜制剂与抗生素轮换使用，避免抗药性；⑥注意铜制剂在甜椒苗期可能产生药害，宜降低浓度。",
@@ -274,7 +274,7 @@
         "https://zoneplant.com/diseases/bacterial-spot-pepper",
         "http://www.ippcaas.cn/kjfw/kpzs_kjfw/59534.htm"
       ],
-      "calibration_notes": "初稿未写明学名，补充Xanthomonas euvesicatoria（旧称X. axonopodis pv. vesicatoria）。明确区分bacterial spot（Xanthomonas，病斑大1-4mm木栓化隆起疮痂状）与bacterial speck（Pseudomonas，病斑极小1mm不隆起）。补充55℃温汤浸种30min、1%盐酸浸种5-10min等种子消毒方法。补充病斑尺寸1-4mm、果实病斑1-3mm等量化特征。来源：UC IPM、中国数字科技馆、中国农科院植保所。"
+      "calibration_notes": "初稿未写明学名，补充Xanthomonas euvesicatoria（旧称X. axonopodis pv. vesicatoria）。明确区分bacterial spot（Xanthomonas，病斑大1-4mm木栓化隆起疮痂状）与bacterial speck（Pseudomonas，病斑极小1mm不隆起）。补充55℃温汤浸种30min、1%盐酸浸种5-10min等种子消毒方法。补充病斑尺寸1-4mm、果实病斑1-3mm等量化特征。来源：UC IPM、中国数字科技馆、中国农科院植保所。 【第 201 批统一】`scientific_name` 里的「辣椒上细菌性叶斑病」改为「辣椒上细菌性斑点病」，与数据集类目表第 22 项（Pepper,_bell___Bacterial_spot - 甜椒细菌性斑点病）及本记录名称统一。原写法属同物异名，易与番茄细菌性斑疹病（bacterial speck）混淆。"
     },
     {
       "category": "disease",
