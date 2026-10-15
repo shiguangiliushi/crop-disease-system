@@ -125,9 +125,17 @@
           :class="msg.role === 'user' ? 'is-user' : 'is-assistant'"
         >
           <div class="assistant-bubble">
-            <!-- 纯文本渲染，**不用 v-html**：模型输出直接当 HTML 插入是 XSS 入口 -->
-            <p v-for="(para, i) in paragraphs(msg.content)" :key="i">{{ para }}</p>
-            <p v-if="msg.role === 'assistant' && msg.hasPesticide" class="assistant-disclaimer">
+            <!-- ⚠️ 仍然是**纯文本渲染，绝不用 `v-html`**：模型输出是不可信输入。
+                 但模型习惯写 `**加粗**`，纯文本渲染会把星号原样显示（用户反馈过
+                 "回答为什么会出现 `**` 和【数字】"）。所以**只解析加粗一种标记**：
+                 拆成文本片段 + `<strong>`，其余一律纯文本 ——
+                 标签名写死在模板里，不引入任何 HTML 注入面。 -->
+            <p v-for="(para, i) in paragraphs(msg.content)" :key="i">
+              <template v-for="(seg, si) in segmentsOf(para)" :key="si">
+                <strong v-if="seg.bold">{{ seg.text }}</strong>
+                <template v-else>{{ seg.text }}</template>
+              </template>
+            </p>            <p v-if="msg.role === 'assistant' && msg.hasPesticide" class="assistant-disclaimer">
               {{ t('assistant.pesticideDisclaimer') }}
             </p>
           </div>
@@ -254,6 +262,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Search } from '@element-plus/icons-vue';
 import { useI18n } from '@/i18n';
+import { parseInlineBold } from '@/utils/assistantText';
 import {
   askAssistantStream,
   deleteAssistantSession,
@@ -315,6 +324,13 @@ const filteredSessions = computed(() => {
 });
 
 const paragraphs = (text) => String(text || '').split('\n').filter((line) => line.trim());
+
+/**
+ * 把一段拆成"普通文本 / 加粗"片段（解析逻辑见 `utils/assistantText.js`，含单测）。
+ *
+ * ⚠️ 刻意不在这里自己写正则：抽屉与独立问答页都要这段解析，抄两份迟早只改一处。
+ */
+const segmentsOf = parseInlineBold;
 const hasPesticideText = (text) => /(\d+%|倍液|稀释|可湿性粉剂|悬浮剂|水分散粒剂|间隔期)/.test(String(text || ''));
 const isStreaming = (msg) => loading.value && !msg.messageId;
 

@@ -36,9 +36,23 @@
 
         <div v-for="msg in messages" :key="msg.key" :class="['assistant-msg', `is-${msg.role}`]">
           <div class="assistant-bubble">
-            <!-- 纯文本渲染而不是 v-html：模型输出是不可信内容，
-                 这里绝不能走 v-html（项目已有 sanitize 规范，见 verify-xss 脚本） -->
-            <p v-for="(line, index) in linesOf(msg.content)" :key="index" class="assistant-line">{{ line }}</p>
+            <!-- ⚠️ 仍然是**纯文本渲染，绝不用 `v-html`**：模型输出属于不可信输入，
+                 项目已有 sanitize 规范（`npm run verify:xss`），这里不开口子。
+                 但模型习惯写 `**加粗**`，纯文本渲染会把星号原样显示出来（用户反馈过
+                 "回答为什么会出现 `**` 和【数字】"）。所以**只解析加粗一种标记**：
+                 拆成文本片段 + `<strong>`，其余一律当纯文本 ——
+                 这样既有可读性，又不引入任何 HTML 注入面（标签名是我们写死的）。
+                 解析逻辑在 `utils/assistantText.js`（与独立问答页共用，含单测）。 -->
+            <p
+              v-for="(segments, index) in answerLines(msg.content)"
+              :key="index"
+              class="assistant-line"
+            >
+              <template v-for="(seg, si) in segments" :key="si">
+                <strong v-if="seg.bold">{{ seg.text }}</strong>
+                <template v-else>{{ seg.text }}</template>
+              </template>
+            </p>
           </div>
 
           <!-- 降级说明：告诉用户这不是 AI 回答，而是档案原文 -->
@@ -198,6 +212,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { askAssistantStream, escalateSession, formatAssistantError, sendAssistantFeedback } from '@/api/assistant';
 import { useI18n } from '@/i18n';
+import { parseAnswerLines } from '@/utils/assistantText';
 
 const props = defineProps({
   /** 显式控制显示（配合 v-model:visible） */
@@ -236,7 +251,13 @@ const suggestions = computed(() => [
 ]);
 
 /** 按行拆开，逐行 <p> —— 模型输出里的编号与空行因此能保住版式 */
-const linesOf = (content) => String(content || '').split('\n').filter((line) => line.trim() !== '');
+/**
+ * 把回答按行拆成片段，供模板渲染（解析逻辑见 `utils/assistantText.js`，含单测）。
+ *
+ * ⚠️ 这里**刻意不自己写正则**：抽屉与独立问答页都要这段解析，
+ *    抄两份迟早只改一处（第 210 批就是这么抽出来的）。
+ */
+const answerLines = parseAnswerLines;
 
 /** 降级原因 → 给用户的一句人话（不是错误码） */
 const degradeHintOf = (reason) => {

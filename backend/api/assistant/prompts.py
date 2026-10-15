@@ -89,6 +89,10 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
 11. **每一个结论后面都必须紧跟 `【序号】`**，序号对应 <knowledge> 里的条目编号。
     没标序号的句子等于没有来源 —— 系统会因此判定"引用缺失"并把来源整块隐藏。
     引用是**内联**的（写在句子末尾），不要在结尾另起一段集中罗列。
+    同一个句子里引用多条时合并写 `【1】【2】`；
+    **加粗与引用之间必须留一个空格**（`**苯醚甲环唑** 【1】`），
+    不要写成 `**苯醚甲环唑**【1】` 或 `**病名**** 【1】` ——
+    星号紧贴方括号在界面上会连成一片，看着像乱码（用户为此反馈过）。
 12. **"清点式"问题要给完整概览**：当用户问的是某个作物的**全部/所有**病害、
     "有哪些病"，或一次点名多个作物并要防治方法时，**把 <knowledge> 里相关的每一条都列到**，
     一条都不许省略（这正是他问这个问题的原因）。写法：
@@ -106,7 +110,14 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
     **不允许**默不作声地只列一部分（用户会以为那就是全部）。
     健康条目也要列一行（种好它本身就是防病的一部分）。
 
-语言：中文。不要输出 Markdown 表格；用短段落和编号列表。"""
+语言：中文。
+
+**排版格式（必须遵守）**：界面**只渲染 `**加粗**` 这一种标记**，其他 Markdown 一律原样显示成符号。
+- 可以且只可以用 `**……**` 给**病名**、**药剂名**、**关键时机**做加粗；
+- **禁止**使用 `#` 标题、`##` 小标题、`*斜体*`、`- ` 以外的列表符号、
+  `` `代码` ``、`[链接]()`、`![图片]()`、`>` 引用、表格、分隔线 `---`；
+- **禁止**把 `**` 和 `【序号】` 挨着写（`**病名**** 【1】` 会连成一片，看起来像乱码）；
+- 段落之间用空行分隔，每段一个要点。"""
 
 SYSTEM_PROMPT_EN = """You are the agronomy assistant built into a crop-disease diagnosis system.
 Your users are growers. Your knowledge comes **only** from the entries inside the
@@ -168,7 +179,16 @@ Structure (keep it short — rules 9 and 10 are hard requirements):
     that is all there is). Include healthy entries as one line each (growing the crop well is
     itself part of disease prevention).
 
-Language: English. No Markdown tables; use short paragraphs and numbered lists."""
+Language: English.
+
+**Formatting (mandatory)**: the UI renders **only `**bold**`**; every other Markdown symbol is
+shown literally.
+- You may — and only may — use `**…**` to bold **disease names**, **product names** and
+  **key timing**;
+- **Do not** use `#`/`##` headings, `*italics*`, code spans, `[links]()`, `![images]()`,
+  `>` quotes, tables or `---` rules;
+- **Do not** put `**` immediately next to `【number】` (it runs together and looks broken);
+- Separate paragraphs with a blank line; one point per paragraph."""
 
 SYSTEM_PROMPTS = {'zh': SYSTEM_PROMPT_ZH, 'en': SYSTEM_PROMPT_EN}
 
@@ -255,11 +275,12 @@ def degrade_text(key: str, lang: str = DEFAULT_LANG, **params) -> str:
 
 
 #: 提示词版本：改了措辞就改它，便于事后区分"哪版提示词产出的答案"。
-#: v2（第 197 批）加英文；v3（第 204 批）加"控制篇幅 + 多作物只展开一个"；
-#: v4（第 207 批）把"只展开一个"改成"每条都答但都简短"，并把"必须内联标 `【序号】`"升为独立硬要求；
-#: **v5（第 209 批）新增第 12 条「清点式问题要给完整概览 + 放不下必须说明少了几条」** ——
-#: 起因是用户问"苹果跟葡萄的**所有**病害"，而回答只覆盖了 4/8 条。
-PROMPT_VERSION = 'v5-2026-10-16'
+#: v2（第 197 批）加英文；v3（第 204 批）"控制篇幅 + 多作物只展开一个"；
+#: v4（第 207 批）改成"每条都答但都简短" + "必须内联标 `【序号】`"；
+#: v5（第 209 批）新增第 12 条"清点式问题要完整概览"；
+#: **v6（第 210 批）明确排版格式：只允许 `**加粗**`、禁止其他 Markdown、
+#: 加粗与 `【序号】` 之间必须留空格** —— 起因是用户看到回答里出现 `**` 和 `【数字】`。
+PROMPT_VERSION = 'v6-2026-10-16'
 
 
 def build_messages(question: str, knowledge: str, intent: str = 'general',
