@@ -61,6 +61,10 @@
     <td width="50%"><b>病害百科</b><br/><img src="docs/images/farmer-wiki.webp" alt="百科"/></td>
   </tr>
   <tr>
+    <td colspan="2"><b>智能问答 —— 只依据校准版知识库作答，每条结论都能点开看来源</b>
+      <br/><img src="docs/images/farmer-assistant.webp" alt="智能问答"/></td>
+  </tr>
+  <tr>
     <td width="50%"><b>管理后台 · 数据看板</b><br/><img src="docs/images/admin-dashboard.webp" alt="看板"/></td>
     <td width="50%"><b>管理后台 · 内容管理（帖子 / 评论 / 举报三个页签）</b><br/><img src="docs/images/admin-forum.webp" alt="内容管理"/></td>
   </tr>

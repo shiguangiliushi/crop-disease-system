@@ -55,6 +55,9 @@ FARMER_SHOTS = (
     'farmer-detect-result',
     'farmer-forum',
     'farmer-wiki',
+    # 第 202 批新增：智能问答页（第 198 批做的独立问答页）。
+    # 它此前**没有截图** —— README 的界面一览里因此看不出这个功能存在。
+    'farmer-assistant',
 )
 
 FORMAT_ARGS = {
