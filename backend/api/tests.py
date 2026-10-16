@@ -13881,3 +13881,100 @@ class HealthyPlantFallbackTests(TestCase):
         det = resp.data['data']['detection']
         self.assertEqual(det['disease'], 'Some Unknown Pest')
         self.assertEqual(det['description'], '暂无详细描述')
+
+# ============================================================================
+# 智能识别 · 识别前选作物（`crop_hint`）（第 214 批）
+# ----------------------------------------------------------------------------
+# 起因：评审意见建议"识别前加作物类型选择"，理由是"不同作物病害库不同，易误判"。
+# 核实后发现这个建议**有实测支撑**：380 张真实图片里 **2.5% 把作物认错**
+# （`Potato___Late_blight` → `Tomato___Late_blight` conf=0.998，同科作物混淆）。
+# 系统此前完全靠类名自己推断作物（`pest_lookup._crop_of`）。
+#
+# 设计要点（都有测试钉住）：
+#   · 不传 `crop_type` 时行为与改动前**完全一致**（纯增量，不想选的用户体验零变化）；
+#   · 传了就在该作物的词条内匹配；
+#   · **作物内匹配不上时返回 None，不放宽到别的作物** —— 选了"苹果"却给一条葡萄病，
+#     用户会以为系统在胡说；明确"没在苹果里找到"，用户立刻知道自己选错了；
+#   · 未知作物名要被**忽略**（不是信任），否则用户字符串会直接进匹配。
+# ============================================================================
+class CropHintDetectTests(TestCase):
+    """`/api/detect/` 的作物约束（`crop_type` 入参）。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='crop_hint', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        #: 库里要有两侧的词条，"限定作物"才有意义
+        self.apple = PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='apple_scab',
+            symptoms='症状', description='规律')
+        self.grape = PestInfo.objects.create(
+            name='葡萄黑腐病', crop_type='葡萄', english_identifier='grape_black_rot',
+            symptoms='症状', description='规律')
+
+    def _detect(self, identifier, crop_type=None):
+        img = SimpleUploadedFile('leaf.jpg', b'\xff\xd8\xff\xe0x', content_type='image/jpeg')
+        payload = {'image': img}
+        if crop_type is not None:
+            payload['crop_type'] = crop_type
+        fake = {'status': 'success', 'message': 'ok', 'confidence': 0.9,
+                'identifier': identifier, 'annotated_image': None}
+        with patch.object(AIService, 'predict', return_value=fake):
+            return self.client_auth.post('/api/detect/', payload, format='multipart')
+
+    # ── 一、不传作物：行为必须与改动前一致 ──────────────────────────────
+    def test_without_crop_hint_matches_as_before(self):
+        resp = self._detect('apple_scab')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        det = resp.data['data']['detection']
+        self.assertEqual(det['disease'], '苹果黑星病')
+        self.assertEqual(det['crop_hint'], '', '不传时不该自作主张填作物')
+        self.assertIsNone(det['crop_mismatch'])
+
+    # ── 二、传对作物：正常匹配 ─────────────────────────────────────────
+    def test_matching_crop_hint_matches_normally(self):
+        det = self._detect('apple_scab', '苹果').data['data']['detection']
+        self.assertEqual(det['disease'], '苹果黑星病')
+        self.assertEqual(det['crop_hint'], '苹果')
+        self.assertIsNone(det['crop_mismatch'], '选对了不该报不匹配')
+
+    # ── 三、传错作物：**不放宽到别的作物**，并如实报告 ──────────────────
+    def test_wrong_crop_hint_does_not_fall_back_to_other_crop(self):
+        """选了葡萄、图是苹果病：不给出葡萄的答案，并回报不匹配。
+
+        ⚠️ 这条是本次设计的核心取舍。放宽到别的作物会给出一个
+        "看似合理、实则跨作物"的答案 —— 农业场景里那比"答不出来"危险得多。
+        """
+        det = self._detect('apple_scab', '葡萄').data['data']['detection']
+        self.assertNotEqual(det['disease'], '葡萄黑腐病', '不能拿另一个作物的病顶替')
+        self.assertEqual(det['crop_mismatch']['selected'], '葡萄')
+        self.assertEqual(det['crop_mismatch']['detected_crop'], '苹果',
+                         '要告诉用户"模型认为这是苹果上的病"，否则他不知道该改哪个')
+
+    # ── 四、未知作物被忽略，而不是被信任 ───────────────────────────────
+    def test_unknown_crop_hint_is_ignored(self):
+        """传一个库里没有的作物名：忽略约束、照常匹配（而不是报错或空结果）。"""
+        det = self._detect('apple_scab', '火龙果').data['data']['detection']
+        self.assertEqual(det['disease'], '苹果黑星病', '未知作物应被忽略，回到自动判断')
+        self.assertEqual(det['crop_hint'], '', '被忽略的作物不该回传成"已生效"')
+
+    # ── 五、link_history 必须用同一个约束 ──────────────────────────────
+    def test_history_link_uses_same_crop_hint(self):
+        """落库的历史记录要与界面结论一致。
+
+        如果只给界面传 `crop_hint`、忘了给 `link_history` 传，
+        就会出现"界面显示 A 病、历史记录里关联 B 病" —— 同一张图两处结论不一致，
+        比匹配不上更难排查。
+        """
+        resp = self._detect('apple_scab', '苹果')
+        history_id = resp.data['data']['history_id']
+        history = DetectionHistory.objects.get(pk=history_id)
+        self.assertEqual(history.pest_info_id, self.apple.pk)
+
+    def test_history_not_linked_when_crop_mismatches(self):
+        """作物不匹配时历史记录**不该**挂上别的作物词条。"""
+        resp = self._detect('apple_scab', '葡萄')
+        history = DetectionHistory.objects.get(pk=resp.data['data']['history_id'])
+        self.assertNotEqual(history.pest_info_id, self.grape.pk,
+                            '不能把苹果的病挂到葡萄词条上')

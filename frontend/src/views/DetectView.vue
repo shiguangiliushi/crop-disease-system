@@ -63,6 +63,22 @@
           @fallback="onCameraFallback"
         />
 
+        <!-- ⚠️ 第 214 批：**识别前先选作物**（可选，默认"自动判断"）。
+             实测 380 张真实图片有 2.5% 把作物认错（同科混淆，如马铃薯晚疫病→番茄晚疫病），
+             选一下就能把匹配限定在该作物的词条内。
+             ⚠️ 默认**空**而不是强制选：强制会挡住"我不知道这是什么作物"的用户 ——
+             而那批人恰恰最需要识别。这是帮忙，不是门槛。 -->
+        <div v-if="cropOptions.length" class="crop-picker">
+          <label class="crop-picker-label" for="detect-crop">
+            <i class="bi bi-flower1"></i> {{ t('detect.cropLabel') }}
+          </label>
+          <select id="detect-crop" v-model="cropType" class="crop-picker-select">
+            <option value="">{{ t('detect.cropAuto') }}</option>
+            <option v-for="crop in cropOptions" :key="crop" :value="crop">{{ crop }}</option>
+          </select>
+          <span class="crop-picker-hint">{{ t('detect.cropHint') }}</span>
+        </div>
+
         <div class="upload-actions">
           <button
             class="btn btn-primary btn-lg"
@@ -147,6 +163,24 @@
         <div>
           <strong>{{ t('detect.healthyTitle') }}</strong>
           <p>{{ t('detect.healthyDesc') }}</p>
+        </div>
+      </div>
+
+      <!-- ⚠️ 第 214 批：**作物选错了**。
+           比"答案是另一种作物的病"更早、更明确地告诉用户问题出在哪 ——
+           否则用户看到的只是一串英文类名，完全无从判断是自己选错了。
+           这里**不隐藏识别结果**：模型对病害的判断仍然展示，只是加一条纠正提示。 -->
+      <div v-if="cropMismatch" class="crop-mismatch-banner">
+        <span class="crop-mismatch-icon"><i class="bi bi-exclamation-triangle-fill"></i></span>
+        <div>
+          <strong>{{ t('detect.cropMismatchTitle', { selected: cropMismatch.selected }) }}</strong>
+          <p v-if="cropMismatch.detected_crop">
+            {{ t('detect.cropMismatchHint', {
+              detected: cropMismatch.detected_crop,
+              selected: cropMismatch.selected,
+            }) }}
+          </p>
+          <p v-else>{{ t('detect.cropMismatchNoCrop') }}</p>
         </div>
       </div>
 
@@ -379,6 +413,8 @@ import { hasInAppCamera } from '@/utils/camera';
 import AskAssistantDrawer from '@/components/AskAssistantDrawer.vue';
 // 第 91 批：识别纠错要选"正确是哪一种"，否则反馈成不了训练样本
 import { fetchPestOptions } from '@/api/content';
+// 第 214 批：识别前选作物 —— 复用日历的作物接口（与百科同源，不会"下拉有、库里没有"）
+import { fetchCalendarCrops } from '@/api/calendar';
 
 const { t } = useI18n();
 const { localizedField } = useLocalized();
@@ -451,6 +487,35 @@ const selectedFile = ref(null);
 const progress = ref(0);
 const statusMessage = ref('');
 const statusDetail = ref('');
+
+/* ----------------------------------------------------------------------------
+ * 第 214 批：**识别前先选作物**（可选，默认"不确定/自动判断"）
+ * ----------------------------------------------------------------------------
+ * 为什么加：系统此前完全靠类名自己推断作物，而实测 380 张真实图片有
+ * **2.5% 把作物认错**（`Potato___Late_blight` → `Tomato___Late_blight` conf=0.998，
+ * 同科作物混淆）。用户先选作物，等于把这条信息从"猜"变成"已知"，
+ * 后端据此把匹配**限定在该作物的词条里**（`pest_lookup.find_pest_info(crop_hint=…)`）。
+ *
+ * ⚠️ 默认是**空**（自动判断），不是某个作物：
+ * 强制选择会把"我不知道这是什么作物"的用户挡在门外 —— 那些人多半是最需要识别的。
+ * 这个下拉是**帮忙**，不是门槛。
+ * -------------------------------------------------------------------------- */
+const cropType = ref('');
+const cropOptions = ref([]);
+const cropMismatch = ref(null);
+
+const loadCropOptions = async () => {
+  try {
+    //: 复用日历的作物接口（`/api/calendar/crops/`）—— 它本来就是"病害百科里真实存在的作物"，
+    //: 与识别要匹配的作物集合**同源**，不会出现"下拉里有、库里没有"的错位。
+    const data = await fetchCalendarCrops();
+    const list = Array.isArray(data) ? data : (data?.crops || []);
+    cropOptions.value = list.filter(Boolean);
+  } catch {
+    //: 拿不到列表就不显示下拉 —— 宁可没有这个便利，也不要给一个空/错的下拉
+    cropOptions.value = [];
+  }
+};
 
 /* ----------------------------------------------------------------------------
  * 第 74 批：识别结果跨刷新保留
@@ -796,6 +861,12 @@ const detectDisease = async () => {
 
   const formData = new FormData();
   formData.append('image', selectedFile.value);
+  //: 第 214 批：选了作物就带上，让后端把匹配**限定在该作物内**。
+  //: 不选则**不带这个字段**，后端行为与改动前完全一致（自动判断）——
+  //: 这样"不想选"的用户体验零变化，是纯增量。
+  if (cropType.value) formData.append('crop_type', cropType.value);
+  //: 每次识别前先清掉上一次的"作物不匹配"提示，避免串台
+  cropMismatch.value = null;
 
   try {
     // 检查是否已登录
@@ -862,6 +933,12 @@ const detectDisease = async () => {
     }
 
     const detectionData = responseData.detection;
+
+    //: 第 214 批：作物约束对不上时后端会回传 `{selected, detected_crop}`。
+    //: 这不是错误、不该打断识别 —— 它只是要**明确告诉用户"你选错了"**，
+    //: 否则用户会看到一条跨作物的答案（实测：选"葡萄"、图是苹果病时，
+    //: 病名位置显示的是一串英文类名，完全看不出发生了什么）。
+    cropMismatch.value = detectionData.crop_mismatch || null;
 
     // 处理图片URL
     const getFullUrl = (url) => {
@@ -1292,6 +1369,8 @@ onMounted(() => {
   restoreResult();
   // 第 91 批：纠错下拉的候选列表（只在需要时才用，提前拉好避免用户点开等）
   loadPestOptions();
+  // 第 214 批：作物下拉的候选（失败就不显示这个下拉，不阻塞识别）
+  loadCropOptions();
 });
 </script>
 
@@ -1304,6 +1383,84 @@ onMounted(() => {
   color: #333;
   margin-bottom: 0.75rem;
   font-size: 1.1rem;
+}
+
+/* ══ 第 214 批：识别前选作物 ══════════════════════════════════════════════ */
+.crop-picker {
+  display: flex;
+  flex-wrap: wrap;              /* 窄屏自动换行，不做横向滚动 */
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.85rem;
+  background: #f8faf9;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.crop-picker-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #1f2937;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.crop-picker-select {
+  /* 触控目标不小于 40px（页面既有的字号/触控提档规则一致） */
+  min-height: 40px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.9rem;
+  color: #1f2937;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+.crop-picker-select:focus {
+  outline: 2px solid #2f6b4f;
+  outline-offset: 1px;
+}
+
+.crop-picker-hint {
+  font-size: 0.78rem;
+  color: #6b7280;
+  flex: 1 1 12rem;
+}
+
+/* ══ 第 214 批：作物选错的提示（琥珀色，与"健康"绿条、"降级"棕黄都区分开）══ */
+.crop-mismatch-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #d97706;
+  border-radius: 10px;
+}
+
+.crop-mismatch-icon {
+  color: #d97706;
+  font-size: 1.15rem;
+  line-height: 1.4;
+  flex: none;
+}
+
+.crop-mismatch-banner strong {
+  display: block;
+  color: #92400e;
+  font-size: 0.95rem;
+  margin-bottom: 0.15rem;
+}
+
+.crop-mismatch-banner p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #78350f;
+  line-height: 1.6;
 }
 
 .symptoms-content, .solutions-content {

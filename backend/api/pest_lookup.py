@@ -109,12 +109,14 @@ def _stem(token: str) -> str:
     return token[:-1] if len(token) > 3 and token.endswith('s') else token
 
 
-def find_pest_info(raw_identifier: str, extra_names: tuple = ()):
+def find_pest_info(raw_identifier: str, extra_names: tuple = (), crop_hint: str = ''):
     """
     按类名找病害词条。
 
     :param raw_identifier: 模型给出的类名（如 `Apple___Apple_scab`）或任何英文名
     :param extra_names: 额外的候选写法（如模型文件里的 class name、用户传来的英文名）
+    :param crop_hint: **用户选定的作物**（如 `'苹果'`）。给了它就把匹配**限定在该作物的词条内**；
+        在作物内匹配不上时返回 `None`，而**不是**放宽到别的作物 —— 见下面的说明。
     :returns: `(PestInfo 或 None, 命中方式说明)`
 
     ⚠️ 第 159 批的教训：第 ④⑤ 条规则（"包含于类名"）**必须限定在同一作物内**。
@@ -122,6 +124,15 @@ def find_pest_info(raw_identifier: str, extra_names: tuple = ()):
     `Squash___Powdery_mildew` 匹配到了**樱桃白粉病** ——
     因为库里好几条词条的 `name_en` 都叫 `Healthy` / `Powdery mildew`。
     **匹配错比匹配不上更糟**：界面会理直气壮地显示另一种病害的防治建议。
+
+    ⚠️ 第 214 批补 `crop_hint`：上一条教训说明"作物是消除歧义的关键信息"，
+    而系统此前**完全靠类名自己推断作物**（`_crop_of`）。实测 380 张真实图片，
+    **2.5% 会把作物认错**（`Potato___Late_blight` → `Tomato___Late_blight` conf=0.998，
+    同科作物混淆）。让用户先选作物，等于把这条信息从"猜"变成"已知"。
+
+    **为什么选错作物时宁可返回 `None`、不放宽到别的作物**：
+    选了"苹果"却给出一条葡萄病，用户会以为系统在胡说；而明确"没在苹果里找到"，
+    用户立刻知道自己选错了 —— 这比一个看似合理、实则跨作物的答案安全得多。
     """
     candidates = [raw_identifier, *extra_names]
     normalized = [normalize(item) for item in candidates if item]
@@ -131,6 +142,13 @@ def find_pest_info(raw_identifier: str, extra_names: tuple = ()):
     rows = list(PestInfo.objects.all())
     if not rows:
         return None, '病害库为空'
+
+    if crop_hint:
+        #: 作物只用来**筛选**，不改匹配规则 —— 三级匹配（精确 / 去下划线 / 别名 / 词元覆盖）
+        #: 全部照旧跑，只是候选集小了。这样"限定作物"不会引入新的匹配行为。
+        rows = [row for row in rows if (row.crop_type or '') == crop_hint]
+        if not rows:
+            return None, f'库里没有作物「{crop_hint}」的词条'
 
     crops = _crop_set(rows)
     # 预算好每行的两种写法
@@ -224,14 +242,18 @@ def find_pest_info(raw_identifier: str, extra_names: tuple = ()):
     return None, f'没有匹配（类名 {raw_identifier!r}）'
 
 
-def link_history(history, raw_identifier: str):
+def link_history(history, raw_identifier: str, crop_hint: str = ''):
     """
     给一条识别记录补上病害词条关联（落库后调用）。
 
     与构建结果用的是**同一个** `find_pest_info` ——
     以前这两处各写一份匹配逻辑，规则一改就会打架。
+
+    ⚠️ 第 214 批：`crop_hint` 必须一并透传。否则会出现
+    "**界面按所选作物显示 A 病、历史记录里却关联了 B 病**" ——
+    同一张图两处结论不一致，比匹配不上更难排查。
     """
-    pest_info, strategy = find_pest_info(raw_identifier)
+    pest_info, strategy = find_pest_info(raw_identifier, crop_hint=crop_hint)
     if pest_info and history.pest_info_id != pest_info.id:
         history.pest_info = pest_info
         history.save(update_fields=['pest_info'])

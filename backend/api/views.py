@@ -766,6 +766,29 @@ class DetectView(APIView):
             # 获取上传的图片
             image_file = request.FILES['image']
 
+            # ⚠️ 第 214 批：**用户选定的作物**（可选）。
+            #    识别页新增了一个作物下拉 —— 此前系统完全靠类名自己推断作物
+            #    （`pest_lookup._crop_of`），而实测 380 张真实图片有 **2.5% 把作物认错**
+            #    （`Potato___Late_blight` → `Tomato___Late_blight` conf=0.998，同科混淆）。
+            #    用户先选作物，等于把这条信息从"猜"变成"已知"。
+            #
+            #    ⚠️ 必须做**白名单校验**，不能把用户字符串直接带进匹配：
+            #    一是别让它成为查询注入面，二是避免把"不存在的作物"传下去、
+            #    让用户看到一条莫名其妙的"库里没有该作物"。
+            crop_hint = (request.data.get('crop_type') or '').strip()
+            if crop_hint:
+                known_crops = set(
+                    PestInfo.objects.exclude(crop_type='')
+                    .values_list('crop_type', flat=True).distinct()
+                )
+                if crop_hint not in known_crops:
+                    logger.warning('[detect] 收到未知作物 %r，忽略该约束', crop_hint)
+                    crop_hint = ''
+
+            #: ⚠️ 必须在这里初始化：它只在"作物不匹配"分支里被赋值，
+            #: 若只在分支内赋值，正常路径走到构建响应时会 `UnboundLocalError`。
+            crop_mismatch = None
+
             # 生成唯一的文件名
             file_ext = os.path.splitext(image_file.name)[1]
             file_name = f"{uuid.uuid4().hex}{file_ext}"
@@ -856,7 +879,7 @@ class DetectView(APIView):
                     # 并且与落库时用的是**同一个**函数。
                     from .pest_lookup import find_pest_info
 
-                    pest_info, match_note = find_pest_info(disease_identifier)
+                    pest_info, match_note = find_pest_info(disease_identifier, crop_hint=crop_hint)
                     if pest_info:
                         logger.info(f'病害词条匹配成功：{pest_info.name}（{match_note}）')
                         disease_name = pest_info.name
@@ -939,6 +962,35 @@ class DetectView(APIView):
                             logger.error(f'保存带标注图片失败: {str(e)}')
                             annotated_image_path = file_path  # 如果保存失败，使用原始图片
 
+                    # ⚠️ 第 214 批：**作物不匹配要明确说出来**，不能让它悄悄变成
+                    #    "病名是一串英文类名"（实测选"葡萄"、图是苹果病时，
+                    #    用户看到的就是 `Apple   Apple Scab`，完全不知道发生了什么）。
+                    #    这里保留模型自己的判断 + 回传机器推断的作物，
+                    #    前端据此显示"你选的是葡萄，但识别结果指向苹果（苹果黑星病）"，
+                    #    用户立刻知道该改哪个 —— 比一个看似合理的跨作物答案安全。
+                    if crop_hint and pest_info is None and '没有匹配' in match_note:
+                        model_crop = ''
+                        try:
+                            from .pest_lookup import _crop_of, _crop_set
+                            _rows = list(PestInfo.objects.all())
+                            model_crop = _crop_of(
+                                disease_identifier.replace('___', '_').lower().replace(',', ''),
+                                _crop_set(_rows))
+                        except Exception:  # noqa: BLE001 —— 推断失败不影响主流程
+                            model_crop = ''
+                        #: 机器推断的作物 → 中文名（用于提示文案）
+                        crop_name_by_prefix = {
+                            (p.english_identifier or '').split('_')[0]: p.crop_type
+                            for p in PestInfo.objects.exclude(crop_type='')
+                        }
+                        crop_mismatch = {
+                            'selected': crop_hint,
+                            'detected_crop': crop_name_by_prefix.get(model_crop, ''),
+                        }
+                        logger.info(
+                            '[detect] 作物约束不匹配：用户选 %r，模型指向 %r（%s）',
+                            crop_hint, model_crop, disease_identifier)
+
                     # 构建返回结果
                     detection_result = {
                         'disease': disease_name,
@@ -957,7 +1009,12 @@ class DetectView(APIView):
                         'original_image': request.build_absolute_uri(settings.MEDIA_URL + file_path),
                         'annotated_image': request.build_absolute_uri(
                             settings.MEDIA_URL + (annotated_image_path or file_path)),
-                        'bbox': prediction.get('bbox', [])  # 边界框信息
+                        'bbox': prediction.get('bbox', []),  # 边界框信息
+                        # 第 214 批：回传**实际生效的作物约束**。
+                        # 前端据此说明"按你选的苹果匹配"，也让"用户选了但被忽略"
+                        # （未知作物）这种情况可被发现，而不是静默降级。
+                        'crop_hint': crop_hint,
+                        'crop_mismatch': crop_mismatch,
                     }
 
             except Exception as e:
@@ -999,7 +1056,7 @@ class DetectView(APIView):
                 )
                 # 第 159 批：关联病害词条改为"落库之后按同一个匹配函数补上"，
                 # 这样历史记录与界面显示的结果**必然一致**（以前两处各算一次，可能一个有一个没有）。
-                pest_info, match_note = link_history(history, disease_identifier)
+                pest_info, match_note = link_history(history, disease_identifier, crop_hint=crop_hint)
                 logger.info(
                     f'成功保存检测历史记录 #{history.id}，关联病害：'
                     f'{pest_info.name if pest_info else "无"}（{match_note}）'
