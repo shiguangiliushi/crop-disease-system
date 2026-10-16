@@ -130,8 +130,8 @@
                  "回答为什么会出现 `**` 和【数字】"）。所以**只解析加粗一种标记**：
                  拆成文本片段 + `<strong>`，其余一律纯文本 ——
                  标签名写死在模板里，不引入任何 HTML 注入面。 -->
-            <p v-for="(para, i) in paragraphs(msg.content)" :key="i">
-              <template v-for="(seg, si) in segmentsOf(para)" :key="si">
+            <p v-for="(segments, i) in answerParagraphs(msg.content)" :key="i">
+              <template v-for="(seg, si) in segments" :key="si">
                 <strong v-if="seg.bold">{{ seg.text }}</strong>
                 <template v-else>{{ seg.text }}</template>
               </template>
@@ -262,7 +262,7 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Search } from '@element-plus/icons-vue';
 import { useI18n } from '@/i18n';
-import { parseInlineBold } from '@/utils/assistantText';
+import { parseAnswerParagraphs } from '@/utils/assistantText';
 import {
   askAssistantStream,
   deleteAssistantSession,
@@ -323,14 +323,14 @@ const filteredSessions = computed(() => {
   ));
 });
 
-const paragraphs = (text) => String(text || '').split('\n').filter((line) => line.trim());
-
 /**
- * 把一段拆成"普通文本 / 加粗"片段（解析逻辑见 `utils/assistantText.js`，含单测）。
+ * 把回答**按空行分段**并解析加粗，供模板渲染（解析逻辑见 `utils/assistantText.js`，含单测）。
  *
  * ⚠️ 刻意不在这里自己写正则：抽屉与独立问答页都要这段解析，抄两份迟早只改一处。
+ * ⚠️ 用 `parseAnswerParagraphs` 而**不是**逐行版：逐行成段会把段内换行也套上
+ *    段落间距，用户看到的就是"每条之间多出一行"（第 211 批修正）。
  */
-const segmentsOf = parseInlineBold;
+const answerParagraphs = parseAnswerParagraphs;
 const hasPesticideText = (text) => /(\d+%|倍液|稀释|可湿性粉剂|悬浮剂|水分散粒剂|间隔期)/.test(String(text || ''));
 const isStreaming = (msg) => loading.value && !msg.messageId;
 
@@ -699,13 +699,22 @@ onMounted(async () => {
   border-radius: 10px;
   font-size: 0.9rem;
   line-height: 1.75;
+  word-break: break-word;
+}
+/* ⚠️ 第 211 批：`pre-wrap` 放在**段落**上，不放气泡上 ——
+   段落内还留着单换行（模型输出的子弹点之间就是单换行），
+   靠 `pre-wrap` 显示成换行且**不额外留白**；段落之间的间距由 `+` 规则给。
+   原来气泡是 `pre-wrap` 且每行都成一个 `<p>`，段内换行与段落间距**叠加**，
+   于是用户看到"每条之间多出一行"。 */
+.assistant-bubble p {
+  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* 段落之间才给间距（相邻兄弟选择器：第一个段落头顶不留白） */
+.assistant-bubble p + p { margin-top: 0.6rem; }
 .assistant-msg.is-user .assistant-bubble { background: #2f6b4f; color: #fff; }
 .assistant-msg.is-assistant .assistant-bubble { background: #f5f7f6; color: #1f2937; }
-.assistant-bubble p { margin: 0 0 0.5rem; }
-.assistant-bubble p:last-child { margin-bottom: 0; }
 .assistant-typing { color: #6b7280; font-size: 0.85rem; }
 
 .assistant-disclaimer {

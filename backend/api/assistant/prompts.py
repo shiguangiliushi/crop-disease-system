@@ -90,6 +90,8 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
     没标序号的句子等于没有来源 —— 系统会因此判定"引用缺失"并把来源整块隐藏。
     引用是**内联**的（写在句子末尾），不要在结尾另起一段集中罗列。
     同一个句子里引用多条时合并写 `【1】【2】`；
+    **连续几句都出自同一条时，只在最后一句标一次就够** ——
+    不要每句结尾都标（满屏 `【1】` 反而看不清重点，用户反馈过"后面都多出【数字】"）。
     **加粗与引用之间必须留一个空格**（`**苯醚甲环唑** 【1】`），
     不要写成 `**苯醚甲环唑**【1】` 或 `**病名**** 【1】` ——
     星号紧贴方括号在界面上会连成一片，看着像乱码（用户为此反馈过）。
@@ -163,6 +165,10 @@ Structure (keep it short — rules 9 and 10 are hard requirements):
     numbering in <knowledge>. A sentence with no number counts as having no source — the
     system will treat the citations as missing and hide them. Citations are **inline**;
     do not collect them in a separate block at the end.
+    **When several consecutive sentences come from the same entry, cite it once at the end
+    of the last one** — do not tag every sentence (a wall of `【1】` hides the point).
+    **Leave one space between bold and the citation** (`**myclobutanil** 【1】`) —
+    never `**myclobutanil**【1】`, which runs together and looks broken.
 12. **"Survey" questions need the complete list.** When the user asks for **all** the diseases
     of a crop, "what diseases are there", or names several crops and asks for control methods,
     **include every relevant entry in <knowledge>** — omitting one defeats the purpose of the
@@ -278,9 +284,11 @@ def degrade_text(key: str, lang: str = DEFAULT_LANG, **params) -> str:
 #: v2（第 197 批）加英文；v3（第 204 批）"控制篇幅 + 多作物只展开一个"；
 #: v4（第 207 批）改成"每条都答但都简短" + "必须内联标 `【序号】`"；
 #: v5（第 209 批）新增第 12 条"清点式问题要完整概览"；
-#: **v6（第 210 批）明确排版格式：只允许 `**加粗**`、禁止其他 Markdown、
-#: 加粗与 `【序号】` 之间必须留空格** —— 起因是用户看到回答里出现 `**` 和 `【数字】`。
-PROMPT_VERSION = 'v6-2026-10-16'
+#: v6（第 210 批）明确排版格式：只允许 `**加粗**`、禁止其他 Markdown、
+#: 加粗与 `【序号】` 之间必须留空格；
+#: **v7（第 211 批）第 11 条补"同一来源的连续句子只标一次"** ——
+#: 起因是用户反馈"回答后面都多出【数字】"，而逐句标注让满屏都是序号。
+PROMPT_VERSION = 'v7-2026-10-16'
 
 
 def build_messages(question: str, knowledge: str, intent: str = 'general',

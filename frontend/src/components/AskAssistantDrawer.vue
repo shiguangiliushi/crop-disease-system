@@ -36,15 +36,14 @@
 
         <div v-for="msg in messages" :key="msg.key" :class="['assistant-msg', `is-${msg.role}`]">
           <div class="assistant-bubble">
-            <!-- ⚠️ 仍然是**纯文本渲染，绝不用 `v-html`**：模型输出属于不可信输入，
+            <!-- ⚠️ 仍是**纯文本渲染，绝不用 `v-html`**：模型输出属于不可信输入，
                  项目已有 sanitize 规范（`npm run verify:xss`），这里不开口子。
-                 但模型习惯写 `**加粗**`，纯文本渲染会把星号原样显示出来（用户反馈过
-                 "回答为什么会出现 `**` 和【数字】"）。所以**只解析加粗一种标记**：
-                 拆成文本片段 + `<strong>`，其余一律当纯文本 ——
-                 这样既有可读性，又不引入任何 HTML 注入面（标签名是我们写死的）。
-                 解析逻辑在 `utils/assistantText.js`（与独立问答页共用，含单测）。 -->
+                 但模型会写 `**加粗**`，纯文本渲染会把星号显示出来（用户反馈过
+                 "回答为什么会出现 `**` 和【数字】"），所以**只解析加粗一种标记**。
+                 另外**按空行分段**（不是按行）—— 逐行成段会让段内换行也拿到段落间距，
+                 正是用户反馈的"多出一行下来"（见 `utils/assistantText.js` 的注释）。 -->
             <p
-              v-for="(segments, index) in answerLines(msg.content)"
+              v-for="(segments, index) in answerParagraphs(msg.content)"
               :key="index"
               class="assistant-line"
             >
@@ -212,7 +211,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { askAssistantStream, escalateSession, formatAssistantError, sendAssistantFeedback } from '@/api/assistant';
 import { useI18n } from '@/i18n';
-import { parseAnswerLines } from '@/utils/assistantText';
+import { parseAnswerParagraphs } from '@/utils/assistantText';
 
 const props = defineProps({
   /** 显式控制显示（配合 v-model:visible） */
@@ -252,12 +251,14 @@ const suggestions = computed(() => [
 
 /** 按行拆开，逐行 <p> —— 模型输出里的编号与空行因此能保住版式 */
 /**
- * 把回答按行拆成片段，供模板渲染（解析逻辑见 `utils/assistantText.js`，含单测）。
+ * 把回答**按空行分段**并解析加粗，供模板渲染（解析逻辑见 `utils/assistantText.js`，含单测）。
  *
  * ⚠️ 这里**刻意不自己写正则**：抽屉与独立问答页都要这段解析，
  *    抄两份迟早只改一处（第 210 批就是这么抽出来的）。
+ * ⚠️ 用 `parseAnswerParagraphs` 而**不是**逐行版：逐行成段会把段内换行
+ *    也套上段落间距，用户看到的就是"每条之间多出一行"（第 211 批修正）。
  */
-const answerLines = parseAnswerLines;
+const answerParagraphs = parseAnswerParagraphs;
 
 /** 降级原因 → 给用户的一句人话（不是错误码） */
 const degradeHintOf = (reason) => {
@@ -504,12 +505,20 @@ defineExpose({ submit });
   color: #fff;
 }
 
+/* ⚠️ 第 211 批：`.assistant-line` 现在是**段落**（按空行切分），不是"每一行"。
+   段落内还留着单换行（模型输出的子弹点之间就是单换行），
+   靠 `pre-wrap` 显示成换行且**不额外留白**；段落之间的间距由下面 `+` 规则给 ——
+   "空行才是段落、单换行只是换行"。
+   原来每一行都成一个 `.assistant-line` 且各带 0.35rem 下边距，
+   段内换行与段落间距叠加，用户看到的就是"每条之间多出一行"。 */
 .assistant-line {
-  margin: 0 0 0.35rem;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.assistant-line:last-child {
-  margin-bottom: 0;
+.assistant-line + .assistant-line {
+  margin-top: 0.5rem;
 }
 
 .assistant-typing {

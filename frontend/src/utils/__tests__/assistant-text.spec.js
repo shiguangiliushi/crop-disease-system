@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { parseAnswerLines, parseInlineBold } from '../assistantText';
+import { parseAnswerLines, parseAnswerParagraphs, parseInlineBold } from '../assistantText';
 
 describe('parseInlineBold', () => {
   it('把成对的 **加粗** 拆成加粗片段', () => {
@@ -105,5 +105,59 @@ describe('parseAnswerLines', () => {
 
   it('全是空白行时返回空数组（气泡不渲染空段落）', () => {
     expect(parseAnswerLines('\n\n   \n')).toEqual([]);
+  });
+});
+
+describe('parseAnswerParagraphs（第 211 批：空行才是段落）', () => {
+  const ANSWER = [
+    '苹果常见病害主要有三种。',
+    '',
+    '**苹果雪松锈病** 【1】',
+    '- 识别：叶片橙黄圆斑',
+    '- 关键时机：花芽露红期',
+    '',
+    '**苹果黑腐病** 【2】',
+    '- 识别：萼端褐色腐烂',
+  ].join('\n');
+
+  it('⚠️ 按空行切段，不按单换行切 —— 这是"每条之间多出一行"的修正', () => {
+    const paras = parseAnswerParagraphs(ANSWER);
+    // 4 段：首句 / 雪松锈病 / 黑腐病 = 3 段（首句与雪松锈病之间有空行）
+    expect(paras).toHaveLength(3);
+  });
+
+  it('段内的单换行原样保留（子弹点不会挤成一行）', () => {
+    const paras = parseAnswerParagraphs(ANSWER);
+    const second = paras[1].map((s) => s.text).join('');
+    //: 期望里**没有** `**` —— 加粗标记本就该被解析成"加粗片段"，
+    //: 拼回来的纯文本自然不带星号（第一版断言里写了 `**`，是测试写错了）。
+    expect(second).toBe('苹果雪松锈病 【1】\n- 识别：叶片橙黄圆斑\n- 关键时机：花芽露红期');
+    //: 换行确实还在，交给 CSS `pre-wrap` 渲染成换行
+    expect(second).toContain('\n');
+    expect(second.split('\n')).toHaveLength(3);
+  });
+
+  it('加粗在段落内照常解析', () => {
+    const paras = parseAnswerParagraphs(ANSWER);
+    expect(paras[1][0]).toEqual({ bold: true, text: '苹果雪松锈病' });
+  });
+
+  it('连续空行只算一次分隔', () => {
+    expect(parseAnswerParagraphs('A\n\n\n\nB')).toHaveLength(2);
+  });
+
+  it('兼容 CRLF', () => {
+    expect(parseAnswerParagraphs('A\r\n\r\nB')).toHaveLength(2);
+  });
+
+  it('preserveLineBreaks=false 时把段内换行折成空格', () => {
+    const paras = parseAnswerParagraphs('A\nB\n\nC', { preserveLineBreaks: false });
+    expect(paras[0].map((s) => s.text).join('')).toBe('A B');
+  });
+
+  it('空内容返回空数组', () => {
+    expect(parseAnswerParagraphs('')).toEqual([]);
+    expect(parseAnswerParagraphs('   \n  \n ')).toEqual([]);
+    expect(parseAnswerParagraphs(null)).toEqual([]);
   });
 });

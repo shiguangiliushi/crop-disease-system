@@ -60,10 +60,65 @@ export function parseInlineBold(line) {
 }
 
 /**
+ * 按**空行**把回答切成段落，段内保留单换行（第 211 批）。
+ *
+ * ## 为什么需要它（用户反馈"我提问的时候都会多出一行下来"）
+ *
+ * 改动前是"**每一行都渲染成一个 `<p>`、每段带 8px 下边距**"。而模型的输出是这样：
+ *
+ * ```
+ * 苹果常见病害主要有……          ← 行 0
+ *                               ← 空行
+ * **苹果雪松锈病** 【1】          ← 行 2
+ * - 识别：……                    ← 行 3
+ * - 关键时机：……                 ← 行 4
+ * - 用药：……                    ← 行 5
+ * ```
+ *
+ * 行 2~5 是**同一段里的子弹点**（模型没在它们之间放空行），却被逐行加了 8px ——
+ * 一份 24 行的长回答凭空多出约 150px 空隙，看起来就是"每条之间都多了一行"。
+ *
+ * 正确语义：**空行 = 段落边界**（给间距），**单换行 = 段内换行**（不给间距）。
+ * 段落用 `white-space: pre-wrap` 渲染即可让单换行显示成换行、且不额外留白。
+ *
+ * @param {string} content 完整回答
+ * @param {{preserveLineBreaks?: boolean}} [options]
+ *   `preserveLineBreaks: false` 时把段内换行折成空格（用于不支持 pre-wrap 的场景）。
+ * @returns {Array<Array<{bold: boolean, text: string}>>} 每个段落一组的片段数组
+ */
+export function parseAnswerParagraphs(content, options = {}) {
+  const { preserveLineBreaks = true } = options;
+  const text = String(content ?? '');
+  if (!text.trim()) return [];
+
+  const paragraphs = [];
+
+  for (const block of text.split(/\n\s*\n/)) {
+    const trimmed = block.trim();
+    if (trimmed === '') continue;
+
+    //: ⚠️ 段内**逐行**解析，行与行之间显式插入 `\n` 片段。
+    //:   直接把整段丢给 `parseInlineBold` 会**丢换行**：换行恰好落在两个片段之间时
+    //:   （`**标题**\n- 要点` → 「加粗片段」「\n- 要点」），渲染成相邻文本节点后换行就没了，
+    //:   子弹点会挤在同一行 —— 这个缺陷是被单测抓出来的。
+    const lines = preserveLineBreaks ? trimmed.split('\n') : [trimmed.replace(/\n+/g, ' ')];
+    const segments = [];
+    lines.forEach((line, index) => {
+      if (index > 0) segments.push({ bold: false, text: '\n' });
+      segments.push(...parseInlineBold(line));
+    });
+    paragraphs.push(segments);
+  }
+
+  return paragraphs;
+}
+
+/**
  * 按行拆分回答，并逐行解析加粗片段。
  *
- * 空行被丢掉：气泡里不需要空段落（行距已经用 CSS 控制），
- * 这与改动前 `linesOf()` 的行为一致，避免"修一个排版问题引入另一个"。
+ * ⚠️ 第 211 批起界面改用 {@link parseAnswerParagraphs} ——
+ * "每行一段"会把段内换行也加上段落间距，正是用户反馈的"多出一行"。
+ * 本函数保留给"确实需要逐行"的场景（例如逐行做关键字高亮）。
  *
  * @param {string} content 完整回答
  * @returns {Array<Array<{bold: boolean, text: string}>>} 每行的片段数组
