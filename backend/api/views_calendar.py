@@ -204,6 +204,53 @@ class CalendarView(APIView):
             items.sort(key=lambda item: TASK_TYPE_ORDER.index(item['task_type'])
                        if item['task_type'] in TASK_TYPE_ORDER else 99)
 
+        # ---------- ⑤ 按天的活动量（第 216 批：给"月历网格"用） ----------
+        #
+        # ⚠️ 为什么是"识别记录"而不是"农事任务"：
+        # `CalendarTask` 只有 `month` 字段，**没有日期** —— 把 7 条番茄任务硬摆到
+        # 7 个格子里，看起来像"某天该干什么"，实际是编造出来的日程。
+        # 而识别记录的 `timestamp` 是**真实的按天数据**，用它画网格是诚实的：
+        # 农户一眼就能看出哪几天田里问题集中。
+        #
+        # ⚠️ 口径必须写清楚，别让用户以为那是"安排好的任务日"。
+        # 前端会用 `calendar.gridHint` 明确标注"按识别记录统计"。
+        #
+        # 范围：本人记录（登录时）+ 全站记录（匿名时也看得到高发日）——
+        # 与预警一致：公共信息对游客开放，个人信息只给本人。
+        from django.db.models.functions import TruncDate
+
+        #: ⚠️ 作物筛选必须加在 `values()/annotate()` **之前** ——
+        #:    加在后面等于对聚合结果再过滤，语义不对（而且 Django 会报
+        #:    "Cannot filter a query once a slice has been taken" 之类的错）。
+        activity_qs = DetectionHistory.objects.filter(
+            timestamp__year=today.year, timestamp__month=month, pest_info__isnull=False)
+        if crop and crop != 'all':
+            activity_qs = activity_qs.filter(pest_info__crop_type=crop)
+        day_rows = (activity_qs
+                    .annotate(day=TruncDate('timestamp'))
+                    .values('day')
+                    .annotate(count=Count('id'))
+                    .order_by('day'))
+
+        day_activity = [
+            {'day': row['day'].day, 'count': row['count']}
+            for row in day_rows if row['day'] is not None
+        ]
+
+        # 我自己那几天（登录时另给一份，前端可在网格上区分"我的记录"）
+        my_days = []
+        if getattr(request.user, 'is_authenticated', False):
+            my_days = sorted({
+                row['day'].day
+                for row in (DetectionHistory.objects
+                            .filter(user=request.user, timestamp__year=today.year,
+                                    timestamp__month=month, pest_info__isnull=False)
+                            .annotate(day=TruncDate('timestamp'))
+                            .values('day')
+                            .annotate(count=Count('id')))
+                if row['day'] is not None
+            })
+
         # 第 77 批：给"作物中文名 → 英文名"的完整对照表，前端下拉/标签统一取它。
         # 覆盖范围：可选作物 + 我种过的作物 + 任务涉及的作物（后者已在 _serialize_task 里带过）。
         crop_names_en = {
@@ -228,6 +275,12 @@ class CalendarView(APIView):
             'task_total': len(tasks),
             'seasonal_pests': seasonal_pests,
             'my_history': my_history,
+            #: 第 216 批：月历网格要的**按天活动量**。
+            #: ⚠️ 语义是"当天有多少条识别记录"，**不是**"安排在那天的农事任务" ——
+            #:    `CalendarTask` 只有月份粒度，没有日期，摆到具体格子就是编数据。
+            #:    字段名与前端提示都按这个口径写，避免误导。
+            'day_activity': day_activity,
+            'my_days': my_days,
             'source_note': SOURCE_NOTE,
             'source_note_en': SOURCE_NOTE_EN,
         })

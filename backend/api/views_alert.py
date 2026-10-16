@@ -53,8 +53,28 @@ def _can_push_alerts(user):
 
 
 class AlertListView(APIView):
-    """当前病害预警"""
-    permission_classes = [permissions.IsAuthenticated]
+    """当前病害预警
+
+    ⚠️ 第 216 批：**列表对未登录访客开放**（`AllowAny`）。
+
+    为什么：预警是"当期哪些病害在抬头"的**公共信息** —— 首页横幅把它挡在登录后面，
+    等于把最有说服力的内容藏起来（游客看不到任何实时数据，第一屏全是静态文案）。
+    让游客看见"苹果·苹果黑星病 进入高发期"，既是服务也是最好的引流。
+
+    ## 开放前必须确认的事（已在 `compute_alerts` 里核实）
+
+    预警条目里有三个**按当前用户算**的字段：`is_personal` / `alerted_before` / `my_count`，
+    而且 `message` 里会拼上"**你** 3 天前识别出过这个病害"这种前缀。
+    直接开放就会把这类个人信息发给所有人。
+
+    `compute_alerts` 里那句 `if user is not None and getattr(user, 'is_authenticated', False)`
+    保证了匿名访客**不会**填 `my_counts` / `my_last` / `my_crops`，
+    因此 `is_personal` / `alerted_before` 恒为 `False`、`my_count` 恒为 `0`、
+    前缀为空串 —— **结构上不会泄露**。实测也确认过（见第 216 批记录）。
+
+    ⚠️ 别把 `AlertPushView`（下面的写操作）一起放开 —— 那是对全体发通知。
+    """
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         try:

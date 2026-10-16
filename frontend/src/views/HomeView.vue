@@ -76,7 +76,15 @@ const closeAnnouncement = () => {
 // 病害预警提示条（第 46 批）
 // ----------------------------------------------------------------------------
 // 只在确实存在"高发期 / 明显增多"级预警时显示（low 级不进首页，避免狼来了）。
-// 未登录时接口会 401，直接静默跳过。
+//
+// ⚠️ 第 216 批：**不再要求登录**。
+// 预警是"当期哪些病害在抬头"的公共信息 —— 挡在登录后面，等于把第一屏最有说服力的
+// 内容藏起来（游客只看得到静态文案），而它对游客恰好最有用，也是最好的引流。
+//
+// 后端 `AlertListView` 已改为 `AllowAny`，并且**核实过不会泄露个人信息**：
+// `compute_alerts` 里 `getattr(user, 'is_authenticated', False)` 为假时，
+// `is_personal` / `alerted_before` 恒为 False、`my_count` 恒为 0、
+// message 里不会出现"你…"前缀（实测 4 条预警，含个人信息 0 条）。
 // ============================================================================
 const authStore = useAuthStore();
 const alertData = ref(null);
@@ -88,7 +96,6 @@ const topAlert = computed(() => {
 const alertTotal = computed(() => alertData.value?.summary?.total || 0);
 
 const loadAlerts = async () => {
-  if (!authStore.isAuthenticated) return;
   try {
     alertData.value = await fetchAlerts({ days: 7 });
   } catch (error) {

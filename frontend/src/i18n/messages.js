@@ -3059,6 +3059,22 @@ export const zhCN = {
     statTotal: '条预警',
   },
   calendar: {
+    // ── 第 216 批：月历网格（口径必须写清楚，别被误读成日程表）──
+    gridTitle: '{month} 月 · 田间活动一览',
+    gridSummary: '{days} 天有识别记录，共 {count} 条',
+    //: ⚠️ 这句是**准确性关键**：任务只有月份粒度，格子里标的是识别记录。
+    gridHint: '格子里的数字是当天收到的识别记录条数（用于看出哪几天问题集中），不是排定在那天的农事任务；农事任务按月份列在下方。',
+    gridMine: '我在这天识别过',
+    gridLegendDot: '识别记录',
+    gridNoData: '{month} 月还没有识别记录',
+    weekdayMon: '一',
+    weekdayTue: '二',
+    weekdayWed: '三',
+    weekdayThu: '四',
+    weekdayFri: '五',
+    weekdaySat: '六',
+    weekdaySun: '日',
+
     title: '种植日历',
     subtitle: '按月查看该做的农活，并结合本站识别记录看本月要重点防什么病',
     loadFailed: '加载种植日历失败',
@@ -6073,6 +6089,20 @@ export const en = {
     statTotal: 'alerts',
   },
   calendar: {
+    gridTitle: 'Activity in {month}',
+    gridSummary: '{days} day(s) with diagnoses, {count} in total',
+    gridHint: 'The number in each cell is how many diagnoses came in that day (so you can see when the trouble peaked) — it is NOT a scheduled field task. Monthly tasks are listed below.',
+    gridMine: 'You diagnosed on this day',
+    gridLegendDot: 'diagnoses',
+    gridNoData: 'No diagnoses in {month} yet',
+    weekdayMon: 'Mon',
+    weekdayTue: 'Tue',
+    weekdayWed: 'Wed',
+    weekdayThu: 'Thu',
+    weekdayFri: 'Fri',
+    weekdaySat: 'Sat',
+    weekdaySun: 'Sun',
+
     title: 'Farming Calendar',
     subtitle: 'See this month’s field work and what to guard against, based on site records',
     loadFailed: 'Could not load the farming calendar',

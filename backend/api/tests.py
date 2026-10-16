@@ -6350,8 +6350,50 @@ class AlertEngineTests(TestCase):
         self.assertEqual(compute_alerts(min_cases=1), [])
 
     # ---------- 接口 ----------
-    def test_alert_endpoint_requires_login(self):
-        self.assertIn(APIClient().get('/api/alerts/').status_code, (401, 403))
+    def test_alert_list_is_public_but_write_still_requires_login(self):
+        """⚠️ 第 216 批改了契约：**读公开、写仍要登录**。
+
+        原断言是 `assertIn(APIClient().get('/api/alerts/').status_code, (401, 403))` ——
+        即"列表必须登录"。现在有意放开：预警是"当期哪些病害在抬头"的**公共信息**，
+        挡在登录后面等于把第一屏最有说服力的内容藏起来（游客只看得到静态文案）。
+        变更理由与泄露面核实见本批记录。
+
+        **但写操作不能一起放开** —— 那是"对全体用户发通知"，误发代价远大于读。
+        """
+        #: 读：公开
+        anonymous = APIClient()
+        self.assertEqual(anonymous.get('/api/alerts/').status_code, 200)
+        #: 写：仍要登录
+        self.assertIn(
+            anonymous.post('/api/alerts/notify/', {}, format='json').status_code, (401, 403))
+
+    def test_anonymous_alerts_do_not_leak_personal_fields(self):
+        """⚠️ 开放列表前必须守住的底线：**不能把按人算的字段发给所有人**。
+
+        预警条目里有三个按当前用户算的字段（`is_personal` / `alerted_before` / `my_count`），
+        而且 `message` 会拼上"你 3 天前识别出过这个病害"这种前缀。
+        `compute_alerts` 里 `getattr(user, 'is_authenticated', False)` 为假时不填
+        `my_counts`/`my_crops`，所以匿名访客拿到的必须是干净的全 False/0。
+
+        这条测试钉住的正是那个"结构上不会泄露"的保证 —— 一旦有人改了
+        `compute_alerts` 的用户上下文判断，这里会立刻红。
+        """
+        self._detect(self.user, 1)
+        self._detect(self.other, 1)
+
+        anonymous_alerts = APIClient().get('/api/alerts/').data['alerts']
+        self.assertTrue(anonymous_alerts, '前提：匿名也应当看得到预警')
+        for item in anonymous_alerts:
+            self.assertFalse(item['is_personal'], '匿名不该有"与你相关"标记')
+            self.assertFalse(item['alerted_before'], '匿名不该有"你以前识别过"标记')
+            self.assertEqual(item['my_count'], 0, '匿名不该带"你识别过几次"')
+            self.assertNotIn('你', item['message'][:6],
+                             f'匿名 message 不该以"你…"开头：{item["message"][:20]!r}')
+
+        #: 对照：登录用户**应该**拿到个性化字段（别为了开放把功能一起砍掉）
+        mine = self.client_user.get('/api/alerts/').data['alerts']
+        self.assertTrue(any(item['is_personal'] for item in mine),
+                        '登录用户仍应看到"与你相关"的预警')
 
     def test_alert_endpoint_shape(self):
         self._detect(self.user, 1)
@@ -6495,6 +6537,68 @@ class CalendarTests(TestCase):
             timestamp=now.replace(month=target_month) - timedelta(days=month_offset),
         )
         return record
+
+    # ---------- 月历网格的按天数据（第 216 批） ----------
+    def test_day_activity_is_aggregated_per_day(self):
+        """`day_activity` 返回"每天多少条识别记录" —— 月历网格的数据源。
+
+        ⚠️ 口径是**识别记录数**，不是"排定在那天的农事任务"：
+        `CalendarTask` 只有 `month`、没有日期字段（把任务摆进格子就是编数据），
+        而 `DetectionHistory.timestamp` 是真正的按天数据。
+        """
+        self._detect(self.user, self.tomato_pest)
+        self._detect(self.user, self.tomato_pest)
+        self._detect(self.user, self.corn_pest)
+
+        response = self.client_user.get('/api/calendar/', {'month': timezone.now().month})
+        self.assertEqual(response.status_code, 200)
+        days = response.data['day_activity']
+        self.assertTrue(days, '本月应有按天数据')
+        #: 结构固定为 [{day, count}]，且 count 是正整数
+        for item in days:
+            self.assertIn('day', item)
+            self.assertIn('count', item)
+            self.assertGreaterEqual(item['day'], 1)
+            self.assertLessEqual(item['day'], 31)
+            self.assertGreater(item['count'], 0)
+        #: 三条记录都在今天 → 合计必须是 3
+        self.assertEqual(sum(item['count'] for item in days), 3)
+
+    def test_day_activity_respects_crop_filter(self):
+        """作物筛选必须作用在**聚合之前**。
+
+        ⚠️ 第一版我把 `.filter(pest_info__crop_type=...)` 加在 `values()/annotate()` **之后** ——
+        那是在聚合结果上再过滤，语义不对。这条测试盯的就是这个：
+        筛"玉米"时，番茄那两条不能算进来。
+        """
+        self._detect(self.user, self.tomato_pest)
+        self._detect(self.user, self.tomato_pest)
+        self._detect(self.user, self.corn_pest)
+
+        month = timezone.now().month
+        corn = self.client_user.get('/api/calendar/', {'month': month, 'crop': '玉米'})
+        total_corn = sum(item['count'] for item in corn.data['day_activity'])
+        self.assertEqual(total_corn, 1, '筛玉米时只该算玉米那一条')
+
+        tomato = self.client_user.get('/api/calendar/', {'month': month, 'crop': '番茄'})
+        total_tomato = sum(item['count'] for item in tomato.data['day_activity'])
+        self.assertEqual(total_tomato, 2, '筛番茄时只该算番茄那两条')
+
+    def test_my_days_only_contains_my_own_records(self):
+        """`my_days` 只标"我自己"识别过的日子 —— 网格上要能区分"我这块地"与"全站"。"""
+        self._detect(self.user, self.tomato_pest)
+        self._detect(self.admin, self.corn_pest)
+
+        month = timezone.now().month
+        mine = self.client_user.get('/api/calendar/', {'month': month})
+        self.assertEqual(len(mine.data['my_days']), 1, '我只识别过一天')
+
+        #: 管理员看到的是"他自己"的那一天，不是我的
+        theirs = self.client_admin.get('/api/calendar/', {'month': month})
+        self.assertEqual(len(theirs.data['my_days']), 1)
+        #: 但两人看到的**全站**按天数据是同一份
+        self.assertEqual(sum(i['count'] for i in mine.data['day_activity']),
+                         sum(i['count'] for i in theirs.data['day_activity']))
 
     # ---------- 模板 ----------
     def test_template_is_seeded_and_grouped(self):

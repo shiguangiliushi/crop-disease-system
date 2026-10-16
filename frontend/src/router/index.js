@@ -224,7 +224,19 @@ const router = createRouter({
       name: 'alerts',
       component: () => import('@/views/AlertsView.vue'),
       meta: {
-        requiresAuth: true,
+        // ⚠️ 第 216 批：**去掉了 `requiresAuth`**。
+        // 首页那条预警横幅现在对未登录访客也显示（后端 `AlertListView` 已改 `AllowAny`），
+        // 而横幅上的「查看全部预警」原来一点就被弹回登录页 —— 明显的断层。
+        //
+        // 放开是安全的，两条依据：
+        // ① **读**：`compute_alerts` 对匿名访客不填 `my_counts`/`my_crops`，
+        //    于是 `is_personal`/`alerted_before` 恒为 False、`my_count` 恒为 0、
+        //    message 里不会出现"你…"前缀（实测 4 条预警，含个人信息 0 条）；
+        //    `AlertsView` 里那两处本来就是 `v-if` 条件渲染。
+        // ② **写**：页内唯一的写操作（推送预警给全体）按钮带 `v-if="isAdmin"`，
+        //    游客为 false；更关键的是后端 `AlertNotifyView` 仍是 `IsAuthenticated`
+        //    （实测匿名 POST → 401）。
+        //    **前端隐藏按钮不是安全边界，后端拦截才是** —— 这里两者都有。
         title: '病害预警',
         breadcrumb: ['病害预警']
       }

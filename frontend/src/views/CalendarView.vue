@@ -64,6 +64,55 @@
         </button>
       </div>
 
+      <!-- ⚠️ 第 216 批：**月历网格**。
+           格子里标的是"这一天有几天识别记录"，**不是**排定在那天的农事任务 ——
+           `CalendarTask` 只有月份粒度、没有日期，把任务摆进格子就是编数据。
+           所以 `gridHint` 把口径明确写给用户，避免被误读成日程表。 -->
+      <section v-if="!loading" class="panel-card grid-card">
+        <div class="panel-head">
+          <span class="panel-icon"><i class="fas fa-calendar-week"></i></span>
+          <h2 class="panel-title">{{ t('calendar.gridTitle', { month }) }}</h2>
+          <span v-if="activitySummary.total" class="panel-count">
+            {{ t('calendar.gridSummary', { days: activitySummary.days, count: activitySummary.total }) }}
+          </span>
+        </div>
+        <div class="panel-body">
+          <p class="grid-hint">
+            <i class="fas fa-circle-info"></i> {{ t('calendar.gridHint') }}
+          </p>
+
+          <div class="month-grid">
+            <div v-for="(label, i) in weekdayLabels" :key="`wh-${i}`" class="grid-weekday">
+              {{ label }}
+            </div>
+            <div
+              v-for="cell in monthGrid.flat()"
+              :key="cell.key"
+              class="grid-day"
+              :class="{ 'is-pad': cell.pad, 'is-today': cell.today, 'is-mine': cell.mine, 'has-data': cell.count > 0 }"
+            >
+              <template v-if="!cell.pad">
+                <span class="grid-day-num">{{ cell.day }}</span>
+                <span class="grid-dots">
+                  <i v-for="d in cell.dots" :key="`dot-${cell.day}-${d}`" class="grid-dot"></i>
+                  <span v-if="cell.overflow" class="grid-overflow">+{{ cell.overflow }}</span>
+                </span>
+                <span v-if="cell.count" class="grid-count">{{ cell.count }}</span>
+                <i v-if="cell.mine" class="fas fa-user grid-mine-mark" :title="t('calendar.gridMine')"></i>
+              </template>
+            </div>
+          </div>
+
+          <p v-if="!activitySummary.total" class="grid-empty">
+            {{ t('calendar.gridNoData', { month }) }}
+          </p>
+          <p v-else class="grid-legend">
+            <span class="legend-item"><i class="grid-dot"></i> {{ t('calendar.gridLegendDot') }}</span>
+            <span class="legend-item"><i class="fas fa-user"></i> {{ t('calendar.gridMine') }}</span>
+          </p>
+        </div>
+      </section>
+
       <div class="calendar-main">
         <!-- 农事任务 -->
         <section class="panel-card">
@@ -263,6 +312,17 @@ export default {
     const taskTotal = ref(0);
     const seasonalPests = ref([]);
     const myHistory = ref([]);
+    //: 第 216 批：月历网格的数据源。
+    //: ⚠️ `dayActivity` 是"当天有多少条**识别记录**"，**不是**排定在那天的农事任务 ——
+    //:    `CalendarTask` 只有月份粒度（没有日期字段），把任务摆到具体格子就是编数据。
+    //:    `myDays` 是我自己那天有没有识别过，网格上单独标记，便于对照"我这块地"与"全站"。
+    const dayActivity = ref([]);
+    const myDays = ref([]);
+    const weekdayLabels = computed(() => [
+      t('calendar.weekdayMon'), t('calendar.weekdayTue'), t('calendar.weekdayWed'),
+      t('calendar.weekdayThu'), t('calendar.weekdayFri'), t('calendar.weekdaySat'),
+      t('calendar.weekdaySun'),
+    ]);
     // 第 77 批：整条"内容来源"声明（中英各一份）由后端下发，前端按语言取
     const sourceNote = ref({ source_note: '', source_note_en: '' });
     const isCurrentMonth = ref(true);
@@ -314,6 +374,9 @@ export default {
         taskTotal.value = data.task_total || 0;
         seasonalPests.value = data.seasonal_pests || [];
         myHistory.value = data.my_history || [];
+        //: 第 216 批：月历网格要的**按天活动量**（当天识别记录数，不是排定的任务日）
+        dayActivity.value = data.day_activity || [];
+        myDays.value = data.my_days || [];
         sourceNote.value = {
           source_note: data.source_note || '',
           source_note_en: data.source_note_en || '',
@@ -398,11 +461,73 @@ export default {
 
     onMounted(load);
 
+    /* ══════════════════════════════════════════════════════════════════════
+     * 第 216 批：月历网格
+     * ----------------------------------------------------------------------
+     * ⚠️ 格子里标的是**这一天的识别记录数**（真实数据），**不是**"安排在那天的农事任务"。
+     *    依据：`CalendarTask` 只有 `month` 字段、**没有日期** ——
+     *    把 7 条番茄任务硬摆进 7 个格子，看起来像日程，实际是编的。
+     *    而 `DetectionHistory.timestamp` 是真正的按天数据，用它画网格才诚实。
+     *
+     * 网格本身仍然解决用户真正想解决的问题：**一眼看出这个月哪几天田里问题集中**。
+     * `calendar.gridHint` 会把口径明确写给用户，避免误读成日程表。
+     * ══════════════════════════════════════════════════════════════════════ */
+
+    /** 每格最大显示几个"点"（超过就只给数字，避免格子被点撑破） */
+    const MAX_DOTS = 5;
+
+    const monthGrid = computed(() => {
+      const year = new Date().getFullYear();
+      const m = Number(month.value) || 1;
+      const first = new Date(year, m - 1, 1);
+      const daysInMonth = new Date(year, m, 0).getDate();
+      //: 周一为一周起点（中文习惯）；`getDay()` 里 0 是周日，换算成 0=周一
+      const leading = (first.getDay() + 6) % 7;
+
+      const byDay = new Map((dayActivity.value || []).map((x) => [Number(x.day), Number(x.count)]));
+      const mine = new Set((myDays.value || []).map(Number));
+      const today = new Date();
+      const isThisMonth = today.getFullYear() === year && today.getMonth() + 1 === m;
+
+      const cells = [];
+      for (let i = 0; i < leading; i += 1) cells.push({ key: `pad-${i}`, pad: true });
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const count = byDay.get(day) || 0;
+        cells.push({
+          key: `d-${day}`,
+          pad: false,
+          day,
+          count,
+          dots: Math.min(count, MAX_DOTS),
+          overflow: Math.max(0, count - MAX_DOTS),
+          mine: mine.has(day),
+          today: isThisMonth && today.getDate() === day,
+        });
+      }
+      //: 补齐到整周，网格不出现缺角
+      while (cells.length % 7 !== 0) cells.push({ key: `tail-${cells.length}`, pad: true });
+
+      const weeks = [];
+      for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+      return weeks;
+    });
+
+    /** 本月有记录的天数与总条数（网格上方的一句话摘要） */
+    const activitySummary = computed(() => {
+      const list = dayActivity.value || [];
+      return {
+        days: list.length,
+        total: list.reduce((sum, x) => sum + (Number(x.count) || 0), 0),
+      };
+    });
+
     return {
       loading, saving, month, crop, crops, myCrops, taskGroups, taskTotal,
       seasonalPests, myHistory, sourceNote, isCurrentMonth, quickMonths, taskTypes,
       addDialog, addForm, isAdmin, t, taskTypeLabel,
       localizedField, cropLabel,
+      //: 第 216 批：月历网格
+      dayActivity, myDays, weekdayLabels, monthGrid, activitySummary,
       load, changeMonth, jumpMonth, filterByCrop, openAddDialog, submitTask, removeTask,
     };
   },
@@ -528,6 +653,139 @@ export default {
 }
 
 /* 主区 */
+/* ══ 第 216 批：月历网格 ═════════════════════════════════════════════════ */
+.grid-card {
+  margin-bottom: 16px;
+}
+
+.grid-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-500, #6b7280);
+}
+
+.grid-hint i {
+  margin-right: 4px;
+  color: var(--brand-600);
+}
+
+.month-grid {
+  display: grid;
+  /* 7 列等宽：周一到周日 */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.grid-weekday {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-500, #6b7280);
+  padding-bottom: 4px;
+}
+
+.grid-day {
+  position: relative;
+  min-height: 58px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 5px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.grid-day.is-pad {
+  border: none;
+  background: transparent;
+  min-height: 0;
+}
+
+.grid-day.is-today {
+  border-color: var(--brand-500, #2f6b4f);
+  box-shadow: inset 0 0 0 1px var(--brand-500, #2f6b4f);
+}
+
+.grid-day.has-data {
+  background: var(--brand-50, #f0f7f3);
+}
+
+.grid-day-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-600, #4b5563);
+  line-height: 1.2;
+}
+
+.grid-day.is-today .grid-day-num {
+  color: var(--brand-700, #245a41);
+}
+
+.grid-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+  /*: ⚠️ `+N` 要单独占位：格子窄时它和圆点挤在同一行会叠在一起（实测 5 个点 + "+2" 溢出） */
+  row-gap: 3px;
+}
+
+/*: 圆点本身 —— 别在改上面那条时把它误删（我第一版就删掉过一次） */
+.grid-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand-600, #16a34a);
+  display: inline-block;
+}
+
+.grid-overflow {
+  font-size: 10px;
+  color: var(--brand-700, #245a41);
+  font-weight: 600;
+  flex: 0 0 auto;          /* 不被挤扁 */
+  margin-left: 1px;
+}
+
+.grid-count {
+  margin-top: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand-700, #245a41);
+  line-height: 1;
+}
+
+.grid-mine-mark {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 9px;
+  color: var(--brand-600, #16a34a);
+}
+
+.grid-empty {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-400, #9aa4a0);
+}
+
+.grid-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--ink-500, #6b7280);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .calendar-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
