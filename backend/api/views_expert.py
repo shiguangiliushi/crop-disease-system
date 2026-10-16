@@ -27,6 +27,12 @@ from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile
 from .sensitive import check_text
 from .services_content_i18n import pest_en_maps  # 第 78 批：作物名的中英对照
 
+#: 第 217 批：咨询附图的**单张大小上限**。
+#: 5 MB 与识别上传（`DetectView.UPLOAD_LIMIT`）保持一致 ——
+#: 前端会先压缩到 1600px/0.85（`utils/imageCompress.js`），所以正常手机照片远小于它，
+#: 这条是"绕过前端直接传大图"时的兜底。
+CONSULT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -221,8 +227,30 @@ class QuestionListView(APIView):
             message = detail.get('detail') if isinstance(detail, dict) else '问题包含不允许的词汇'
             return Response({'detail': message}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ⚠️ 第 217 批：**附图**。
+        # `ConsultQuestion.image` 字段一直是有的，`_serialize_question` 也一直会下发它，
+        # 但**创建接口从头到尾没读过 `image`** —— 于是前端就算传了也存不进去，
+        # 用户视角就是"提问不能带照片"。农户用文字描述病斑本就吃力，
+        # 一张照片胜过十句话，这个缺口值得补。
+        #
+        # 校验放在这里而不是只靠序列化器：接口直接收 `request.FILES`，
+        # 没有 DRF 的 ImageField 校验链，必须自己把关（类型 + 大小）。
+        image = request.FILES.get('image')
+        if image is not None:
+            if image.size > CONSULT_IMAGE_MAX_BYTES:
+                limit_mb = CONSULT_IMAGE_MAX_BYTES // (1024 * 1024)
+                return Response({'detail': f'图片太大了，请压缩到 {limit_mb} MB 以内'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            #: 只认常见图片类型 —— 别把任意文件塞进 `ImageField`（存进去也渲染不出来）
+            allowed = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+            content_type = (getattr(image, 'content_type', '') or '').lower()
+            if content_type not in allowed:
+                return Response({'detail': '只支持 JPG / PNG / WebP / GIF 格式的图片'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
         question = ConsultQuestion.objects.create(
             asker=request.user, crop_type=crop_type, title=title, content=content,
+            image=image,
         )
 
         # 通知在岗专家（有活干才有人来答）

@@ -13,9 +13,32 @@ export function fetchQuestion(id) {
   return http.get(`consult/questions/${id}/`).then((res) => res.data);
 }
 
-/** 发起提问 */
+/**
+ * 发起提问
+ *
+ * ⚠️ 第 217 批：`payload.image` 传 `File` 时**自动改走 multipart**。
+ *
+ * 为什么需要这段：后端 `ConsultQuestion.image` 与下发的 `image` 一直都在，
+ * 但创建接口此前**从不读 `image`** —— 前端就算传了也存不进去。
+ * 后端补上读取之后，前端还必须用 `FormData` 发（JSON 里塞不进二进制）。
+ *
+ * 写法沿用 `api/feedback.js` 里那套已验证的范式：手动 `FormData` +
+ * `Content-Type: multipart/form-data`（**不要**自己设 boundary，交给浏览器）。
+ * 不带图时仍走原来的 JSON，行为与之前完全一致。
+ */
 export function createQuestion(payload) {
-  return http.post('consult/questions/', payload).then((res) => res.data);
+  const { image, ...fields } = payload || {};
+  if (!image) {
+    return http.post('consult/questions/', fields).then((res) => res.data);
+  }
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) formData.append(key, value);
+  }
+  formData.append('image', image);
+  return http.post('consult/questions/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((res) => res.data);
 }
 
 /** 关闭问题（提问者或管理员） */

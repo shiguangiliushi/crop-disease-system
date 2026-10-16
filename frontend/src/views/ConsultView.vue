@@ -172,6 +172,41 @@
               :placeholder="t('consult.questionDetailPlaceholder')"
             />
           </el-form-item>
+
+          <!-- ⚠️ 第 217 批：**附图**。
+               后端 `ConsultQuestion.image` 字段与下发的 `image` 一直都在，
+               但创建接口此前**从不读 `image`** —— 前端就算传了也存不进去，
+               用户视角就是"提问不能带照片"。
+               农户用文字描述病斑本就吃力，一张照片胜过十句话。 -->
+          <el-form-item :label="t('consult.imageLabel')">
+            <div class="ask-image-field">
+              <input
+                ref="askImageInput"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                class="ask-image-input"
+                @change="onAskImageChange"
+              />
+              <button
+                v-if="!askImagePreview"
+                type="button"
+                class="ask-image-pick"
+                :disabled="askImageBusy"
+                @click="askImageInput?.click()"
+              >
+                <i class="fas fa-image"></i>
+                {{ askImageBusy ? t('consult.imageCompressing') : t('consult.imagePick') }}
+              </button>
+
+              <div v-else class="ask-image-preview">
+                <img :src="askImagePreview" :alt="t('consult.imageLabel')" />
+                <button type="button" class="ask-image-remove" :title="t('common.delete')" @click="clearAskImage">
+                  <i class="fas fa-xmark"></i>
+                </button>
+              </div>
+            </div>
+            <p class="ask-image-hint">{{ t('consult.imageHint') }}</p>
+          </el-form-item>
         </el-form>
       </div>
       <template #footer>
@@ -301,6 +336,8 @@ import { formatTime } from '@/utils/date';
 import { useAuthStore } from '@/stores/auth';
 import { useI18n } from '@/i18n';  // 第 65 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 78 批：作物名等内容数据多语言
+//: 第 217 批：提问附图的客户端压缩（与识别页同一套实现，避免两处各写一份）
+import { compressImage } from '@/utils/imageCompress';
 import UserAvatarLink from '@/components/UserAvatarLink.vue';
 
 export default {
@@ -396,6 +433,58 @@ export default {
       loadQuestions();
     };
 
+    /* ══════════════════════════════════════════════════════════════════════
+     * 第 217 批：提问附图
+     * ----------------------------------------------------------------------
+     * 复用识别页的压缩实现（`utils/imageCompress.js`，1600px / 0.85）——
+     * 手机原图动辄 5~10 MB，不压缩就会被后端的 5 MB 上限拒掉，
+     * 而用户看到的只是"图片太大了"，不知道该做什么。**先压缩再上传**才是正解。
+     * ══════════════════════════════════════════════════════════════════════ */
+    const askImageInput = ref(null);
+    const askImageFile = ref(null);
+    const askImagePreview = ref('');
+    const askImageBusy = ref(false);
+
+    /** 释放 `URL.createObjectURL` 产生的地址（不释放会一直占着内存） */
+    const revokePreview = () => {
+      if (askImagePreview.value) {
+        URL.revokeObjectURL(askImagePreview.value);
+        askImagePreview.value = '';
+      }
+    };
+
+    const clearAskImage = () => {
+      revokePreview();
+      askImageFile.value = null;
+      if (askImageInput.value) askImageInput.value.value = '';
+    };
+
+    const onAskImageChange = async (event) => {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      if (!allowed.includes((file.type || '').toLowerCase())) {
+        ElMessage.warning(t('consult.imageBadType'));
+        clearAskImage();
+        return;
+      }
+      askImageBusy.value = true;
+      try {
+        //: 压缩失败不阻断提问 —— 退而用原图，交给后端的大小校验兜底
+        let finalFile = file;
+        try {
+          finalFile = await compressImage(file);
+        } catch (error) {
+          console.warn('[consult] 图片压缩失败，改用原图:', error?.message || error);
+        }
+        revokePreview();
+        askImageFile.value = finalFile;
+        askImagePreview.value = URL.createObjectURL(finalFile);
+      } finally {
+        askImageBusy.value = false;
+      }
+    };
+
     const submitQuestion = async () => {
       if (!askForm.value.title.trim()) {
         ElMessage.warning(t('consult.titleRequired'));
@@ -407,14 +496,18 @@ export default {
       }
       asking.value = true;
       try {
-        await createQuestion({
+        const payload = {
           crop_type: askForm.value.crop_type.trim(),
           title: askForm.value.title.trim(),
           content: askForm.value.content.trim(),
-        });
+        };
+        //: 只有选了图才带 `image` —— 否则后端收到空文件字段，行为不如"不传"明确
+        if (askImageFile.value) payload.image = askImageFile.value;
+        await createQuestion(payload);
         ElMessage.success(t('consult.questionSubmitted'));
         askDialog.value = false;
         askForm.value = { crop_type: '', title: '', content: '' };
+        clearAskImage();
         activeTab.value = 'open';
         await loadQuestions();
       } catch (error) {
@@ -564,12 +657,91 @@ export default {
       localizedField, statusLabel,
       loadAll, loadQuestions, switchTab, submitQuestion, openDetail, submitAnswer,
       doAccept, doClose, searchUserOptions, doGrant, doRevoke,
+      //: 第 217 批：提问附图
+      askImageInput, askImagePreview, askImageBusy, onAskImageChange, clearAskImage,
     };
   },
 };
 </script>
 
 <style scoped>
+/* ══ 第 217 批：提问附图 ═══════════════════════════════════════════════════ */
+.ask-image-field {
+  width: 100%;
+}
+
+/*: 原生 file input 藏起来，用按钮触发 —— 原生控件的样式在各浏览器里没法统一 */
+.ask-image-input {
+  display: none;
+}
+
+.ask-image-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;              /* 触控目标够大 */
+  padding: 8px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-600, #4b5563);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.ask-image-pick:hover:not(:disabled) {
+  border-color: var(--brand-400, #4ade80);
+  color: var(--brand-700, #245a41);
+  background: var(--brand-50, #f0f7f3);
+}
+
+.ask-image-pick:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.ask-image-preview {
+  position: relative;
+  display: inline-block;
+  max-width: 220px;
+}
+
+.ask-image-preview img {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ask-image-remove {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ask-image-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-400, #9aa4a0);
+}
+
 .consult-page {
   width: 100%;
   max-width: 1240px;

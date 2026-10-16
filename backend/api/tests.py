@@ -6782,8 +6782,72 @@ class ExpertConsultTests(TestCase):
             f'/api/consult/questions/{question_id}/answers/', {'content': content}, format='json',
         )
 
-    # ---------- 提问 ----------
-    def test_ask_question(self):
+    # ---------- 附图（第 217 批） ----------
+    #
+    # 背景：`ConsultQuestion.image` 字段与 `_serialize_question` 下发的 `image`
+    # **一直都存在**，但创建接口**从不读 `image`** —— 前端传了也存不进去，
+    # 用户视角就是"提问不能带照片"。农户用文字描述病斑本就吃力，这个缺口值得补。
+    def _ask_with_image(self, image):
+        """带附图的提问（multipart —— 不能再用 `format='json'`）"""
+        payload = {
+            'title': '叶片上有褐色斑点怎么办',
+            'content': '叶片正面出现褐色轮纹斑，用过代森锰锌没有好转。',
+            'crop_type': '番茄',
+            'image': image,
+        }
+        #: ⚠️ 必须 `format='multipart'`：用 `format='json'` 传 File 对象会直接报错，
+        #:    而默认格式在带文件时行为不够明确，显式写出来更稳。
+        return self.client_asker.post('/api/consult/questions/', payload, format='multipart')
+
+    def _tiny_image(self, name='leaf.jpg', content_type='image/jpeg'):
+        """一张最小的合法 JPEG（1×1 像素）—— 内容不重要，走通文件链路即可"""
+        #: 最小 JPEG 的字节序列，避免依赖 PIL 生成或读磁盘上的样本图
+        data = bytes.fromhex(
+            'ffd8ffe000104a46494600010100000100010000ffdb004300'
+            'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+            'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+            'ffffffffffffffffffffffffffffffffffffffc2000b080001000101011100'
+            'ffc40014000100000000000000000000000000000009ffda0008010100003f'
+            '00d2ffd9'
+        )
+        return SimpleUploadedFile(name, data, content_type=content_type)
+
+    def test_ask_with_image_is_saved_and_returned(self):
+        """附图要真的落到库里，并且响应里回出地址 —— 否则详情页显示不出图。"""
+        response = self._ask_with_image(self._tiny_image())
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data['image'], '响应应回出图片地址')
+        self.assertIn('consult_images/', response.data['image'])
+
+        question = ConsultQuestion.objects.get(pk=response.data['id'])
+        self.assertTrue(question.image, '库里应存下图片')
+        #: 收尾：删掉测试写进 media 的文件，别把仓库搞脏
+        question.image.delete(save=False)
+
+    def test_ask_without_image_still_works(self):
+        """不带图是**最常见**的情况，原有行为一个字都不能变。"""
+        response = self._ask()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIsNone(response.data['image'])
+
+    def test_oversized_image_is_rejected(self):
+        """超过 5 MB 的图片要**明确告知**该怎么做，而不是 500 或静默失败。"""
+        big = SimpleUploadedFile('big.jpg', b'x' * (6 * 1024 * 1024), content_type='image/jpeg')
+        response = self._ask_with_image(big)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('5 MB', response.data['detail'], '要说清上限是多少')
+
+    def test_non_image_file_is_rejected(self):
+        """`ImageField` 不做校验（接口直接收 `request.FILES`），必须自己把关类型。
+
+        否则任何文件都能被塞进 `image/`，存进去也渲染不出来。
+        """
+        response = self._ask_with_image(
+            SimpleUploadedFile('a.txt', b'hello', content_type='text/plain'))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('JPG', response.data['detail'])
+
+    # ---------- 提问 ----------    def test_ask_question(self):
         response = self._ask()
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data['status'], 'open')
