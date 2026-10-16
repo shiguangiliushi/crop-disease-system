@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -92,6 +93,46 @@ def _fallback_body(hits, lang: str = prompts.DEFAULT_LANG) -> str:
                 lines.append(f'{title}: {value}' if english else f'{title}：{value}')
         blocks.append('\n'.join(lines))
     return '\n\n'.join(blocks)
+
+
+def _collapse_single_source(answer: str, citations: list) -> tuple[str, bool]:
+    """只有一个来源时，正文里的 `【1】` 只留一次（第 212 批）。
+
+    ## 为什么（用户反馈"为什么回答出来的答案后面都有【1】"）
+
+    "番茄晚疫病怎么打药？"这类问题只命中**一个**词条，模型于是在每条措施后面都标 `【1】`——
+    实测一条 842 字的回答里出现了 **10 次同一个 `【1】`**。
+
+    但**同一个序号重复十遍不提供任何额外信息**：读者早就知道全部内容出自那一条。
+    "可溯源"的真正要求是"**每个结论都能对应到某条来源**"，而这在只有一个来源时
+    天然成立 —— 所以留一次（首次出现处）就够，其余删掉。
+
+    ## 为什么在后端做，而不是前端显示时过滤
+
+    前端过滤只改变"看起来"，**接口与库里仍留着十处重复**：
+    以后做导出、做引用统计，或别的客户端来读，噪声还在。
+    存进库里的就该是**最终要显示的那段话**。
+
+    ## 边界（都有单测守着）
+
+    - **只有单个来源时**才折叠；多来源（如"苹果跟葡萄"）必须保留序号，
+      否则读者无法知道哪句出自哪条 —— 那才是序号真正起作用的地方；
+    - 删标记可能留下连续空格或行尾空格，顺手收干净；
+    - 不重排任何文字，只删标记本身。
+
+    @returns (处理后的正文, 是否发生了折叠)
+    """
+    marker = '【1】'
+    if len(citations) != 1 or marker not in answer:
+        return answer, False
+
+    head, sep, tail = answer.partition(marker)
+    if not sep:
+        return answer, False
+    collapsed = head + marker + tail.replace(marker, '')
+    collapsed = re.sub(r'[ \t]{2,}', ' ', collapsed)
+    collapsed = re.sub(r'[ \t]+$', '', collapsed, flags=re.M)
+    return collapsed, True
 
 
 def _guard_reply(result: guard.GuardResult, lang: str) -> tuple[str, str]:
@@ -385,6 +426,10 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                     citations = list(prepared.citations) if reason else []
                     usage['citation_marked'] = False
                 answer = (result.text or '').strip()
+                # 第 212 批：只有一个来源时，正文里的 `【1】` 只留一次
+                answer, collapsed = _collapse_single_source(answer, citations)
+                if collapsed:
+                    usage['single_source_collapsed'] = True
                 if not answer:
                     answer, reason, citations = prompts.degrade_text('no_source', prepared.lang), 'no_source', []
     except Exception as exc:  # noqa: BLE001 —— 兜底：任何意外都要变成可读回答
@@ -551,6 +596,14 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     if marked:
         citations = [c for i, c in enumerate(prepared.citations, start=1) if i in marked]
         usage['citation_marked'] = True
+        # 第 212 批：只有一个来源时，正文里的 `【1】` 只留一次。
+        # ⚠️ 必须放在**算出 citations 之后**（判定依据是"最终有几个来源"），
+        #    并且要在 `answer` 定型之后、`message.content = answer` 之前 ——
+        #    这样流式界面与落库内容一致。流式时用户此前已看到带 10 处标记的增量文本，
+        #    收尾会整体替换成折叠后的版本（前端本来就是"最后以 done 的内容为准"）。
+        answer, collapsed = _collapse_single_source(answer, citations)
+        if collapsed:
+            usage['single_source_collapsed'] = True
     else:
         # 与同步路径同一处置（第 207 批）：有候选却一个都没标 → **不冒充有来源**。
         # 但**降级文本**（`no_llm` / `llm_error` 那种"档案原文"）不同：它不是模型生成的，
@@ -576,4 +629,9 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     yield _sse('done', {'usage': usage, 'degraded': bool(reason), 'degrade_reason': reason,
                         'model': actual_model, 'latency_ms': latency_ms,
                         # 前端据此在气泡下方提示"回答可能不完整"
-                        'truncated': truncated})
+                        'truncated': truncated,
+                        # 第 212 批：带上**最终正文**（可能与逐字增量略有不同 ——
+                        # 单来源时 `【1】` 被折叠成一处）。前端在 done 时用它替换气泡内容，
+                        # 这样"流式看到的"与"落库/历史里的"完全一致；
+                        # 否则刷新前后是两副样子（用户会以为数据变了）。
+                        'answer': answer})

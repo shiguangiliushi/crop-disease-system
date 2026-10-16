@@ -148,6 +148,13 @@ export async function askAssistantStream({ question, session_id, pest_identifier
       result.usage = data.usage || {};
       result.degraded = Boolean(data.degraded);
       result.degrade_reason = data.degrade_reason || '';
+      //: 第 212 批：后端会把**最终正文**带回来（单来源时 `【1】` 被折叠成一处）。
+      //: 逐字增量只是"过程"，done 里的才是定稿 —— 以它为准，
+      //: 这样"流式看到的"与"落库/历史里的"一致，不会刷新前后两副样子。
+      if (typeof data.answer === 'string' && data.answer) {
+        result.answer = data.answer;
+        if (onDelta) onDelta(null, data.answer);
+      }
     }
   };
 

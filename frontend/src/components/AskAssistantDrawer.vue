@@ -382,10 +382,13 @@ const submit = async (presetText) => {
         pest_identifier: props.pestIdentifier || undefined,
       },
       {
-        onDelta: (text) => {
+        onDelta: (text, finalText) => {
           received = true;
           streamingStarted.value = true;
-          target.content += text;
+          //: 第 212 批：`finalText` 是后端定稿的正文（单来源时 `【1】` 已折叠成一处）。
+          //: 增量只是"过程"，定稿到达时**整体替换**，避免刷新前后两副样子。
+          if (typeof finalText === 'string' && finalText) target.content = finalText;
+          else target.content += text;
           // 跟随滚动：让最新一行始终可见（否则长回答时用户要手动往下拉）
           scrollToBottom();
         },

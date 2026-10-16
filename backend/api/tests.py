@@ -56,6 +56,7 @@ from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
 # 第 193 批：智能回答助手（会话/消息）+ 闸门/检索/上下文/LLM 四个可单独测的模块
 from .models_assistant import AssistantMessage, AssistantSession
 from .assistant import context, guard, llm, prompts, retriever  # prompts：第 197 批语言归一用例要用
+from .assistant import orchestrator  # 第 212 批：单来源折叠用例要直接调它的纯函数
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
 from .pest_lookup import (  # noqa: E402  第 159 批：类名 → 词条匹配
     find_pest_info,
@@ -13684,3 +13685,118 @@ class AssistantTruncationTests(TestCase):
         answers = [m for m in detail.data['messages'] if m['role'] == 'assistant']
         self.assertTrue(answers and answers[0]['truncated'],
                         '历史详情没带 truncated，用户回头看时不知道那是半句话')
+
+# ============================================================================
+# 智能回答助手 · 单来源时折叠重复引用序号（第 212 批）
+# ----------------------------------------------------------------------------
+# 起因是用户反馈："为什么回答出来的答案后面都有【1】【2】【3】以此类推"。
+#
+# 实测"番茄晚疫病怎么打药？"只命中**一个**词条，于是模型在每条措施后面都标 `【1】` ——
+# 一条 842 字的回答里出现了 **10 次同一个 `【1】`**。
+# 同一个序号重复十遍不提供任何信息：读者早就知道全部出自那一条。
+# 而"可溯源"的真正要求是"每个结论都能对应到某条来源"，这在只有一个来源时天然成立。
+#
+# ⚠️ 这条路径踩过一个坑：`_collapse_single_source` 里用了 `re.sub`，
+#    但 `orchestrator.py` 当时**没有导入 `re`** —— 异常被最外层兜底吞掉，
+#    用户看到的是"（AI 助手暂时不可用：name 're' is not defined）"。
+#    下面的测试会走**完整 ask() 路径**，正是为了覆盖这种"函数单独看没问题、
+#    接到链路里就炸"的情况。
+# ============================================================================
+class AssistantCitationCollapseTests(TestCase):
+    """助手：单来源时正文里的 `【1】` 只留一次。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='asst_collapse', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        cache.delete('sensitive_words:active')
+        self.pest = PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='tomato_late_blight',
+            symptoms='症状', description='规律',
+        )
+        PreventionMethod.objects.create(pest=self.pest, category='CHEMICAL',
+                                        measure='68%精甲霜·锰锌水分散粒剂600-800倍液')
+
+    # ── 一、纯函数语义 ──────────────────────────────────────────────────
+    def test_collapse_keeps_first_marker_only(self):
+        """保留首次出现处，其余删掉"""
+        answer = '结论。【1】\n\n- 措施一【1】\n- 措施二【1】'
+        out, collapsed = orchestrator._collapse_single_source(answer, [{'label': 'X'}])
+        self.assertTrue(collapsed)
+        self.assertEqual(out.count('【1】'), 1)
+        self.assertIn('结论。【1】', out)
+
+    def test_multi_source_is_never_collapsed(self):
+        """⚠️ 多来源必须保留序号 —— 那是读者区分来源的唯一依据"""
+        answer = '甲病。【1】乙病。【2】'
+        out, collapsed = orchestrator._collapse_single_source(
+            answer, [{'label': 'A'}, {'label': 'B'}])
+        self.assertFalse(collapsed)
+        self.assertEqual(out, answer)
+
+    def test_no_citation_is_a_noop(self):
+        out, collapsed = orchestrator._collapse_single_source('没有序号。', [{'label': 'X'}])
+        self.assertFalse(collapsed)
+        self.assertEqual(out, '没有序号。')
+
+    def test_other_markers_are_left_alone(self):
+        """单来源时不该动 `【2】` 之类（模型偶尔会标出范围外的序号）"""
+        answer = '结论。【1】 另一处【2】 再一处【1】'
+        out, _ = orchestrator._collapse_single_source(answer, [{'label': 'X'}])
+        self.assertEqual(out.count('【1】'), 1)
+        self.assertIn('【2】', out, '范围外的序号不该被删（那是模型的问题，不是这里的职责）')
+
+    def test_no_trailing_or_double_spaces_left_behind(self):
+        """删标记不该留下行尾空格或连续空格（否则出现" 。"这类怪排）"""
+        answer = '措施一 【1】\n措施二 【1】\n'
+        out, _ = orchestrator._collapse_single_source(answer, [{'label': 'X'}])
+        self.assertNotIn('  ', out)
+        self.assertNotIn(' \n', out)
+
+    # ── 二、走完整链路（正是这一步能抓到"忘了 import re"）────────────────
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_ask_collapses_and_records_usage(self):
+        stub = llm.ChatResult(
+            text='番茄晚疫病要早打药。【1】\n\n- 68%精甲霜·锰锌600-800倍液【1】\n- 间隔5-7天一次【1】',
+            model='deepseek-flash', prompt_tokens=10, completion_tokens=100,
+            finish_reason='stop')
+        with patch('api.assistant.llm.chat', return_value=stub):
+            resp = self.client_auth.post('/api/assistant/ask/',
+                                         {'question': '番茄晚疫病怎么打药'}, format='json')
+        # ⚠️ 这条断言同时守住"链路不炸"：`re` 未导入时这里会是 llm_error 的兜底文案
+        self.assertFalse(resp.data['degraded'], resp.data['answer'])
+        self.assertEqual(resp.data['answer'].count('【1】'), 1)
+        self.assertTrue(resp.data['usage'].get('single_source_collapsed'))
+        self.assertEqual(len(resp.data['citations']), 1)
+        # 落库的也必须是折叠后的版本（否则历史/导出里还是十处重复）
+        message = AssistantMessage.objects.get(pk=resp.data['message_id'])
+        self.assertEqual(message.content.count('【1】'), 1)
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_stream_done_event_carries_final_answer(self):
+        """流式的 `done` 要带回定稿正文 —— 否则"看到的"与"存下的"不一致。
+
+        增量是逐字吐的，用户屏幕上已经有了十处 `【1】`；折叠发生在收尾，
+        所以必须把定稿一并送回去让前端整体替换，否则刷新前后两副样子。
+        """
+        def fake_stream(_messages, **_kwargs):
+            yield {'text': '番茄晚疫病要早打药。【1】'}
+            yield {'text': '\n- 措施【1】\n- 措施二【1】'}
+            yield {'model': 'deepseek-flash', 'finish_reason': 'stop'}
+
+        with patch('api.assistant.llm.chat_stream', side_effect=fake_stream):
+            resp = self.client_auth.post('/api/assistant/ask/stream/',
+                                         {'question': '番茄晚疫病怎么打药'}, format='json')
+            body = b''.join(resp.streaming_content).decode('utf-8')
+
+        done = [line for line in body.split('\n\n') if line.startswith('event: done')]
+        self.assertEqual(len(done), 1, body[-300:])
+        self.assertIn('"answer"', done[0], 'done 事件没带回定稿正文')
+        # 定稿里只剩一处【1】
+        payload = json.loads(done[0].split('data: ', 1)[1])
+        self.assertEqual(payload['answer'].count('【1】'), 1)
+        # 逐字增量里仍是三处（用户先看到的是过程，收尾才被替换）
+        self.assertEqual(body.count('【1】'), 4)
