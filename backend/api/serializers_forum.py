@@ -40,7 +40,19 @@ class LikeUserSerializer(serializers.ModelSerializer):  # 点赞者名单（第 
 
 
 class ForumBoardSerializer(serializers.ModelSerializer):  # 定义版块序列化器
-    """版块序列化器"""
+    """版块序列化器
+
+    ⚠️ 第 213 批：`post_count` 改为**由数据库实时统计**，不再直接回库里的缓存字段。
+
+    原因：那个字段靠发帖 `+1`、删帖 `-1` 维护（`models_forum.py:198/238`），
+    任何绕过 `save()` 的操作（批量删、数据导入、直接改库）都会让它只涨不跌 ——
+    实测已漂移到 **239**，而真实只有 **7** 条。
+    前端早就不信它（自己用分页 count 重算），但 Django admin、
+    以及任何直读该字段的地方仍显示错数字。
+
+    改成 `SerializerMethodField` 后接口永远给真实值，缓存字段只作历史留存。
+    """
+    post_count = serializers.SerializerMethodField()
 
     class Meta:  # 定义元数据
         model = ForumBoard  # 关联版块模型
@@ -50,6 +62,16 @@ class ForumBoardSerializer(serializers.ModelSerializer):  # 定义版块序列�
             'last_updated_date'
         ]
         read_only_fields = ['created_at', 'post_count', 'today_posts', 'last_updated_date']  # 只读字段
+
+    def get_post_count(self, obj):
+        """只数**未删除**的帖子 —— 与 `Post.active` 同一口径。
+
+        优先用 ViewSet 预注解的值（有就省一次查询），没有才回落到实时 count。
+        """
+        annotated = getattr(obj, 'active_post_count', None)
+        if annotated is not None:
+            return annotated
+        return obj.posts.filter(is_deleted=False).count()
 
 
 class PestTagSerializer(serializers.ModelSerializer):

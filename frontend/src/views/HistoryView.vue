@@ -18,8 +18,13 @@
       </div>
     </header>
 
-    <!-- 统计卡片区域 -->
-    <div class="stats-cards mb-4">
+    <!-- 统计卡片区域
+         ⚠️ 第 213 批：**一条记录都没有时不显示这排卡**。
+         原来是恒显示，于是新用户一进来看到 3 个「0」和一张「-」
+         （第四张卡的 `topPestLabel` 初值是 `'-'`，它是 truthy，
+         连 `history.statNone`（'无'）都兜不住），像页面坏了。
+         有记录、只是筛选后为空时仍然显示 —— 那时 0 是有意义的（"筛出来 0 条"）。 -->
+    <div v-if="totalRecords > 0" class="stats-cards mb-4">
       <div class="row g-3">
         <div class="col-md-3 col-6">
           <div class="stat-card bg-white rounded-3 p-3 shadow-sm h-100">
@@ -169,7 +174,10 @@
           <div v-else-if="history.length === 0" class="status-message">
             <i class="fas fa-box-open fa-3x text-muted mb-3"></i>
             <h3>{{ t('history.emptyTitle') }}</h3>
-            <p>{{ t('history.emptyFiltered') }}</p>
+            <!-- ⚠️ 第 213 批：**区分"一条都没有"与"筛选后为空"**。
+                 新用户没设过任何条件，却被告诉"没有符合条件" —— 会让人以为是自己筛错了。
+                 判据用 `totalRecords === 0`（全库口径），它不受筛选影响。 -->
+            <p>{{ totalRecords === 0 ? t('history.emptyNew') : t('history.emptyFiltered') }}</p>
             <!-- 第 31 批：空状态原来只有一句话，页面剩下大半屏是空白；补上可点的下一步 -->
             <div class="empty-actions">
               <RouterLink to="/detect" class="empty-action-btn">
@@ -625,8 +633,14 @@ const monthCount = computed(() => {
 });
 
 // 更新 topPest 的函数（第 72 批：同时记下英文名，英文界面下显示英文）
+//
+// ⚠️ 第 213 批：没有数据时返回**空串**，不再返回 `'-'`。
+//    原因：模板写的是 `topPestLabel || t('history.statNone')`，
+//    而 `'-'` 是 truthy —— `||` 兜不住它，于是那一格永远显示 `-`，
+//    `history.statNone`（'无'）是**死文案**。返回空串才能落到兜底文案上。
 const topPestLabel = computed(() => {
-  if (!topPest.value?.name || topPest.value.name === '-') return topPest.value?.name || '-';
+  const name = topPest.value?.name;
+  if (!name || name === '-') return '';
   return localizedField(topPest.value, 'name');
 });
 

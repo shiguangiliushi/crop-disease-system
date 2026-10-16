@@ -2114,6 +2114,9 @@ export const zhCN = {
     loading: '正在加载数据，请稍候...',
     emptyTitle: '暂无识别记录',
     emptyFiltered: '没有找到符合条件的识别记录。',
+    //: 与上面那条的区别：这条用于「一条记录都没有」的新用户 ——
+    //: 新用户没有设过任何筛选条件，说"没有符合条件"会让人以为是自己筛错了。
+    emptyNew: '还没有识别记录。拍一张清晰叶片照，1～3 秒就能出结果，记录会自动存在这里。',
     goDetect: '去识别一张叶片照片',
     goWiki: '先看看病害百科',
     selectAllPage: '全选本页',
@@ -5120,6 +5123,7 @@ export const en = {
     loading: 'Loading data, please wait...',
     emptyTitle: 'No diagnoses yet',
     emptyFiltered: 'No records match the current filters.',
+    emptyNew: 'No diagnoses yet. Take a clear leaf photo — results arrive in 1–3 seconds and are saved here automatically.',
     goDetect: 'Diagnose a leaf photo',
     goWiki: 'Browse the disease wiki',
     selectAllPage: 'Select this page',

@@ -121,7 +121,25 @@ def compute_alerts(days=DEFAULT_DAYS, baseline_days=DEFAULT_BASELINE_DAYS,
         )
 
     pest_ids = list(recent_map.keys())
-    pests = {pest.id: pest for pest in PestInfo.objects.filter(id__in=pest_ids)}
+    #: ⚠️ **健康词条不是病害，不能进预警**（第 213 批）。
+    #:
+    #: 12 个"健康××"词条（`apple_healthy` 等）与病害词条存在**同一张表**里，
+    #: 而识别一张健康叶片同样会写一条 `DetectionHistory`。于是"多人先后识别出健康苹果"
+    #: 会被统计成"**苹果·健康苹果 进入高发期（high）**"—— 实测确实出现在
+    #: `/api/alerts/` 的返回里，而且排在前列。
+    #:
+    #: 这类预警有三重危害：① 内容上是错的（健康不是疫情）；
+    #: ② 它占用 high 级别名额，把真正的病害挤出首页横幅；
+    #: ③ 点进去是"防治方案"，等于劝人给健康植株打药。
+    #:
+    #: 判据用 `english_identifier` 的 `_healthy` 后缀 —— **不看中文名**：
+    #: 中文名将来可能改（"健康苹果"→"苹果（健康）"），而标识符是模型类别名，稳定。
+    #: 已用数据核过：38 条词条里 12 条以 `_healthy` 结尾，且两侧都无歧义。
+    pests = {
+        pest.id: pest
+        for pest in PestInfo.objects.filter(id__in=pest_ids)
+        if not (pest.english_identifier or '').endswith('_healthy')
+    }
     # 一次查完防治方法，避免 N+1
     methods = {}
     from .models import PreventionMethod

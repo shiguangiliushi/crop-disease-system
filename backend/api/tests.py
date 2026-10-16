@@ -13800,3 +13800,84 @@ class AssistantCitationCollapseTests(TestCase):
         self.assertEqual(payload['answer'].count('【1】'), 1)
         # 逐字增量里仍是三处（用户先看到的是过程，收尾才被替换）
         self.assertEqual(body.count('【1】'), 4)
+
+# ============================================================================
+# 智能识别 · 健康叶片的中文兜底（第 213 批）
+# ----------------------------------------------------------------------------
+# 起因：评审意见说"健康叶（无病）兜底直接显示英文 Healthy Plant"。
+# 核实后发现**只说对了一半**：
+#   · 页面第 144 行的绿色提示条早就中文化了（`detect.healthyTitle`）；
+#   · 但「病害信息」卡取的是后端 `detection.disease` —— 零检出时
+#     `identifier='healthy_plant'` 在库里没有对应词条，走通用回落
+#     `'healthy_plant'.replace('_',' ').title()` = **"Healthy Plant"**，
+#     于是同一屏上：中文绿条 + 英文病名 + "暂无详细描述"。
+#
+# ⚠️ 本地库跑不出这个现象：健康图正常情况下会被模型识别成 `Apple___healthy`
+#    这类**模型类名**，从而匹配到库里的「健康苹果」词条。
+#    只有"模型零框检出"才会拿到 `healthy_plant`（子代理查证：路径可达、本地 0 条）。
+#    所以这条测试**必须打桩**，不能指望真图片复现。
+# ============================================================================
+class HealthyPlantFallbackTests(TestCase):
+    """零检出（`healthy_plant`）时不能给中文界面丢英文串。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='healthy_fb', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+
+    def _post_leaf(self):
+        img = SimpleUploadedFile('leaf.jpg', b'\xff\xd8\xff\xe0fake-jpeg', content_type='image/jpeg')
+        return self.client_auth.post('/api/detect/', {'image': img}, format='multipart')
+
+    def test_zero_detection_returns_chinese_healthy_text(self):
+        """零检出：中文名必须是中文，且不该再出现 'Healthy Plant'。"""
+        fake = {
+            'status': 'healthy',
+            'message': '未检测到任何病害，可能是一张健康作物的图片。',
+            'crop_type': '苹果',
+            'confidence': 0.9,
+            'identifier': 'healthy_plant',
+            'annotated_image': None,
+        }
+        with patch.object(AIService, 'predict', return_value=fake):
+            resp = self._post_leaf()
+        self.assertEqual(resp.status_code, 200, resp.data)
+        det = resp.data['data']['detection']
+        self.assertNotIn('Healthy Plant', det['disease'], '中文界面不该出现英文病名')
+        self.assertIn('健康', det['disease'])
+        # 描述与建议要是人话，不能是"词条缺失"式的占位
+        self.assertNotEqual(det['description'], '暂无详细描述')
+        self.assertNotIn('请咨询农业专家获取防治建议', det['prevention'])
+
+    def test_zero_detection_english_side_not_blank(self):
+        """英文侧不能留空 —— 空串会让英文界面的"症状描述"整块空白。"""
+        fake = {
+            'status': 'healthy',
+            'message': 'no disease detected',
+            'crop_type': 'apple',
+            'confidence': 0.9,
+            'identifier': 'healthy_plant',
+            'annotated_image': None,
+        }
+        with patch.object(AIService, 'predict', return_value=fake):
+            resp = self._post_leaf()
+        det = resp.data['data']['detection']
+        self.assertTrue(det['disease_en'], '英文病名不能为空')
+        self.assertTrue(det['description_en'], '英文描述不能为空')
+        self.assertTrue(det['prevention_en'], '英文建议不能为空')
+
+    def test_unmatched_disease_still_falls_back_with_trace(self):
+        """真正匹配不上的类名仍走通用回落（本次改动不该顺手改掉它）。"""
+        fake = {
+            'status': 'success',
+            'message': 'ok',
+            'confidence': 0.8,
+            'identifier': 'some_unknown_pest',
+            'annotated_image': None,
+        }
+        with patch.object(AIService, 'predict', return_value=fake):
+            resp = self._post_leaf()
+        det = resp.data['data']['detection']
+        self.assertEqual(det['disease'], 'Some Unknown Pest')
+        self.assertEqual(det['description'], '暂无详细描述')

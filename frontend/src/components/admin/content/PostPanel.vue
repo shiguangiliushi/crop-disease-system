@@ -1312,7 +1312,12 @@ onMounted(loadAll);
           <span><i class="fas fa-layer-group"></i> {{ forumPreviewPost_.board?.name || '' }}</span>
           <span><i class="fas fa-clock"></i> {{ formatTime(forumPreviewPost_.created_at, 'YYYY-MM-DD HH:mm') }}</span>
         </p>
-        <div class="preview-content" v-html="forumPreviewPost_.content || t('forumAdmin.noContent')"></div>
+        <!-- ⚠️ 必须净化后再进 v-html —— 与上面"审核队列预览"（:1302）同一条规矩。
+             这里是**帖子管理**的预览弹窗，预览的同样是用户写的正文（存储型 XSS 面）。
+             第 91 批给审核预览加了 `sanitizeRichText`，却**漏了这一处**：
+             两处预览长得一样、代码却不一样，看代码时很容易以为"已经处理过了"。 -->
+        <div class="preview-content"
+             v-html="sanitizeRichText(localizedField(forumPreviewPost_, 'content')) || t('forumAdmin.noContent')"></div>
       </div>
       <template #footer>
         <el-button @click="forumPreviewVisible = false">{{ t('common.close') }}</el-button>

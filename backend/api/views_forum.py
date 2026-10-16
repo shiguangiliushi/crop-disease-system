@@ -108,7 +108,15 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
 
     def get_queryset(self):  # 定义获取查询集方法
         # 基础查询
-        queryset = ForumBoard.objects.all()  # 获取所有版块
+        #
+        # ⚠️ 第 213 批：`active_post_count` 是给 `ForumBoardSerializer.get_post_count` 用的
+        #    实时统计（只数未删除的帖子，口径同 `Post.active`）。
+        #    库里的 `ForumBoard.post_count` 靠发帖 +1 / 删帖 -1 维护，任何绕过 `save()`
+        #    的操作都会让它只涨不跌 —— 实测已漂移到 239，真实只有 7。
+        #    预注解一次，避免序列化时每个版块各查一次（版块少，但没必要 N+1）。
+        queryset = ForumBoard.objects.annotate(
+            active_post_count=Count('posts', filter=Q(posts__is_deleted=False)),
+        )
 
         # 版块维护者（BROADCAST 能力）与版主能看到停用的版块；其余人只看启用的。
         # 第 124 批：管理员那部分改为 has_capability(CAP_BROADCAST)，判定统一收口；

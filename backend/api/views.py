@@ -881,8 +881,29 @@ class DetectView(APIView):
                         description = '暂无详细描述'
                         prevention = '请咨询农业专家获取防治建议'
                         disease_name_en = disease_name
-                        description_en = ''
-                        prevention_en = ''
+                        #: ⚠️ 英文侧不能留空：界面按 `description_en` 取值，
+                        #: 空串会让英文界面下的"症状描述"整块空白（第 213 批补）。
+                        description_en = 'No detailed description yet'
+                        prevention_en = 'Please consult a local agricultural expert for advice'
+
+                    # ⚠️ 第 213 批：**健康叶片要特判，不能走上面的通用回落**。
+                    #    模型零检出时返回 `identifier='healthy_plant'`，而库里没有这个
+                    #    `english_identifier` → 走回落 → `'healthy_plant'.title()` = **"Healthy Plant"**。
+                    #    于是健康叶页面上同时出现：中文绿条「未检测到病害，叶片大概率健康」
+                    #    ＋「病害信息」卡里的英文 "Healthy Plant" ＋ "暂无详细描述"。
+                    #    （第 144 行的绿条早就中文化了，卡片这处一直漏着 —— 用户看到的是后者。）
+                    #
+                    #    英文界面下走 `disease_name_en`，中文界面走 `disease_name`；
+                    #    描述与建议也换成人话，不要让它看起来像"词条缺失"。
+                    if disease_identifier == 'healthy_plant':
+                        disease_name = '未检测到明显病斑，植株看起来健康'
+                        disease_name_en = 'No obvious lesions detected — the plant looks healthy'
+                        description = '模型未在图片中检出病害特征。可继续观察，注意通风与合理水肥。'
+                        description_en = ('The model found no disease features in this image. '
+                                          'Keep monitoring; maintain ventilation and balanced irrigation.')
+                        prevention = '无需用药。保持合理密植、及时通风降湿，发现异常叶片再复查。'
+                        prevention_en = ('No treatment needed. Keep sensible spacing and ventilation; '
+                                         're-check if abnormal leaves appear.')
 
                     # 保存带标注的图片
                     annotated_image_path = None

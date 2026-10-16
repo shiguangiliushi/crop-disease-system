@@ -338,7 +338,20 @@ api_urlpatterns = [
     path('forums/posts/bulk-review/', PostViewSet.as_view({'post': 'bulk_review'}),
          name='post-bulk-review'),
     path('forums/posts/<int:post_pk>/', include(posts_router.urls)),
-    path('forums/posts/hot/', PostViewSet.as_view({'get': 'hot_posts'}), name='hot-posts'),
+    # ⚠️ 第 213 批：这里原来还有一行
+    #     `path('forums/posts/hot/', PostViewSet.as_view({'get': 'hot_posts'}), name='hot-posts')`
+    #     —— **它永远不会执行，而且本身是坏的**：`PostViewSet` 里只有 `hot()`，
+    #     没有 `hot_posts()`（`hot_posts` 只是 `hot()` 内部的局部变量名）。
+    #     之所以没炸过，是因为 `resolve('/api/forums/posts/hot/')` 命中的是
+    #     上面 `include(forum_router.urls)` 注册的 `post-hot`（即 `hot()`），
+    #     这一行排在它后面，永远轮不到。**一旦有人调整匹配顺序，它就是 500。**
+    #
+    #     所以这里**故意不再注册**：`hot` 是 router 的 `@action`，
+    #     `forums/posts/hot/` 由 router 自己提供（实测 200，limit=5 → 返回 5 条）。
+    #     ⚠️ 与上面 `bulk-review` 的区别：`bulk-review` **必须**显式注册，
+    #     因为它会被下一行嵌套 `posts_router`（只注册了 comments）抢掉匹配 → 405；
+    #     而 `hot/` 不在 `posts_router` 的子路径里，嵌套 include 抢不到它。
+    #     两处长得像、结论相反 —— 改动前先 `resolve()` 看一眼，别靠类比。
 
     # 管理员数据看板（第 39 批）
     path('admin/dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),

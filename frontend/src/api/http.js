@@ -12,6 +12,7 @@
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
 import { t, locale } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言；第 197 批：请求带语言头
+import { pickReadableMessage } from '@/utils/readableError';  // 第 213 批：英文技术文案不进用户界面
 
 // VITE_API_BASE_URL 形如 http://127.0.0.1:8000/api，已包含 /api 前缀
 export const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
@@ -116,6 +117,18 @@ export function toAbsoluteMediaUrl(path) {
 
 /**
  * 把接口错误整理成可读文案
+ *
+ * ⚠️ 第 213 批：**英文技术文案不再直出给用户**。
+ * 后端的 `detail` / `error` 有两种来源：我们自己写的中文提示（"未检测到图片文件"），
+ * 以及 DRF / Django 的英文技术文案（"Authentication credentials were not provided."、
+ * "Invalid token."、"Expected a list of items but got type \"dict\"."）。
+ * 后者弹给农户等于没说、还像报错 —— 而本函数被约 20 处调用，
+ * 是**唯一**的统一出口，所以在这里收口最省事。
+ *
+ * 判据复用 `pickReadableMessage`（含中日韩字符才用原文，否则回落友好文案），
+ * 它早就存在、此前只接了 `EditPostView` 一处（同一条意见的另一半）。
+ * 技术原文仍由调用方 `console.error` 留在控制台，排查不受影响。
+ *
  * @param {object} error axios 错误对象
  * @param {string} fallback 兜底文案（调用方一般传 t('msg.xxx')）
  * @param {object} labels 字段名 → 显示名映射（由调用方用 t() 构造，见 api/news.js）
@@ -127,15 +140,16 @@ export function formatApiError(error, fallback = '', labels = {}) {
   if (!data) {
     return error?.message || fallbackText;
   }
-  if (typeof data === 'string') return data;
-  if (data.detail) return data.detail;
-  if (data.error) return data.error;
+  if (typeof data === 'string') return pickReadableMessage(data, fallbackText);
+  if (data.detail) return pickReadableMessage(data.detail, fallbackText);
+  if (data.error) return pickReadableMessage(data.error, fallbackText);
 
   const messages = [];
   Object.entries(data).forEach(([field, value]) => {
     const label = labels[field] || field;
     const text = Array.isArray(value) ? value.join(' / ') : String(value);
-    messages.push(`${label}: ${text}`);
+    //: 字段级错误也过一次同样的过滤器 —— Django 的字段报错同样是英文
+    messages.push(`${label}: ${pickReadableMessage(text, t('msg.operationFailedRetry'))}`);
   });
 
   return messages.length ? messages.join('\n') : fallbackText;

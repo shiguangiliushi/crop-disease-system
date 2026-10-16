@@ -65,6 +65,28 @@ class ForumBoard(models.Model):
         self.today_posts += 1  # 今日发帖数加1
         self.save(update_fields=['today_posts', 'last_updated_date'])  # 保存更新字段
 
+    def recompute_post_count(self, *, save: bool = True) -> int:
+        """按实际帖子数**重算** `post_count`（第 213 批）。
+
+        ## 为什么需要它
+
+        `post_count` 是**冗余缓存字段**：发帖时 `F('post_count') + 1`、删帖时 `- 1`
+        （见本文件 `Post.save` / 软删除路径）。任何**绕过 `save()`** 的操作
+        —— 批量删、数据导入、直接改库、历史迁移 —— 都会让它单向漂移。
+        实测本机已漂到 **239**，而真实只有 **7** 条。
+
+        接口层已改为实时统计（`ForumBoardSerializer.get_post_count`），
+        所以前端看不到错数；但 **Django admin 与任何直读该字段的地方**仍会显示。
+        这个方法用于把缓存值拉回真实值。
+
+        ⚠️ 只**重算**，不删改任何帖子 —— 计数是派生数据，重算永远是安全的。
+        """
+        real = self.posts.filter(is_deleted=False).count()
+        if save and self.post_count != real:
+            ForumBoard.objects.filter(pk=self.pk).update(post_count=real)
+            self.post_count = real
+        return real
+
 
 class Post(TranslatableContentMixin):
     """帖子"""
