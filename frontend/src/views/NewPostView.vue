@@ -203,6 +203,39 @@
             <button type="button" class="draft-clear" :disabled="!draftSavedAt" @click="discardDraft">
               <i class="fas fa-trash"></i> {{ t('post.draftClear') }}
             </button>
+
+            <!-- ⚠️ 第 215 批：**服务端草稿**。
+                 系统里有两套草稿，这套（编辑页每 30 秒 `is_draft: true` 存进库里的）
+                 此前只能在 `/forum/drafts` 删 —— 用户在这一页想放弃却没有入口。 -->
+            <div v-if="serverDrafts.length" class="server-drafts">
+              <p class="server-drafts-head">
+                <i class="fas fa-cloud"></i>
+                {{ t('post.serverDraftsTitle', { count: serverDrafts.length }) }}
+              </p>
+              <ul class="server-drafts-list">
+                <li v-for="item in serverDrafts" :key="item.id" class="server-draft-item">
+                  <div class="server-draft-main">
+                    <span class="server-draft-title">{{ item.title || t('drafts.untitled') }}</span>
+                    <span class="server-draft-meta">
+                      {{ formatTime(item.updated_at || item.created_at, 'YYYY-MM-DD HH:mm') }}
+                    </span>
+                  </div>
+                  <div class="server-draft-actions">
+                    <button type="button" class="server-draft-btn" @click="continueServerDraft(item)">
+                      {{ t('post.serverDraftContinue') }}
+                    </button>
+                    <button
+                      type="button"
+                      class="server-draft-btn is-danger"
+                      @click="discardServerDraft(item)"
+                    >
+                      {{ t('post.serverDraftDiscard') }}
+                    </button>
+                  </div>
+                </li>
+              </ul>
+              <p class="server-drafts-hint">{{ t('post.serverDraftsHint') }}</p>
+            </div>
           </div>
         </section>
       </aside>
@@ -231,12 +264,17 @@ import { useRouter, useRoute } from 'vue-router';
 import PestTagPicker from '@/components/PestTagPicker.vue';  // 第 168 批：病害标签选择器
 import { useAuthStore } from '@/stores/auth';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { getForumBoards, createPost } from '@/api/forum';
+import { getForumBoards, createPost, getPosts, deletePost } from '@/api/forum';
+//: ⚠️ 第 215 批：`getPosts` / `deletePost` 是给"服务端草稿"用的 ——
+//: 编辑页每 30 秒会把草稿存到**服务端**（`status='draft'`），
+//: 而此前只能在 `/forum/drafts` 那个页面删。用户的原话是
+//: "在发帖时如果不想编辑内容，就不能及时删除，还得去个人资料那里删"。
 import { fetchSiteConfig } from '@/api/content';  // 第 38 批：发帖审核策略
 import RichTextEditor from '@/components/RichTextEditor.vue';
 import { useI18n } from '@/i18n';
 import { useLocalized } from '@/utils/localized';  // 第 55 批：多语言（第 72 批起也用于版块名等内容数据）
 import { useUnsavedChanges } from '@/composables/useUnsavedChanges';  // 第 97 批：离开前提醒
+import { formatTime } from '@/utils/date';  // 第 215 批：服务端草稿列表要显示"最后修改时间"
 
 const DRAFT_KEY = 'post_draft_new';
 
@@ -312,16 +350,58 @@ export default {
     /** 后端存的是 Font Awesome 名字（bug / seedling / flask） */
     const boardIconClass = (icon) => `fas fa-${(icon || 'comments').replace(/^fa-/, '')}`;
 
+    /**
+     * 第 215 批：**按"去标签后的字数"校验**，而不是按 HTML 字符串长度。
+     *
+     * ## 为什么原来的校验等于没有
+     *
+     * 原来写的是 Element Plus 的 `{ min: 5 }` / `{ min: 10 }` —— 它按**字符串长度**算。
+     * 标题是普通字符串，所以那两条一直生效；但**正文是富文本编辑器给的 HTML**
+     * （`<p></p>` 就有 7 个字符，`<p><br></p>` 11 个），于是：
+     *
+     * ```
+     * 正文留空 → content = '<p><br></p>'（11 字符）→ `min: 10` **通过**
+     * ```
+     *
+     * 用户点"发布"能发出去一篇**空正文**。这正是用户说的
+     * "标题和正文都必须要有最低的字数限制"。
+     *
+     * 这里改成自定义校验：先剥掉标签、去掉空白与 `&nbsp;`，再数字数。
+     */
+    const plainLength = (html) => String(html || '')
+      .replace(/<[^>]*>/g, '')        // 去标签
+      .replace(/&nbsp;/gi, ' ')       // 富文本常见的占位空格
+      .replace(/\s+/g, '')            // 空白不计入字数
+      .length;
+
     const rules = {
       // 第 83 批：校验文案接入 i18n（此前写死中文，英文界面下报错仍是中文）
       board: [{ required: true, message: t('forum.boardRequired'), trigger: 'change' }],
       title: [
-        { required: true, message: t('forum.titleRequired'), trigger: 'blur' },
-        { min: 5, max: 100, message: t('forum.titleLength'), trigger: 'blur' },
+        { required: true, message: t('forum.titleRequired'), trigger: 'change' },
+        //: ⚠️ `max: 100` 用 change 触发，保证输入过程中就能看到超长提示
+        { max: 100, message: t('forum.titleLength'), trigger: 'change' },
+        {
+          //: ⚠️ **trigger 必须是 `change`，不能只写 `blur`**：实测只挂 blur 时，
+          //:    输入后不点别处就不会校验，用户看不到任何提示（第二版才改对）。
+          validator: (_rule, value, callback) => (
+            plainLength(value) >= 4 ? callback() : callback(new Error(t('post.titleTooShort')))
+          ),
+          trigger: 'change',
+        },
       ],
       content: [
-        { required: true, message: t('forum.contentRequired'), trigger: 'blur' },
-        { min: 10, message: t('forum.contentMin'), trigger: 'blur' },
+        { required: true, message: t('forum.contentRequired'), trigger: 'change' },
+        //: ⚠️ 删掉了原来的 `{ min: 10 }` —— Element Plus 的 `min` 量的是**字符串长度**，
+        //: 而正文是富文本给的 HTML：`<p><br></p>` 就有 11 个字符，`min: 10` **直接放行**。
+        //: 也就是说"正文留空也能发布"，这正是用户反馈的问题。
+        //: 换成按**去标签后的字数**判断（`plainLength`），并且用 `change` 触发。
+        {
+          validator: (_rule, value, callback) => (
+            plainLength(value) >= 10 ? callback() : callback(new Error(t('post.bodyTooShort')))
+          ),
+          trigger: 'change',
+        },
       ],
     };
 
@@ -429,12 +509,95 @@ export default {
       ElMessage.success(t('post.draftCleared'));
     };
 
+    /* ========================================================================
+     * 第 215 批：**服务端草稿**（在发帖页也能删）
+     * ------------------------------------------------------------------------
+     * 系统里有**两套**草稿，此前只在各自的页面能管：
+     *   ① 本地草稿 —— 本页 localStorage（`post_draft_new`），上面那个按钮管；
+     *   ② 服务端草稿 —— 编辑页每 30 秒 `is_draft: true` 存进库里（`status='draft'`），
+     *      **只能在 `/forum/drafts` 删**。
+     *
+     * 用户的原话："在发帖时如果不想编辑内容，就不能及时删除，还得去个人资料那里删。"
+     * 于是这一页也把服务端草稿列出来，并提供「继续编辑 / 放弃删除」。
+     *
+     * ⚠️ 查询条件与 `/forum/drafts` 页**完全一致**（`status=draft` + `author=自己`）——
+     * 后端的可见性规则保证只有作者本人能查到自己的草稿，前端不需要再做过滤。
+     * 两处口径不一样的话，会出现"草稿页看得到、发帖页看不到"这种更难查的怪象。
+     * ====================================================================== */
+    const serverDrafts = ref([]);
+    const serverDraftsLoading = ref(false);
+
+    const fetchServerDrafts = async () => {
+      const myId = authStore.user?.id;
+      if (!myId) return;   // 未登录不查（这个页面本身要求登录，只是别在竞态里空跑）
+      serverDraftsLoading.value = true;
+      try {
+        const response = await getPosts({ status: 'draft', author: myId, page_size: 20 });
+        serverDrafts.value = Array.isArray(response) ? response : (response?.results || []);
+      } catch (error) {
+        //: ⚠️ 取不到就**不显示这一块**（而不是显示"0 条草稿"）——
+        //: 把失败装扮成合法的空值，正是第 215 批在敏感词那张卡上修掉的毛病。
+        console.warn('[new-post] 服务端草稿获取失败:', error?.message || error);
+        serverDrafts.value = [];
+      } finally {
+        serverDraftsLoading.value = false;
+      }
+    };
+
+    /** 继续编辑这条草稿（跳编辑页，那边有完整的草稿能力） */
+    const continueServerDraft = (draft) => {
+      router.push({ name: 'edit-post', params: { id: draft.id } });
+    };
+
+    /** 放弃并**真删**这条服务端草稿（带二次确认 —— 删了不可逆） */
+    const discardServerDraft = async (draft) => {
+      try {
+        await ElMessageBox.confirm(
+          t('drafts.discardConfirm', { title: draft.title || t('drafts.untitled') }),
+          t('drafts.discardTitle'),
+          { type: 'warning', confirmButtonText: t('drafts.discard'),
+            cancelButtonText: t('common.cancel') },
+        );
+      } catch {
+        return;   // 用户取消
+      }
+      try {
+        await deletePost(draft.id);
+        serverDrafts.value = serverDrafts.value.filter((item) => item.id !== draft.id);
+        ElMessage.success(t('drafts.discarded'));
+      } catch (error) {
+        console.error('[new-post] 删除服务端草稿失败:', error);
+        ElMessage.error(t('drafts.discardFailed'));
+      }
+    };
+
     // 输入变化后 800ms 写入草稿
     watch(
       () => [form.value.board, form.value.title, form.value.content],
       () => {
         if (draftTimer) clearTimeout(draftTimer);
         draftTimer = setTimeout(writeDraft, 800);
+      },
+    );
+
+    // ========================================================================
+    // 第 215 批：**手动触发正文校验**
+    // ------------------------------------------------------------------------
+    // 为什么必须手动调：Element Plus 的 `trigger: 'change'` 不是"监听 v-model 变化"，
+    // 而是**等子组件主动 emit `el.form.change`**（`el-input` 这些内置组件会 emit）。
+    // 而正文用的是 `RichTextEditor`（自定义 Quill 封装），**它不会 emit 这个事件** ——
+    // 于是 `rules.content` 里的规则**永远不触发**，用户把正文留空也看不到任何提示。
+    //
+    // 实测证据：正文表单项带 `is-required`（说明 `prop` 是通的）却从不出现 `is-error`；
+    // 而标题（内置 `el-input`）填 1 个字就正常报错。
+    //
+    // 这里用 watch 手动调 `validateField('content')` —— 对自定义表单组件来说这是标准解法。
+    // ========================================================================
+    watch(
+      () => form.value.content,
+      () => {
+        //: `validateField` 在字段从未挂载时会 reject，用 catch 吞掉即可（不是错误）
+        postForm.value?.validateField('content').catch(() => {});
       },
     );
 
@@ -567,6 +730,9 @@ export default {
       applyAskPrefill();   // 第 167 批：识别结果「发帖求助」带过来的病名/图片/症状
       await Promise.all([fetchBoards(), loadSiteConfig()]);
       maybeRestoreDraft();
+      //: 第 215 批：同时看看有没有**服务端草稿**（编辑页 30 秒自动存的那种）。
+      //: 此前它只能在 `/forum/drafts` 删，用户到这一页想放弃却没有入口。
+      fetchServerDrafts();
     });
 
     // ========================================================================
@@ -616,12 +782,18 @@ export default {
       resetForm,
       cancel,
       discardDraft,
+      // 第 215 批：服务端草稿（在发帖页也能继续编辑 / 放弃删除）
+      serverDrafts,
+      serverDraftsLoading,
+      continueServerDraft,
+      discardServerDraft,
       // 第 86 批：可选英文版本的展开状态
       showEnglish,
       // 第 97 批：提交成功后清掉"脏"标记
       markClean,
       t,
       localizedField,
+      formatTime,
     };
   },
 };
@@ -884,6 +1056,101 @@ export default {
 .draft-clear:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ══ 第 215 批：服务端草稿列表 ═══════════════════════════════════════════ */
+.server-drafts {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.server-drafts-head {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-600);
+}
+
+.server-drafts-head i {
+  margin-right: 4px;
+  color: var(--brand-600);
+}
+
+.server-drafts-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.server-draft-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--surface-2, #f7f9f8);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.server-draft-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;              /* 让里面的长标题能正常省略 */
+}
+
+.server-draft-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-draft-meta {
+  font-size: 11.5px;
+  color: var(--ink-400, #9aa4a0);
+}
+
+.server-draft-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.server-draft-btn {
+  /* 触控目标 ≥ 32px：这是侧栏里的小按钮，但也不能小到点不中 */
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-600);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.server-draft-btn:hover {
+  border-color: var(--brand-300);
+  color: var(--brand-700);
+}
+
+.server-draft-btn.is-danger:hover {
+  border-color: #f0a9a9;
+  color: #b91c1c;
+}
+
+.server-drafts-hint {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-400, #9aa4a0);
 }
 
 @media (max-width: 1080px) {

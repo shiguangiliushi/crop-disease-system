@@ -799,7 +799,13 @@ onMounted(loadAll);
             <div class="stat-tile-label">{{ t('review.statPublished') }}</div>
           </div>
         </div>
-        <div class="stat-tile">
+        <!-- ⚠️ 第 215 批：这张卡**必须和侧栏（:922）、加载（:267）用同一个守卫**。
+             用户反馈"信息编辑员进内容管理，敏感词条看不到"——
+             根因就是这里漏了 `v-if`：编辑员没有 BROADCAST，请求 `/api/sensitive-words/`
+             会被 403，而卡片照旧渲染，显示成一个**永远为 0 的"敏感词条"**。
+             那不是"数量是 0"，是"根本没权限取" —— 看起来却像"词库是空的"。
+             （与第 207/208 批修的"来源虚报"是同一类毛病：**把失败装扮成合法的空值**。） -->
+        <div v-if="canManageWords" class="stat-tile">
           <span class="stat-tile-icon"><i class="fas fa-filter"></i></span>
           <div>
             <div class="stat-tile-value">{{ words.length }}</div>

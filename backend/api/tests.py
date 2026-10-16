@@ -250,7 +250,7 @@ class NewsVisibilityTests(TestCase):
             '/api/news/',
             {
                 'title': self.published.title,
-                'content': '重复的新正文',
+                'content': '重复的新正文，用于去重测试的足够长内容',
                 'category': 'notice',
                 'is_published': 'true',
             },
@@ -267,7 +267,7 @@ class NewsVisibilityTests(TestCase):
             '/api/news/',
             {
                 'title': f'  {self.published.title.upper()}  ',
-                'content': '正文',
+                'content': '帖子正文内容示例文字，超过十个字',
                 'category': 'notice',
             },
             format='multipart',
@@ -279,12 +279,12 @@ class NewsVisibilityTests(TestCase):
         """编辑时排除自身，因此"只改正文不改标题"不能误报重复"""
         response = self.admin_client.patch(
             f'/api/news/{self.published.id}/',
-            {'title': self.published.title, 'content': '改过的正文'},
+            {'title': self.published.title, 'content': '改过的正文，这里是修改后的内容'},
             format='multipart',
         )
         self.assertEqual(response.status_code, 200)
         self.published.refresh_from_db()
-        self.assertEqual(self.published.content, '改过的正文')
+        self.assertEqual(self.published.content, '改过的正文，这里是修改后的内容')
 
     def test_renaming_to_existing_title_is_rejected(self):
         response = self.admin_client.patch(
@@ -313,13 +313,13 @@ class NewsVisibilityTests(TestCase):
 
         response = self.admin_client.patch(
             f'/api/news/{second.id}/',
-            {'title': '重复标题新闻', 'content': '改过的正文', 'is_published': 'false'},
+            {'title': '重复标题新闻', 'content': '改过的正文，这里是修改后的内容', 'is_published': 'false'},
             format='multipart',
         )
         self.assertEqual(response.status_code, 200)
 
         second.refresh_from_db()
-        self.assertEqual(second.content, '改过的正文')
+        self.assertEqual(second.content, '改过的正文，这里是修改后的内容')
         self.assertFalse(second.is_published)
 
     def test_patch_without_image_field_keeps_cover_and_content(self):
@@ -337,13 +337,13 @@ class NewsVisibilityTests(TestCase):
 
         response = self.admin_client.patch(
             f'/api/news/{self.published.id}/',
-            {'title': self.published.title, 'content': '只改正文', 'tags': '小麦,病害'},
+            {'title': self.published.title, 'content': '只改正文，标题保持不变的内容', 'tags': '小麦,病害'},
             format='multipart',
         )
         self.assertEqual(response.status_code, 200)
 
         self.published.refresh_from_db()
-        self.assertEqual(self.published.content, '只改正文')
+        self.assertEqual(self.published.content, '只改正文，标题保持不变的内容')
         self.assertTrue(self.published.image)
         self.assertEqual(self.published.tags, '小麦,病害')
 
@@ -719,7 +719,7 @@ class ForumFeatureTests(TestCase):
         self.admin_client.force_authenticate(user=self.admin)
 
     def _create(self, client, **overrides):
-        payload = {'board_id': self.board.id, 'title': '测试帖子', 'content': '正文', **overrides}
+        payload = {'board_id': self.board.id, 'title': '测试帖子', 'content': '帖子正文内容示例文字，超过十个字', **overrides}
         return client.post('/api/forums/posts/', payload, format='json')
 
     @staticmethod
@@ -749,7 +749,7 @@ class ForumFeatureTests(TestCase):
         post_id = self._create(self.author_client, is_draft=True).data['id']
         response = self.author_client.patch(
             f'/api/forums/posts/{post_id}/',
-            {'board_id': self.board.id, 'title': '测试帖子', 'content': '正文', 'is_draft': False},
+            {'board_id': self.board.id, 'title': '测试帖子', 'content': '帖子正文内容示例文字，超过十个字', 'is_draft': False},
             format='json',
         )
         self.assertEqual(response.status_code, 200)
@@ -795,12 +795,12 @@ class ForumFeatureTests(TestCase):
         # 版主设置后，作者编辑正文不应被"不能改置顶"的规则卡住，且置顶保持
         edited = self.author_client.patch(
             f'/api/forums/posts/{post_id}/',
-            {'board_id': self.board.id, 'title': '测试帖子', 'content': '改过', 'is_pinned': False},
+            {'board_id': self.board.id, 'title': '测试帖子', 'content': '改过之后的新正文内容', 'is_pinned': False},
             format='json',
         )
         self.assertEqual(edited.status_code, 200)
         post.refresh_from_db()
-        self.assertEqual(post.content, '改过')
+        self.assertEqual(post.content, '改过之后的新正文内容')
         self.assertTrue(post.is_pinned)
 
     # ---------- 收藏 ----------
@@ -841,8 +841,8 @@ class ForumFeatureTests(TestCase):
     # ---------- 列表筛选 / 排序（此前是装饰） ----------
 
     def test_list_supports_ordering_and_essence_filter(self):
-        first = self._create(self.author_client, title='浏览多').data['id']
-        second = self._create(self.author_client, title='浏览少').data['id']
+        first = self._create(self.author_client, title='浏览量多的帖子').data['id']
+        second = self._create(self.author_client, title='浏览量少的帖子').data['id']
         Post.objects.filter(id=first).update(view_count=100)
         Post.objects.filter(id=second).update(view_count=1)
 
@@ -1574,7 +1574,7 @@ class NotificationTests(TestCase):
     def test_self_reply_does_not_notify(self):
         self.author_client.post(
             f'/api/forums/posts/{self.post.id}/comments/',
-            {'content': '自己补充一句'},
+            {'content': '自己补充一句，凑够十个字以上'},
             format='json',
         )
         self.assertEqual(self._notifications().count(), 0, '自己回复自己不该产生通知')
@@ -1671,14 +1671,14 @@ class AnnouncementTests(TestCase):
 
     def test_non_admin_cannot_publish(self):
         response = self.user_client.post(
-            '/api/announcements/', {'title': '我也发个公告', 'content': 'x'}, format='json',
+            '/api/announcements/', {'title': '我也发个公告', 'content': '帖子正文内容示例文字'}, format='json',
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(Announcement.objects.count(), 0)
 
     def test_public_can_read_active_announcements(self):
         self.admin_client.post(
-            '/api/announcements/', {'title': '公开公告', 'content': '内容'}, format='json',
+            '/api/announcements/', {'title': '公开公告', 'content': '帖子内容示例文字，这里补足十个字'}, format='json',
         )
         response = self.guest.get('/api/announcements/')
         self.assertEqual(response.status_code, 200)
@@ -1717,7 +1717,7 @@ class AnnouncementTests(TestCase):
     def test_deleting_announcement_removes_its_notifications(self):
         """删公告要连带清掉扇出的通知（否则用户点进去什么都没有）"""
         response = self.admin_client.post(
-            '/api/announcements/', {'title': '临时公告', 'content': 'x'}, format='json',
+            '/api/announcements/', {'title': '临时公告', 'content': '帖子正文内容示例文字'}, format='json',
         )
         announcement_id = response.data['id']
         # 两个账号各一条：普通用户 + 发布人自己（第 78 批起发布人也留副本）
@@ -1770,7 +1770,7 @@ class SensitiveWordTests(TestCase):
     def test_post_with_sensitive_title_rejected(self):
         response = self.client_user.post(
             '/api/forums/posts/',
-            {'board_id': self.board.id, 'title': '代开发票找我', 'content': '<p>正常内容</p>'},
+            {'board_id': self.board.id, 'title': '代开发票找我', 'content': '<p>正常内容，说清楚症状与发生时间</p>'},
             format='json',
         )
         self.assertEqual(response.status_code, 400)
@@ -1780,7 +1780,7 @@ class SensitiveWordTests(TestCase):
     def test_post_with_sensitive_content_rejected(self):
         response = self.client_user.post(
             '/api/forums/posts/',
-            {'board_id': self.board.id, 'title': '正常标题', 'content': '<p>想了解的加微信</p>'},
+            {'board_id': self.board.id, 'title': '正常标题', 'content': '<p>想了解的加微信详聊，价格从优</p>'},
             format='json',
         )
         self.assertEqual(response.status_code, 400)
@@ -1789,7 +1789,7 @@ class SensitiveWordTests(TestCase):
     def test_clean_post_accepted(self):
         response = self.client_user.post(
             '/api/forums/posts/',
-            {'board_id': self.board.id, 'title': '番茄叶片有褐斑怎么办', 'content': '<p>求助各位</p>'},
+            {'board_id': self.board.id, 'title': '番茄叶片有褐斑怎么办', 'content': '<p>求助各位：叶片发黄卷曲，该怎么处理</p>'},
             format='json',
         )
         self.assertEqual(response.status_code, 201)
@@ -1801,7 +1801,7 @@ class SensitiveWordTests(TestCase):
         )
         response = self.client_user.post(
             f'/api/forums/posts/{post.id}/comments/',
-            {'content': '加微信详聊'},
+            {'content': '加微信详聊，价格从优'},
             format='json',
         )
         self.assertEqual(response.status_code, 400)
@@ -1852,7 +1852,7 @@ class PostReviewTests(TestCase):
     def _create_post(self, client=None, title='待审核的帖子'):
         return (client or self.client_author).post(
             '/api/forums/posts/',
-            {'board_id': self.board.id, 'title': title, 'content': '<p>内容内容内容</p>'},
+            {'board_id': self.board.id, 'title': title, 'content': '<p>内容内容内容，补充到十个字以上</p>'},
             format='json',
         )
 
@@ -1990,7 +1990,7 @@ class NewsScheduleTests(TestCase):
         target = (timezone.now() + timezone.timedelta(days=2)).isoformat()
         response = self.client_admin.post(
             '/api/news/',
-            {'title': '后天发布的新闻', 'content': '正文内容够长了', 'category': 'notice',
+            {'title': '后天发布的新闻', 'content': '正文内容够长了，超过十个字', 'category': 'notice',
              'is_published': True, 'published_at': target},
             format='json',
         )
@@ -2568,7 +2568,7 @@ class DirectMessageTests(TestCase):
 
     def test_requires_login(self):
         self.assertIn(self.guest.get('/api/messages/').status_code, (401, 403))
-        self.assertIn(self.guest.post(f'/api/messages/with/{self.bob.id}/', {'content': 'x'}).status_code, (401, 403))
+        self.assertIn(self.guest.post(f'/api/messages/with/{self.bob.id}/', {'content': '帖子正文内容示例文字'}).status_code, (401, 403))
 
 
 class PointSystemTests(TestCase):
@@ -2612,7 +2612,7 @@ class PointSystemTests(TestCase):
     def test_post_and_comment_award_points(self):
         response = self.client_user.post(
             '/api/forums/posts/',
-            {'board_id': self.board.id, 'title': '积分测试帖', 'content': '<p>内容足够长</p>'},
+            {'board_id': self.board.id, 'title': '积分测试帖', 'content': '<p>内容足够长，够十个字了</p>'},
             format='json',
         )
         self.assertEqual(response.status_code, 201)
@@ -2621,7 +2621,7 @@ class PointSystemTests(TestCase):
 
         post_id = response.data['id']
         self.client_other.post(
-            f'/api/forums/posts/{post_id}/comments/', {'content': '我来评论一下'}, format='json',
+            f'/api/forums/posts/{post_id}/comments/', {'content': '我来评论一下这条帖子'}, format='json',
         )
         self.other.refresh_from_db()
         self.assertEqual(self.other.points, 2, '评论 +2')
@@ -6598,13 +6598,13 @@ class CalendarTests(TestCase):
 
     def test_create_validates_input(self):
         bad_month = self.client_admin.post(
-            '/api/calendar/tasks/', {'crop_type': '番茄', 'month': 13, 'title': 'x'}, format='json')
+            '/api/calendar/tasks/', {'crop_type': '番茄', 'month': 13, 'title': '帖子正文内容示例文字'}, format='json')
         self.assertEqual(bad_month.status_code, 400)
         no_title = self.client_admin.post(
             '/api/calendar/tasks/', {'crop_type': '番茄', 'month': 5, 'title': '  '}, format='json')
         self.assertEqual(no_title.status_code, 400)
         no_crop = self.client_admin.post(
-            '/api/calendar/tasks/', {'crop_type': '', 'month': 5, 'title': 'x'}, format='json')
+            '/api/calendar/tasks/', {'crop_type': '', 'month': 5, 'title': '帖子正文内容示例文字'}, format='json')
         self.assertEqual(no_crop.status_code, 400)
 
     def test_duplicate_task_is_rejected(self):
@@ -6620,13 +6620,13 @@ class CalendarTests(TestCase):
     def test_normal_user_cannot_write(self):
         self.assertEqual(
             self.client_user.post('/api/calendar/tasks/',
-                                  {'crop_type': '番茄', 'month': 5, 'title': 'x'},
+                                  {'crop_type': '番茄', 'month': 5, 'title': '帖子正文内容示例文字'},
                                   format='json').status_code,
             403,
         )
         task = CalendarTask.objects.first()
         self.assertEqual(
-            self.client_user.patch(f'/api/calendar/tasks/{task.id}/', {'title': 'x'}, format='json').status_code,
+            self.client_user.patch(f'/api/calendar/tasks/{task.id}/', {'title': '帖子正文内容示例文字'}, format='json').status_code,
             403,
         )
         self.assertEqual(self.client_user.delete(f'/api/calendar/tasks/{task.id}/').status_code, 403)
@@ -6939,7 +6939,7 @@ class ExpertConsultTests(TestCase):
     def test_requires_login(self):
         guest = APIClient()
         self.assertIn(guest.get('/api/consult/questions/').status_code, (401, 403))
-        self.assertIn(guest.post('/api/consult/questions/', {'title': 'x', 'content': 'yyyyy'}).status_code, (401, 403))
+        self.assertIn(guest.post('/api/consult/questions/', {'title': '帖子正文内容示例文字', 'content': 'yyyyy 内容补足十个字'}).status_code, (401, 403))
 
 
 # ============================================================================
@@ -7303,13 +7303,13 @@ class ForumTranslationTests(TestCase):
         with patch.object(st, 'translate_text', side_effect=lambda text, **kw: f'EN({text})'):
             response = self.client_author.post(
                 '/api/forums/posts/',
-                {'board_id': self.board.id, 'title': '标题', 'content': '正文'},
+                {'board_id': self.board.id, 'title': '测试帖子标题', 'content': '帖子正文内容示例文字，超过十个字'},
                 format='json',
             )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data['title_en'], 'EN(标题)')
-        self.assertEqual(response.data['content_en'], 'EN(正文)')
+        self.assertEqual(response.data['title_en'], 'EN(测试帖子标题)')
+        self.assertEqual(response.data['content_en'], 'EN(帖子正文内容示例文字，超过十个字)')
         self.assertEqual(response.data['translation_source'], Post.SOURCE_AUTO)
         self.assertFalse(response.data['translation_stale'])
 
@@ -7321,7 +7321,7 @@ class ForumTranslationTests(TestCase):
         with patch.object(st, 'translate_text', side_effect=st.TranslateError('接口挂了')):
             response = self.client_author.post(
                 '/api/forums/posts/',
-                {'board_id': self.board.id, 'title': '标题', 'content': '正文'},
+                {'board_id': self.board.id, 'title': '测试帖子标题', 'content': '帖子正文内容示例文字，超过十个字'},
                 format='json',
             )
 
@@ -7345,17 +7345,17 @@ class ForumTranslationTests(TestCase):
         with patch.object(st, 'translate_text', side_effect=lambda text, **kw: f'EN({text})'):
             response = self.client_reader.post(
                 f'/api/forums/posts/{post.id}/comments/',
-                {'content': '请问这是什么病害'},
+                {'content': '请问这是什么病害，叶片上有褐色斑点'},
                 format='json',
             )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data['content_en'], 'EN(请问这是什么病害)')
+        self.assertEqual(response.data['content_en'], 'EN(请问这是什么病害，叶片上有褐色斑点)')
 
         # 站内通知的英文摘要要用译文，否则英文界面下通知里又冒中文
         notification = Notification.objects.filter(recipient=self.author, type='reply').first()
         self.assertIsNotNone(notification)
-        self.assertEqual(notification.message_en, 'EN(请问这是什么病害)')
+        self.assertEqual(notification.message_en, 'EN(请问这是什么病害，叶片上有褐色斑点)')
         self.assertIn('EN(被回复的帖子)', notification.title_en)
 
     def test_manual_english_in_payload_is_kept(self):
@@ -7366,7 +7366,7 @@ class ForumTranslationTests(TestCase):
             response = self.client_author.post(
                 '/api/forums/posts/',
                 {
-                    'board_id': self.board.id, 'title': '标题', 'content': '正文',
+                    'board_id': self.board.id, 'title': '测试帖子标题', 'content': '帖子正文内容示例文字，超过十个字',
                     'title_en': 'Manual title', 'content_en': 'Manual body',
                 },
                 format='json',
@@ -7388,7 +7388,7 @@ class ForumTranslationTests(TestCase):
         # 翻译关闭（settings 在测试环境默认关）+ 空字符串入库 —— 两者都不能动已有译文
         response = self.client_author.patch(
             f'/api/forums/posts/{post.id}/',
-            {'title': '标题', 'content': '正文', 'title_en': '', 'content_en': ''},
+            {'title': '测试帖子标题', 'content': '帖子正文内容示例文字，超过十个字', 'title_en': '', 'content_en': ''},
             format='json',
         )
 
@@ -7490,7 +7490,7 @@ class ForumTranslationTests(TestCase):
 
         response = self.client_author.patch(
             f'/api/forums/posts/{post.id}/',
-            {'title': '标题改了', 'content': '正文'},
+            {'title': '标题改了', 'content': '帖子正文内容示例文字，超过十个字'},
             format='json',
         )
         self.assertEqual(response.status_code, 200)
@@ -8112,7 +8112,7 @@ class DirectMessageDeleteTests(TestCase):
         self.other_client.delete(f'/api/messages/with/{self.me.id}/')
         self.assertEqual(self.other_client.get('/api/messages/').data['count'], 0)
 
-        self.client.post(f'/api/messages/with/{self.other.id}/', {'content': '新消息'}, format='json')
+        self.client.post(f'/api/messages/with/{self.other.id}/', {'content': '新消息：这是一条新发的帖子'}, format='json')
         self.assertEqual(
             self.other_client.get('/api/messages/').data['count'], 1,
             '收到新消息后，对方那一侧的删除标记应当被清掉',
@@ -8129,7 +8129,7 @@ class DirectMessageDeleteTests(TestCase):
             sender=self.me, recipient=self.other, content='我早先删掉的', conversation_key=self.key,
         )
         DirectMessage.objects.filter(pk=old.pk).update(sender_deleted=True)
-        self.client.post(f'/api/messages/with/{self.other.id}/', {'content': '新的一条'}, format='json')
+        self.client.post(f'/api/messages/with/{self.other.id}/', {'content': '新的一条帖子正文内容'}, format='json')
 
         old.refresh_from_db()
         self.assertTrue(old.sender_deleted, '我自己删过的消息不该被恢复出来')
@@ -8303,7 +8303,7 @@ class CapabilityMatrixTests(APITestCase):
         news = self._expect(
             self.client_editor, 'post', '/api/news/',
             status.HTTP_201_CREATED,
-            {'title': 'zz能力矩阵编辑员建的新闻', 'content': '<p>x</p>', 'category': 'notice'},
+            {'title': 'zz能力矩阵编辑员建的新闻', 'content': '<p>帖子正文内容示例文字</p>', 'category': 'notice'},
             note='新闻新增（CONTENT）',
         )
         self._expect(self.client_editor, 'patch', f"/api/news/{news.data['id']}/",
@@ -8373,7 +8373,7 @@ class CapabilityMatrixTests(APITestCase):
             ('get', f'/api/admin/users/{self.plain.id}/', None, '用户详情'),
             ('post', f'/api/admin/users/{self.plain.id}/reset-link/', {}, '签发密码重置链接'),
             ('delete', f'/api/admin/users/{self.plain.id}/', None, '软删除用户'),
-            ('post', f'/api/consult/experts/{self.plain.id}/', {'title': 'x'}, '授予专家'),
+            ('post', f'/api/consult/experts/{self.plain.id}/', {'title': '帖子正文内容示例文字'}, '授予专家'),
             ('delete', f'/api/consult/experts/{self.plain.id}/', None, '取消专家'),
         ]
         for method, url, body, note in cases:
@@ -8416,7 +8416,7 @@ class CapabilityMatrixTests(APITestCase):
         """EDITOR 不得对全体用户发声 / 动系统开关（全部 403）"""
         cases = [
             ('post', '/api/announcements/',
-             {'title': 'zz能力矩阵公告', 'content': 'x'}, '发布系统公告'),
+             {'title': 'zz能力矩阵公告', 'content': '帖子正文内容示例文字'}, '发布系统公告'),
             ('post', '/api/alerts/notify/', {}, '推送预警'),
             ('get', '/api/sensitive-words/', None, '敏感词列表（连读都不给）'),
             ('post', '/api/sensitive-words/', {'word': 'zz测试词'}, '新增敏感词'),
@@ -8462,7 +8462,7 @@ class CapabilityMatrixTests(APITestCase):
             ('get', '/api/admin/users/', None),
             ('post', '/api/pests/', {'name': 'x', 'crop_type': '玉米',
                                      'english_identifier': 'zz_plain_x', 'prevention_methods': []}),
-            ('post', '/api/announcements/', {'title': 'x', 'content': 'y'}),
+            ('post', '/api/announcements/', {'title': '帖子正文内容示例文字', 'content': '另一条帖子正文内容文字'}),
             ('get', '/api/admin/dashboard/', None),
         ]:
             send = getattr(self.client_plain, method)
@@ -8735,7 +8735,7 @@ class ContentModuleScopeTests(APITestCase):
         """每个"只勾一块"的编辑员，在自己那一块必须能做（否则等于没授权）"""
         # 新闻管理
         news = self._expect('news', 'post', '/api/news/', status.HTTP_201_CREATED,
-                            {'title': 'zz模块新闻', 'content': '<p>x</p>', 'category': 'notice'},
+                            {'title': 'zz模块新闻', 'content': '<p>帖子正文内容示例文字</p>', 'category': 'notice'},
                             note='新闻新增')
         self._expect('news', 'patch', f"/api/news/{news.data['id']}/", status.HTTP_200_OK,
                      {'source': '本站'}, note='新闻修改')
@@ -8779,20 +8779,20 @@ class ContentModuleScopeTests(APITestCase):
 
         # 百科编辑员越界
         self._expect('pests', 'post', '/api/news/', status.HTTP_403_FORBIDDEN,
-                     {'title': 'x', 'content': 'y'}, note='百科编辑碰新闻')
+                     {'title': '帖子正文内容示例文字', 'content': '另一条帖子正文内容文字'}, note='百科编辑碰新闻')
         self._expect('pests', 'post', f'/api/forums/posts/{self.post.id}/reject/',
                      status.HTTP_403_FORBIDDEN, {'reason': 'x'}, note='百科编辑碰审核')
 
         # 审核编辑员越界
         self._expect('review', 'post', '/api/news/', status.HTTP_403_FORBIDDEN,
-                     {'title': 'x', 'content': 'y'}, note='审核编辑碰新闻')
+                     {'title': '帖子正文内容示例文字', 'content': '另一条帖子正文内容文字'}, note='审核编辑碰新闻')
         self._expect('review', 'post', '/api/pests/', status.HTTP_403_FORBIDDEN,
                      {'name': 'x', 'crop_type': '玉米', 'english_identifier': 'zz_leak2',
                       'prevention_methods': []}, note='审核编辑碰百科')
 
         # 反馈编辑员越界
         self._expect('feedback', 'post', '/api/news/', status.HTTP_403_FORBIDDEN,
-                     {'title': 'x', 'content': 'y'}, note='反馈编辑碰新闻')
+                     {'title': '帖子正文内容示例文字', 'content': '另一条帖子正文内容文字'}, note='反馈编辑碰新闻')
         self._expect('feedback', 'post', '/api/pests/', status.HTTP_403_FORBIDDEN,
                      {'name': 'x', 'crop_type': '玉米', 'english_identifier': 'zz_leak3',
                       'prevention_methods': []}, note='反馈编辑碰百科')
@@ -8845,7 +8845,7 @@ class ContentModuleScopeTests(APITestCase):
             'english_identifier': 'zz_admin_new', 'prevention_methods': [],
         }, format='json').status_code, status.HTTP_201_CREATED)
         self.assertEqual(client.post('/api/news/', {
-            'title': 'zz管理员新闻', 'content': '<p>x</p>',
+            'title': 'zz管理员新闻', 'content': '<p>帖子正文内容示例文字</p>',
         }, format='json').status_code, status.HTTP_201_CREATED)
 
 
@@ -9051,7 +9051,7 @@ class AdminUserCreateEditorTests(APITestCase):
         }, format='json')
         self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
 
-        news = client.post('/api/news/', {'title': 'zz开通测试新闻', 'content': '<p>x</p>'},
+        news = client.post('/api/news/', {'title': 'zz开通测试新闻', 'content': '<p>帖子正文内容示例文字</p>'},
                            format='json')
         self.assertEqual(news.status_code, status.HTTP_403_FORBIDDEN, news.data)
 
@@ -10763,7 +10763,7 @@ class MoreAuditActionsTests(APITestCase):
 
     def test_announcement_create_and_delete_are_logged(self):
         response = self.client_super.post('/api/announcements/', {
-            'title': 'zz审计公告', 'content': '公告内容', 'is_active': True, 'is_pinned': False,
+            'title': 'zz审计公告', 'content': '公告内容：本周日停机维护两小时', 'is_active': True, 'is_pinned': False,
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         announcement_id = response.data['id']
@@ -11842,7 +11842,7 @@ class PostPestTagTests(APITestCase):
         payload = {
             'board_id': self.board.id,
             'title': 'zz标签：叶片上有黑斑',
-            'content': '<p>求解</p>',
+            'content': '<p>求解：叶片上出现褐色斑点，该怎么办</p>',
         }
         payload.update(extra)
         return self.client_author.post('/api/forums/posts/', payload, format='json')
@@ -13978,3 +13978,80 @@ class CropHintDetectTests(TestCase):
         history = DetectionHistory.objects.get(pk=resp.data['data']['history_id'])
         self.assertNotEqual(history.pest_info_id, self.grape.pk,
                             '不能把苹果的病挂到葡萄词条上')
+
+# ============================================================================
+# 论坛发帖 · 标题与正文的最低字数（第 215 批）
+# ----------------------------------------------------------------------------
+# 用户反馈："标题和正文，都必须要有最低的字数限制"。
+#
+# 核实发现**两层都漏**：
+#   · 前端：`el-form-item` 的 `prop` 与 `rules.content` 是通的，但 Element Plus 的
+#     `trigger: 'change'` 依赖子组件 emit `el.form.change`，而 `RichTextEditor`
+#     （自定义 Quill 封装）**不 emit** → `rules.content` 一次都没触发过；
+#     而且原来那条是 `{ min: 10 }`，量的是 **HTML 字符串长度**，`<p></p>` 就能过。
+#   · 后端：`PostSerializer` **完全没有下限校验**，`title` 只有 `max_length=200`、
+#     `content` 是纯 `TextField`。实测直接 POST `{'title': '短', 'content': '<p></p>'}`
+#     **201 创建成功** —— 能发出空正文帖。
+#
+# 本测试盯**后端**这一层（接口不能只靠前端）：富文本必须按"去标签后的字数"算。
+# ============================================================================
+class PostMinLengthTests(TestCase):
+    """发帖接口的标题/正文最低字数。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='minlen_user', password='pw12345678')
+        self.token = Token.objects.create(user=self.user)
+        self.client_auth = APIClient()
+        self.client_auth.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        self.board = ForumBoard.objects.create(name='测试版块', description='d')
+
+    def _create(self, title, content):
+        return self.client_auth.post(
+            '/api/forums/posts/',
+            {'board_id': self.board.id, 'title': title, 'content': content},
+            format='json',
+        )
+
+    # ── 一、正文按"纯文本字数"算，不按 HTML 长度 ──────────────────────
+    def test_empty_html_body_is_rejected(self):
+        """⚠️ 这一条是本批的核心：`<p></p>` / `<p><br></p>` 的**字符串**长度够，
+        但纯文本是 0 —— 原来这两种都能创建成功（实测过）。"""
+        for html in ('<p></p>', '<p><br></p>', '<p>&nbsp;&nbsp;</p>', '   '):
+            with self.subTest(html=html):
+                resp = self._create('苹果黑星病求助标题', html)
+                self.assertEqual(resp.status_code, 400, f'{html!r} 不该通过')
+                self.assertIn('content', resp.data)
+
+    def test_short_body_is_rejected(self):
+        resp = self._create('苹果黑星病求助标题', '<p>短</p>')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('正文至少', str(resp.data['content']))
+
+    def test_body_with_enough_plain_text_passes(self):
+        resp = self._create('苹果黑星病求助标题', '<p>叶片出现褐色轮纹斑，用过代森锰锌</p>')
+        self.assertEqual(resp.status_code, 201, resp.data)
+
+    # ── 二、标题 ──────────────────────────────────────────────────────
+    def test_short_title_is_rejected(self):
+        resp = self._create('短', '<p>叶片出现褐色轮纹斑，用过代森锰锌</p>')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('标题至少', str(resp.data['title']))
+
+    def test_whitespace_only_title_is_rejected(self):
+        """全角空格蒙混 —— `required` 也拦得住，但这里确认两层都在。"""
+        resp = self._create('　　　　　', '<p>叶片出现褐色轮纹斑，用过代森锰锌</p>')
+        self.assertEqual(resp.status_code, 400)
+
+    # ── 三、别误伤：只改标题的 PATCH 不该因"正文没传"被拒 ──────────────
+    def test_partial_update_title_only_is_not_blocked(self):
+        """`validate_<field>` 只在字段**出现**时跑 —— 这条守住这个语义。
+
+        若有人把校验写成 `validate()`（整对象校验），"只改标题"的 PATCH 会因为没有
+        `content` 而被拒 —— 那是很典型的连带伤害。
+        """
+        created = self._create('苹果黑星病求助标题', '<p>叶片出现褐色轮纹斑，用过代森锰锌</p>')
+        self.assertEqual(created.status_code, 201, created.data)
+        post_id = created.data['id']
+        resp = self.client_auth.patch(f'/api/forums/posts/{post_id}/',
+                                      {'title': '苹果黑星病求助标题（已补充）'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)

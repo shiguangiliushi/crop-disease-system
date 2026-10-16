@@ -2444,6 +2444,16 @@ export const zhCN = {
     draftSaved: '本地草稿已保存（{time}）',
     draftAutoSave: '边写边自动存到本机，误关页面也不丢',
     draftClear: '清除本地草稿',
+    // ── 第 215 批：服务端草稿（编辑页 30 秒自动存的那种）也在本页管理 ──
+    //: 标题里带数量，避免用户以为只有一条。
+    serverDraftsTitle: '还有 {count} 条草稿存在服务器上',
+    serverDraftContinue: '继续编辑',
+    serverDraftDiscard: '放弃删除',
+    serverDraftsHint: '这些是编辑时自动保存的草稿，和上面的本地草稿是两套。放弃后无法恢复。',
+    // ── 第 215 批：标题/正文的最低字数 ──
+    //: 说明「为什么」而不是只说「必须」—— 用户知道理由才愿意配合。
+    titleTooShort: '标题至少 4 个字，写清楚是哪种作物、什么症状，别人才答得上',
+    bodyTooShort: '正文至少 10 个字，把症状、发生时间、用过什么药说清楚',
     hintReview: '发布后需管理员审核通过才会公开，审核结果会通知你',
     hintModerator: '版主/管理员发帖直接公开',
     hintPublic: '发布后立即公开显示',
@@ -5452,6 +5462,12 @@ export const en = {
     draftSaved: 'Draft saved locally ({time})',
     draftAutoSave: 'Saved to this device as you type — safe to close the page',
     draftClear: 'Clear local draft',
+    serverDraftsTitle: '{count} draft(s) are stored on the server',
+    serverDraftContinue: 'Keep editing',
+    serverDraftDiscard: 'Discard',
+    serverDraftsHint: 'These are drafts auto-saved while editing — a separate set from the local draft above. Discarding cannot be undone.',
+    titleTooShort: 'Title needs at least 4 characters — say which crop and what symptoms, so people can help',
+    bodyTooShort: 'Body needs at least 10 characters — describe the symptoms, when it started, and what you have sprayed',
     hintReview: 'Publishing requires admin review before it goes public; you will be notified',
     hintModerator: 'Moderator/admin posts are published immediately',
     hintPublic: 'Published immediately',

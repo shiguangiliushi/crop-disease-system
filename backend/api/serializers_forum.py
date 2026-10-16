@@ -215,6 +215,48 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
             'translation_stale', 'translation_source'
         ]
 
+    # ========================================================================
+    # 第 215 批：**标题与正文的最低字数**（后端侧，与前端规则对齐）
+    # ------------------------------------------------------------------------
+    # 前端 `NewPostView` 也有校验，但接口不能只靠前端 —— 直接 POST 可以绕过。
+    # 实测（未加这两条之前）：`{'title': '短', 'content': '<p></p>'}` 一律 **201 创建成功**。
+    #
+    # ⚠️ 正文是**富文本 HTML**，不能按字符串长度算：
+    #    `<p></p>` 有 7 个字符、`<p><br></p>` 有 11 个 —— 空正文能轻松"达标"。
+    #    所以先剥标签、去掉空白与 `&nbsp;`，再数字数（与前端 `plainLength` 同一口径）。
+    #
+    # ⚠️ 为什么放在 `PostListSerializer` 而不是详情序列化器：
+    #    `PostViewSet.get_serializer_class()` 只在 `action == 'retrieve'` 时用详情版，
+    #    **创建 / 更新走的都是这一版**。第一版我加在详情版上，结果校验**一次都没触发**
+    #    （实测 6 种非法输入全部 201）—— 这正是"改了代码要实测"的原因。
+    #    放在基类上，列表、创建、更新、详情四条路径全覆盖。
+    #
+    # ⚠️ 只在字段**出现**时校验：`validate_<field>` 天然如此，
+    #    所以"只改标题一个字"的 PATCH 不会因为"正文没传"被拒。
+    # ========================================================================
+    TITLE_MIN = 4
+    BODY_MIN = 10
+
+    @staticmethod
+    def _plain_length(html) -> int:
+        """富文本 → 纯文本字数（去标签、去 `&nbsp;`、去所有空白）。"""
+        import re as _re
+        text = _re.sub(r'<[^>]*>', '', str(html or ''))
+        text = _re.sub(r'&nbsp;', ' ', text, flags=_re.I)
+        return len(_re.sub(r'\s+', '', text))
+
+    def validate_title(self, value):
+        if self._plain_length(value) < self.TITLE_MIN:
+            raise serializers.ValidationError(
+                f'标题至少 {self.TITLE_MIN} 个字，写清楚是哪种作物、什么症状，别人才答得上')
+        return value
+
+    def validate_content(self, value):
+        if self._plain_length(value) < self.BODY_MIN:
+            raise serializers.ValidationError(
+                f'正文至少 {self.BODY_MIN} 个字，把症状、发生时间、用过什么药说清楚')
+        return value
+
     def get_is_liked(self, obj):  # 定义获取是否点赞方法
         user = self.context['request'].user  # 获取当前用户
         if user.is_authenticated:  # 检查用户是否认证
@@ -328,7 +370,7 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
 
 
 class PostDetailSerializer(PostListSerializer):  # 定义帖子详情序列化器，继承自帖子列表序列化器
-    """帖子详情序列化器"""
+    """帖子详情序列化器（标题/正文的最低字数校验在基类 `PostListSerializer` 上）"""
     comments = serializers.SerializerMethodField()  # 评论字段为方法字段
 
     class Meta(PostListSerializer.Meta):  # 继承元数据
