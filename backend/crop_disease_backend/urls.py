@@ -204,6 +204,9 @@ api_urlpatterns = [
     # 所以 @action 装饰器不会自动生成路由，必须在这里手写一条，否则 /reply/ 会 404。
     path('feedback/<int:pk>/reply/', FeedbackView.as_view({'post': 'reply'}), name='feedback-reply'),
     #: ⚠️ 第 224 批：同样**必须手写**（`@action` 不会自动生成路由，上面两处注释已提醒过）。
+    #: 第 225 批（P2-8）：按当前筛选导出 CSV。同样是**手写**路由。
+    path('feedback/export-csv/', FeedbackView.as_view({'get': 'export_csv'}),
+         name='feedback-export-csv'),
     #: 统计：四张卡改成一次请求，并且跟随当前筛选。
     path('feedback/stats/', FeedbackView.as_view({'get': 'stats'}), name='feedback-stats'),
     #: 样本确认（识别纠错的"待确认/已确认/已排除"）—— 改前只能进 Django 原生 admin 勾选。

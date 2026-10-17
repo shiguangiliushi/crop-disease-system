@@ -619,6 +619,16 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
     is_correct = models.BooleanField(null=True, blank=True, verbose_name="识别是否正确")  # 识别是否正确字段（识别结果反馈才有）
     timestamp = models.DateTimeField(auto_now_add=True, verbose_name="反馈时间")  # 反馈时间字段
     suggestion = models.TextField(blank=True, null=True, verbose_name="反馈内容")  # 反馈内容（原"用户建议"）
+    #: ⚠️ 第 225 批（P2-7）：**联系方式（选填）**。
+    #: 改前反馈表单没有任何联系途径 —— 管理员看到"上传后没反应"这种描述时，
+    #: 想追问"哪个浏览器、哪张图、什么时间"完全找不到人，只能放弃或猜。
+    #: 一个自由字段就够：用户实际只会填一种（电话 / 微信 / 邮箱），
+    #: 拆成三个字段会得到两组空列，筛选也无从下手。
+    contact = models.CharField(
+        max_length=100, blank=True, default='',
+        verbose_name="联系方式（选填）",
+        help_text="电话 / 微信 / 邮箱均可，便于管理员追问细节",
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending',
                               verbose_name="处理状态")  # 处理状态（管理员在后台流转）
     admin_reply = models.TextField(blank=True, default='', verbose_name="管理员回复")  # 管理员回复

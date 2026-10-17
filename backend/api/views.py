@@ -1629,6 +1629,68 @@ class FeedbackView(viewsets.ModelViewSet):
             'results': results,
         })
 
+    @action(detail=False, methods=['get'], url_path='export-csv',
+            permission_classes=[IsFeedbackEditor])
+    def export_csv(self, request):
+        """
+        按**当前筛选**导出 CSV（第 225 批 · P2-8）
+
+        几个有意为之的细节：
+
+        * 复用 `self.get_queryset()`，所以 URL 上带 `status=` / `category=` /
+          `date_from=` 等参数时，导出的就是**筛出来的那些**，不是全量；
+        * 开头写 **UTF-8 BOM**：不写的话 Excel 双击打开中文是乱码（`utf-8-sig`）；
+        * 对以 `= + - @` 开头的单元格加前导单引号 —— CSV 公式注入。
+          反馈正文是**用户写的**，一条 `=cmd|'/c calc'!A1` 就能在别人的 Excel 里执行；
+        * 上限 5000 行（够用，且避免一次导出把内存打满）。
+        """
+        import csv
+        from datetime import datetime
+
+        from django.http import HttpResponse
+
+        queryset = self.get_queryset().select_related(
+            'user', 'corrected_pest', 'detection').order_by('-timestamp')[:5000]
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = (
+            'attachment; filename="feedback-%s.csv"' % datetime.now().strftime('%Y%m%d')
+        )
+        response.write('\ufeff')          #: BOM：Excel 双击不乱码
+        writer = csv.writer(response)
+
+        def _safe(value):
+            """CSV 公式注入防护：以 = + - @ 开头的值前面加一个单引号"""
+            text = '' if value is None else str(value)
+            if text[:1] in ('=', '+', '-', '@'):
+                return "'" + text
+            return text
+
+        writer.writerow([
+            'ID', '提交人', '类型', '反馈内容', '联系方式', '识别结论', '置信度',
+            '用户判定', '纠正为', '样本状态', '处理状态', '管理员回复', '处理时间', '提交时间',
+        ])
+        for item in queryset:
+            writer.writerow([
+                item.id,
+                _safe(item.user.username if item.user_id else ''),
+                item.get_category_display(),
+                _safe(item.suggestion),
+                _safe(item.contact),
+                _safe(item.disease_name),
+                '' if item.confidence is None else f'{item.confidence:.3f}',
+                '' if item.is_correct is None else ('正确' if item.is_correct else '错误'),
+                _safe(getattr(item.corrected_pest, 'name', '') if item.corrected_pest_id else ''),
+                item.get_verify_status_display(),
+                item.get_status_display(),
+                _safe(item.admin_reply),
+                item.handled_at.strftime('%Y-%m-%d %H:%M') if item.handled_at else '',
+                item.timestamp.strftime('%Y-%m-%d %H:%M') if item.timestamp else '',
+            ])
+        logger.info('导出反馈 CSV by=%s 条数=%s', request.user.username,
+                    min(queryset.count(), 5000))
+        return response
+
     @action(detail=False, methods=['get'], url_path='stats',
             permission_classes=[IsFeedbackEditor])
     def stats(self, request):

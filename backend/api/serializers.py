@@ -885,6 +885,7 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
             'disease_name', 'disease_name_en', 'confidence', 'is_correct', 'suggestion',
             'suggestion_en', 'admin_reply_en', 'translation_stale', 'translation_source',
             'status', 'status_display', 'admin_reply', 'handled_at', 'timestamp',
+            'contact',   #: 第 225 批（P2-7）：联系方式（选填，提交人自己填）
             # 第 91 批
             'detection_id', 'detection_summary', 'corrected_pest_id', 'corrected_pest_name',
             'verify_status', 'exported_at', 'is_trainable',

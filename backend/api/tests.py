@@ -9861,6 +9861,83 @@ class FeedbackClosureTests(APITestCase):
         self.assertEqual(
             Notification.objects.filter(recipient=self.editor, type='feedback').count(), 0)
 
+class FeedbackContactAndExportTests(APITestCase):
+    """联系方式（P2-7）与 CSV 导出（P2-8）—— 第 225 批"""
+
+    def setUp(self):
+        cache.clear()
+        from .models import EditorModuleGrant
+
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_exp_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_exp_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='feedback',
+                                        granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_exp_author', password='pw12345678', role='USER',
+        )
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_author = APIClient()
+        self.client_author.force_authenticate(user=self.author)
+
+    # ---------- 联系方式 ----------
+    def test_contact_can_be_submitted_and_read_back(self):
+        response = self.client_author.post('/api/feedback/', {
+            'category': 'bug', 'suggestion': '上传大图后没反应',
+            'contact': '微信 nongfu_2026',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['contact'], '微信 nongfu_2026')
+        self.assertEqual(
+            Feedback.objects.get(id=response.data['id']).contact, '微信 nongfu_2026')
+
+    def test_contact_is_optional(self):
+        response = self.client_author.post('/api/feedback/', {
+            'category': 'other', 'suggestion': '随便说说',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['contact'], '')
+
+    # ---------- CSV 导出 ----------
+    def test_export_csv_has_bom_and_header(self):
+        Feedback.objects.create(user=self.author, category='bug', suggestion='导出用的一条')
+        response = self.client_editor.get('/api/feedback/export-csv/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('text/csv', response['Content-Type'])
+        self.assertIn('attachment;', response['Content-Disposition'])
+        #: BOM：不写的话 Excel 双击打开中文是乱码
+        self.assertTrue(response.content.startswith(b'\xef\xbb\xbf'))
+        body = response.content.decode('utf-8-sig')
+        self.assertTrue(body.startswith('ID,提交人,类型'), body[:40])
+        self.assertIn('联系方式', body.splitlines()[0])
+        self.assertIn('导出用的一条', body)
+
+    def test_export_csv_respects_filters(self):
+        Feedback.objects.create(user=self.author, category='bug', suggestion='类型甲的反馈')
+        Feedback.objects.create(user=self.author, category='suggestion', suggestion='类型乙的反馈')
+        response = self.client_editor.get('/api/feedback/export-csv/', {'category': 'bug'})
+        body = response.content.decode('utf-8-sig')
+        self.assertIn('类型甲的反馈', body)
+        self.assertNotIn('类型乙的反馈', body,
+                         '导出必须跟随筛选，否则"筛出来的和导出来的不是一回事"')
+
+    def test_export_csv_blocked_for_ordinary_user(self):
+        response = self.client_author.get('/api/feedback/export-csv/')
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_export_csv_escapes_formula_injection(self):
+        """用户写的正文以 `=` 开头时，Excel 会当公式执行 —— 必须加前导单引号。"""
+        Feedback.objects.create(user=self.author, category='other',
+                                suggestion="=cmd|'/c calc'!A1")
+        response = self.client_editor.get('/api/feedback/export-csv/')
+        body = response.content.decode('utf-8-sig')
+        self.assertIn("'=cmd", body, 'CSV 公式注入没有被转义')
+
 class FeedbackBulkActionTests(APITestCase):
     """批量改状态 / 批量删除（第 138 批）"""
 

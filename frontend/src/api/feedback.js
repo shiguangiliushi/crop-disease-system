@@ -28,6 +28,14 @@ export async function submitFeedback(payload = {}, imageFile = null) {
     formData.append('is_correct', String(payload.is_correct));
   }
 
+  //: ⚠️ 第 225 批（P2-7）：联系方式。
+  //: 这个函数是**逐字段拼 FormData** 的，不走"整个对象塞进去" —— 漏一行就等于该字段
+  //: 永远发不出去，而且后端不会报错（`contact` 有默认值 ''），前端也看不出来。
+  //: 第一版就是这样：表单填了联系方式、提交成功，库里存的是空字符串。
+  if (payload.contact) {
+    formData.append('contact', payload.contact);
+  }
+
   if (imageFile) {
     formData.append('image', imageFile);
   }
@@ -126,6 +134,11 @@ export async function bulkVerifyFeedbackSamples(ids = [], verifyStatus = 'confir
     verify_status: verifyStatus,
   });
   return response.data;
+}
+
+/** 按当前筛选导出 CSV（第 225 批 · P2-8）。返回完整响应，好拿 Content-Disposition */
+export async function exportFeedbackCsv(params = {}) {
+  return http.get('/feedback/export-csv/', { params, responseType: 'blob' });
 }
 
 export default {

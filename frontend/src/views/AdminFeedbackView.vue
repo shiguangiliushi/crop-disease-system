@@ -14,6 +14,10 @@
         </div>
       </div>
       <div class="admin-hero-actions">
+        <!--: 第 225 批（P2-8）：按**当前筛选**导出 CSV（后端复用同一套 get_queryset） -->
+        <el-button plain :loading="exporting" @click="exportCsv">
+          <i class="fas fa-file-csv"></i> {{ t('feedbackAdmin.exportCsv') }}
+        </el-button>
         <el-button plain :loading="loading" @click="loadList">
           <i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}
         </el-button>
@@ -192,7 +196,15 @@
     </div>
 
     <el-skeleton v-if="loading" :rows="6" animated />
-    <el-empty v-else-if="items.length === 0" :description="t('feedbackAdmin.empty')" />
+    <!--: 第 225 批（P2-10）：空态要说清楚"是没数据，还是被筛掉了"，并给一键出路 -->
+    <el-empty
+      v-else-if="items.length === 0"
+      :description="hasActiveFilter ? t('feedbackAdmin.emptyFiltered') : t('feedbackAdmin.empty')"
+    >
+      <el-button v-if="hasActiveFilter" size="small" @click="clearFilters">
+        {{ t('feedbackAdmin.clearFilters') }}
+      </el-button>
+    </el-empty>
 
     <div v-else class="feedback-list">
       <div
@@ -312,6 +324,11 @@
           </span>
         </div>
 
+        <!--: 第 225 批（P2-7）：管理员要能看见联系方式，否则这个字段白填 -->
+        <div v-if="item.contact" class="item-contact">
+          <i class="fas fa-address-book"></i> {{ item.contact }}
+        </div>
+
         <div v-if="item.admin_reply" class="item-reply">
           <strong><i class="fas fa-reply-all"></i> {{ t('feedbackAdmin.adminReply') }}</strong>
           <p>{{ localizedField(item, 'admin_reply') }}</p>
@@ -341,6 +358,10 @@
       <el-form label-width="80px" @submit.prevent>
         <el-form-item :label="t('feedbackAdmin.submitter')">
           <el-input :model-value="current?.user || t('feedbackAdmin.unknownUser')" disabled />
+        </el-form-item>
+        <!--: 第 225 批（P2-7）：追问细节要靠它 -->
+        <el-form-item v-if="current?.contact" :label="t('feedback.contact')">
+          <el-input :model-value="current.contact" disabled />
         </el-form-item>
         <el-form-item :label="t('feedbackAdmin.originalContent')">
           <el-input :model-value="localizedField(current, 'suggestion') || t('feedbackAdmin.noText')" type="textarea" :rows="3" disabled />
@@ -379,6 +400,18 @@
             <el-radio-button value="processing">{{ t('feedbackAdmin.statusProcessing') }}</el-radio-button>
             <el-radio-button value="resolved">{{ t('feedbackAdmin.statusResolved') }}</el-radio-button>
           </el-radio-group>
+        </el-form-item>
+        <!--: 第 225 批（P2-9）：常用回复模板。同类问题一天回十遍，不该回回重打。 -->
+        <el-form-item :label="t('feedbackAdmin.replyTemplates')">
+          <div class="reply-templates">
+            <el-button
+              v-for="tpl in replyTemplates"
+              :key="tpl.key"
+              size="small"
+              text
+              @click="applyTemplate(tpl.key)"
+            >{{ tpl.label }}</el-button>
+          </div>
         </el-form-item>
         <el-form-item :label="t('feedbackAdmin.replyContent')">
           <el-input
@@ -463,7 +496,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { fetchFeedbackStats, verifyFeedbackSample, bulkVerifyFeedbackSamples, fetchMyFeedback, replyFeedback, deleteFeedback, bulkDeleteFeedback, bulkUpdateFeedbackStatus } from '@/api/feedback';
+import { exportFeedbackCsv, fetchFeedbackStats, verifyFeedbackSample, bulkVerifyFeedbackSamples, fetchMyFeedback, replyFeedback, deleteFeedback, bulkDeleteFeedback, bulkUpdateFeedbackStatus } from '@/api/feedback';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 67 批：多语言
@@ -591,6 +624,68 @@ export default {
         ElMessage.error(formatApiError(error, t('feedbackAdmin.sampleFailed')));
       } finally {
         verifyingId.value = null;
+      }
+    };
+
+    // ═══ 第 225 批（P2-8 / P2-9 / P2-10）═════════════════════════════════
+    const exporting = ref(false);
+
+    /** 有没有生效中的筛选 —— 空态要能区分"本来就没数据"和"被筛掉了" */
+    const hasActiveFilter = computed(() => Boolean(
+      filters.value.status || filters.value.category || filters.value.search.trim()
+      || filters.value.is_correct || filters.value.verify_status
+      || filters.value.date_from || filters.value.date_to,
+    ));
+
+    const clearFilters = () => {
+      filters.value = {
+        status: '', category: '', search: '',
+        is_correct: '', verify_status: '', date_from: '', date_to: '',
+      };
+      dateRange.value = [];
+      page.value = 1;
+      handleFilter();
+    };
+
+    /** 导出 CSV：**导出的是筛出来的那些**，不是全量（后端复用同一套查询） */
+    const exportCsv = async () => {
+      exporting.value = true;
+      try {
+        const response = await exportFeedbackCsv(buildFilterParams());
+        const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `feedback-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        ElMessage.success(t('feedbackAdmin.exported'));
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('feedbackAdmin.exportFailed')));
+      } finally {
+        exporting.value = false;
+      }
+    };
+
+    /** 常用回复模板（P2-9）：同类问题一天回十遍，不该回回重打 */
+    const replyTemplates = computed(() => [
+      { key: 'recorded', label: t('feedbackAdmin.tplRecorded') },
+      { key: 'willFix', label: t('feedbackAdmin.tplWillFix') },
+      { key: 'thanks', label: t('feedbackAdmin.tplThanks') },
+    ]);
+
+    const TEMPLATE_TEXT = {
+      recorded: 'feedbackAdmin.tplTextRecorded',
+      willFix: 'feedbackAdmin.tplTextWillFix',
+      thanks: 'feedbackAdmin.tplTextThanks',
+    };
+
+    const applyTemplate = (key) => {
+      const text = t(TEMPLATE_TEXT[key] || '');
+      if (text && text !== TEMPLATE_TEXT[key]) {
+        replyForm.value.admin_reply = text;
       }
     };
 
@@ -887,6 +982,7 @@ export default {
     return {
       //: 第 224 批：样本确认/排除 + 日期区间 + 统计联动
       dateRange, verifyingId, verifyLabel, verifyTagType, changeSample, bulkChangeSamples,
+      exporting, exportCsv, hasActiveFilter, clearFilters, replyTemplates, applyTemplate,
       t,
       items,
       stats,

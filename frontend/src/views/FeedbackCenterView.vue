@@ -50,7 +50,17 @@
             />
           </el-form-item>
 
-          <el-form-item :label="t('feedback.screenshot')">
+          <!--: 第 225 批（P2-7）：联系方式（选填）。
+           改前用户只能留一段没有上下文的文字，管理员想追问"哪个浏览器/哪张图"时问不到人。 -->
+      <el-form-item :label="t('feedback.contact')">
+        <el-input
+          v-model="form.contact"
+          :placeholder="t('feedback.contactPlaceholder')"
+          maxlength="100"
+          clearable
+        />
+      </el-form-item>
+      <el-form-item :label="t('feedback.screenshot')">
             <div class="upload-block">
               <el-upload
                 :auto-upload="false"
@@ -208,7 +218,7 @@ export default {
     // 管理员在本页看到的是全部用户的反馈（后端按角色返回），需要额外显示提交人
     const isAdmin = computed(() => Boolean(authStore.isAdmin));
 
-    const form = ref({ category: 'suggestion', suggestion: '' });
+    const form = ref({ category: 'suggestion', suggestion: '', contact: '' });   //: 第 225 批：contact
     const imageFile = ref(null);
     const imagePreview = ref('');
     const submitting = ref(false);
@@ -310,7 +320,7 @@ export default {
     };
 
     const resetForm = () => {
-      form.value = { category: 'suggestion', suggestion: '' };
+      form.value = { category: 'suggestion', suggestion: '', contact: '' };
       removeImage();
     };
 
@@ -326,7 +336,7 @@ export default {
       submitting.value = true;
       try {
         await submitFeedback(
-          { category: form.value.category, suggestion: content },
+          { category: form.value.category, suggestion: content, contact: (form.value.contact || '').trim() },
           imageFile.value,
         );
         ElMessage.success(t('feedback.submitOk'));
