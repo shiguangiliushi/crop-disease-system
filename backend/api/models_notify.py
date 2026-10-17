@@ -31,6 +31,9 @@ class Notification(models.Model):
         ('message', '有人给你发了私信'),  # 第 42 批：私信
         ('announcement', '系统公告'),
         ('system', '系统消息'),
+        #: ⚠️ 第 224 批：反馈回复原来借用 `system`（显示成「系统消息」）；
+        #: 反馈是**人和人之间**的往来，和系统通知混在一起会让用户找不到。
+        ('feedback', '反馈回复'),
     )
 
     recipient = models.ForeignKey(

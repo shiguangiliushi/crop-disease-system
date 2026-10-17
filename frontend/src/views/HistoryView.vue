@@ -391,6 +391,11 @@ import { useI18n } from '@/i18n';  // 第 62 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 69 批：内容数据多语言
 
 const { t, locale } = useI18n();
+//: ⚠️ 第 224 批：`useRouter` 早就 import 了，但**从来没有调用** ——
+//: 第 1130 行的 `router.push('/login')`（401 分支）以前一走到就 ReferenceError。
+//: `route` 是给 `?record=<id>` 深链用的。
+const router = useRouter();
+const route = useRoute();
 const { localizedField } = useLocalized();  // 第 69 批：内容数据（病害名/作物名）多语言
 
 // 第 62 批：底部"识别记录能做什么"卡片（原来内联在模板里，无法随语言切换）
@@ -412,7 +417,7 @@ const guideItems = computed(() => [
     to: '/detect',
   },
 ]);
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'; // 更新 Element Plus 导入，确保包含 ElLoading
 // 第 31 批：页面底部"识别记录能做什么"补充信息区
 import PageExtras from '@/components/PageExtras.vue';
@@ -424,7 +429,7 @@ import { downloadDetectionReportPdf } from '@/utils/pdfReport';
 import { toAbsoluteMediaUrl } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 // 批量删除复用识别记录接口模块（第 22 批：原「识别记录管理」页的能力合并到本页）
-import { batchDeleteDetectionHistory } from '@/api/detection';
+import { batchDeleteDetectionHistory, getDetectionHistory } from '@/api/detection';
 import DiseaseStatistics from '@/components/DiseaseStatistics.vue';
 import logoUrl from '@/assets/农作物病害识别1.png';
 
@@ -595,6 +600,17 @@ onMounted(async () => {
   // initializeData 内部已经并行请求了历史记录与统计数据
   await initializeData();
   console.log('Initial data loaded');
+  //: 第 224 批：`/history?record=<id>` 直接打开那条识别详情 ——
+  //: 反馈管理里「查看该次识别」就跳这里。取不到静默（深链不是主流程）。
+  const recordId = route.query.record;
+  if (recordId) {
+    try {
+      const record = await getDetectionHistory({ id: recordId });
+      if (record) showDetailModal(record);
+    } catch (error) {
+      console.warn('[history] 深链记录加载失败:', error?.message || error);
+    }
+  }
 });
 
 // 刷新数据

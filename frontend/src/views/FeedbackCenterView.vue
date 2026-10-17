@@ -147,6 +147,11 @@
             <div v-if="item.admin_reply" class="item-reply">
               <strong><i class="fas fa-reply-all"></i> {{ t('feedbackAdmin.adminReply') }}</strong>
               <p>{{ localizedField(item, 'admin_reply') }}</p>
+          <!--: 第 224 批：「处理于 x」—— 用户看到回复时，"什么时候处理的"是基本交代
+               （后端一直在下发 `handled_at`，用户侧却没显示）。 -->
+          <span v-if="item.handled_at" class="reply-time">
+            {{ t('feedbackAdmin.handledAt', { time: formatTime(item.handled_at) }) }}
+          </span>
             </div>
           </div>
 

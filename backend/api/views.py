@@ -1316,6 +1316,24 @@ class FeedbackView(viewsets.ModelViewSet):
         if user_id:
             queryset = queryset.filter(user_id=user_id)
 
+        #: ⚠️ 第 224 批：**样本确认状态**筛选。
+        #: 后端一直有 `verify_status`（待确认/已确认/已排除），但列表接口不能按它筛 ——
+        #: 管理员只能去 Django 原生 admin 里翻，网页后台等于看不到这个维度。
+        verify_status = (self.request.query_params.get('verify_status') or '').strip()
+        if verify_status:
+            queryset = queryset.filter(verify_status=verify_status)
+
+        #: 第 224 批：时间范围。审计/清算"这批是几号提的"是常态需求，
+        #: 原来的筛选只有状态与关键字，翻旧账只能一页页翻。
+        #: 用 `__date__gte/lte` 而不是 `__gte/lte` —— 让"到某天"**包含当天**，
+        #: 与操作日志的 end 口径一致（那边的坑我们踩过一次）。
+        date_from = (self.request.query_params.get('date_from') or '').strip()
+        if date_from:
+            queryset = queryset.filter(timestamp__date__gte=date_from)
+        date_to = (self.request.query_params.get('date_to') or '').strip()
+        if date_to:
+            queryset = queryset.filter(timestamp__date__lte=date_to)
+
         return queryset.order_by('-timestamp')
 
     def get_permissions(self):
@@ -1459,6 +1477,12 @@ class FeedbackView(viewsets.ModelViewSet):
             detail=f'批量流转为 {status_value}，{ok_count}/{len(ids)} 条',
             request=request,
         )
+        #: ⚠️ 第 224 批：批量流转同样要通知到人 —— 否则"批量标记已处理 + 填了回复"
+        #: 的用户端体验是：状态和回复都在库里，但没人知道。
+        #: 注意只通知**真的变成已处理**的那些（批量里可能夹着不在权限范围内的 id）。
+        for feedback in feedbacks.values():
+            if feedback.status == 'resolved':
+                self._notify_feedback_replied(feedback, request.user)
         return Response({
             'status': status_value,
             'requested': len(ids),
@@ -1534,6 +1558,110 @@ class FeedbackView(viewsets.ModelViewSet):
             'results': results,
         })
 
+    # ── 第 224 批：样本确认（网页端就能做，不必进 Django 原生 admin）─────────
+    #
+    # 改前：`verify_status`（待确认/已确认/已排除）在序列化器里是**只读**的，
+    # 也没有任何接口能改它 —— 管理员只能去 Django 原生 admin 里勾选，
+    # 或者干脆不确认，于是 `export_feedback_dataset` 导出来的训练集永远是空的。
+    # **三道闸门（提交 → 人工确认 → 导出）断在中间那道，而且断在网页后台之外。**
+    @action(detail=True, methods=['post'], url_path='verify-sample',
+            permission_classes=[IsFeedbackEditor])
+    def verify_sample(self, request, pk=None):
+        """
+        确认 / 排除一条识别纠错样本
+
+            POST /api/feedback/{id}/verify-sample/  {"verify_status": "confirmed"}
+
+        `verify_status` 取值见 `Feedback.VERIFY_CHOICES`（pending / confirmed / rejected）。
+        """
+        feedback = self.get_object()
+        value = (request.data.get('verify_status') or '').strip()
+        valid = {choice[0] for choice in Feedback.VERIFY_CHOICES}
+        if value not in valid:
+            return Response({'verify_status': [f'只能取 {sorted(valid)} 之一']},
+                            status=status.HTTP_400_BAD_REQUEST)
+        #: 只有"识别纠错 + 用户说错了 + 给了正确类别"才算训练样本（模型属性已定义好口径）。
+        #: 对无关反馈点"确认"没有意义，而且会让统计里的"样本数"虚高。
+        if not feedback.is_trainable:
+            return Response(
+                {'detail': '这条反馈不是可训练样本（需要：类型为识别纠错、用户判定识别有误、'
+                           '并给出了正确病害）'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        feedback.verify_status = value
+        feedback.save(update_fields=['verify_status'])
+        logger.info('样本确认 feedback=%s -> %s by=%s',
+                    feedback.id, value, request.user.username)
+        return Response(self.get_serializer(feedback).data)
+
+    @action(detail=False, methods=['post'], url_path='bulk-verify-samples',
+            permission_classes=[IsFeedbackEditor])
+    def bulk_verify_samples(self, request):
+        """批量确认/排除（body: {"ids": [...], "verify_status": "confirmed"}）"""
+        value = (request.data.get('verify_status') or '').strip()
+        valid = {choice[0] for choice in Feedback.VERIFY_CHOICES}
+        if value not in valid:
+            return Response({'verify_status': [f'只能取 {sorted(valid)} 之一']},
+                            status=status.HTTP_400_BAD_REQUEST)
+        ids, error = _parse_bulk_ids(request)
+        if error:
+            return error
+        feedbacks = {f.id: f for f in self.get_queryset().filter(id__in=ids)}
+        results = []
+        ok_count = 0
+        for feedback_id in ids:
+            feedback = feedbacks.get(feedback_id)
+            if feedback is None:
+                results.append({'id': feedback_id, 'ok': False, 'detail': '反馈不存在'})
+                continue
+            if not feedback.is_trainable:
+                results.append({'id': feedback_id, 'ok': False, 'detail': '不是可训练样本'})
+                continue
+            feedback.verify_status = value
+            feedback.save(update_fields=['verify_status'])
+            ok_count += 1
+            results.append({'id': feedback_id, 'ok': True})
+        logger.info('批量确认样本 %s 条 -> %s by=%s', ok_count, value, request.user.username)
+        return Response({
+            'requested': len(ids),
+            'succeeded': ok_count,
+            'failed': len(ids) - ok_count,
+            'results': results,
+        })
+
+    @action(detail=False, methods=['get'], url_path='stats',
+            permission_classes=[IsFeedbackEditor])
+    def stats(self, request):
+        """
+        统计卡数据（**跟随当前筛选**）
+
+        改前：前端为四张卡各发一次 `page_size=1` 的请求拿 `count`，
+        切了类型/关键字之后**统计仍是全量** —— 数字和列表对不上，最容易被误读。
+        现在一个接口、同一套 `get_queryset()`（含全部筛选参数），所以永远一致。
+        """
+        queryset = self.get_queryset()
+        by_status = {value: 0 for value, _label in Feedback.STATUS_CHOICES}
+        for row in queryset.values('status').annotate(n=Count('id')):
+            if row['status'] in by_status:
+                by_status[row['status']] = row['n']
+        #: 训练样本三态：只统计"可训练"的那些（口径与 `Feedback.is_trainable` 一致）
+        trainable = queryset.filter(category='recognition', is_correct=False,
+                                    corrected_pest__isnull=False)
+        samples = {value: 0 for value, _label in Feedback.VERIFY_CHOICES}
+        for row in trainable.values('verify_status').annotate(n=Count('id')):
+            if row['verify_status'] in samples:
+                samples[row['verify_status']] = row['n']
+        return Response({
+            'total': queryset.count(),
+            'pending': by_status.get('pending', 0),
+            'processing': by_status.get('processing', 0),
+            'resolved': by_status.get('resolved', 0),
+            'samples_pending': samples.get('pending', 0),
+            'samples_confirmed': samples.get('confirmed', 0),
+            'samples_rejected': samples.get('rejected', 0),
+            'samples_total': sum(samples.values()),
+        })
+
     @action(detail=True, methods=['post'], permission_classes=[IsFeedbackEditor])
     def reply(self, request, pk=None):
         """
@@ -1580,7 +1708,40 @@ class FeedbackView(viewsets.ModelViewSet):
                 logger.exception('反馈回复翻译调度失败 feedback=%s', feedback.id)
 
         logger.info('管理员 %s 处理了反馈 id=%s -> %s', request.user.username, feedback.id, feedback.status)
+        #: ⚠️ 第 224 批：**回复要通知到提交人**。
+        #: 改前一次性回复完，用户那边**什么都收不到** —— 站内信体系里论坛回复、
+        #: 专家咨询、点赞都接了 `notify()`，唯独反馈的 reply/bulk_status 没接，
+        #: 用户必须自己再进一次"反馈中心"才看得到回复。闭环断在这里。
+        self._notify_feedback_replied(feedback, request.user)
         return Response(self.get_serializer(feedback).data)
+
+    def _notify_feedback_replied(self, feedback, actor):
+        """标记「已处理」或写了回复时，给提交人发一条站内通知（失败只记日志）"""
+
+        if feedback.user_id is None:
+            return
+        if feedback.status != 'resolved' and not (feedback.admin_reply or '').strip():
+            return
+        try:
+            from .views_notify import notify
+
+            snippet = (feedback.admin_reply or '').strip()
+            if len(snippet) > 60:
+                snippet = snippet[:60] + '…'
+            notify(
+                feedback.user,
+                type='feedback',
+                title='你的反馈已有回复',
+                message=(f'{actor.username} 回复了你的反馈：{snippet}' if snippet
+                         else f'{actor.username} 已处理你的反馈'),
+                title_en='Your feedback has a reply',
+                message_en=(f'{actor.username} replied to your feedback' if not snippet
+                            else f'{actor.username} replied to your feedback: {snippet}'),
+                url='/feedback',
+                actor=actor,
+            )
+        except Exception:  # noqa: BLE001 —— 通知失败绝不能影响管理员处理反馈
+            logger.exception('反馈回复通知投递失败 feedback=%s', feedback.id)
 
 
 class PestEncyclopediaViewSet(viewsets.ModelViewSet):

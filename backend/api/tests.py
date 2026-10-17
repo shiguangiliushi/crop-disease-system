@@ -9698,6 +9698,169 @@ class AdminUserStatusTests(APITestCase):
 #      这是不可逆操作 —— 与单条 destroy 的护栏对齐后再收紧一档）；
 #   3. 两条接口共用同一套 ids 校验（数组、逐项转 int、去重、上限 200）。
 # ============================================================================
+class FeedbackClosureTests(APITestCase):
+    """反馈闭环：样本确认 / 统计 / 回复通知（第 224 批）
+
+    改前的断点（都是用户/评审指出的）：
+
+    * `verify_status`（待确认/已确认/已排除）在序列化器里**只读**，也没有任何接口能改它 ——
+      管理员只能进 Django 原生 admin 勾选。于是"提交 → 人工确认 → 导出训练集"三步
+      断在中间那道，而且断在网页后台之外；
+    * 回复 / 批量流转**不发通知**（`views.py` 里 `notify` 出现 0 次）—— 用户必须自己
+      再进一次"反馈中心"才看得到回复；
+    * 统计卡是 4 个不带筛选的 `page_size=1` 请求，切了筛选数字不动。
+    """
+
+    def setUp(self):
+        cache.clear()
+        from .models import EditorModuleGrant
+
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username='zz_cl_super', password='pw12345678', email='', role='ADMIN',
+        )
+        self.editor = User.objects.create_user(
+            username='zz_cl_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='feedback',
+                                        granted_by=self.superuser)
+        self.author = User.objects.create_user(
+            username='zz_cl_author', password='pw12345678', role='USER',
+        )
+        self.plain_user = User.objects.create_user(
+            username='zz_cl_plain', password='pw12345678', role='USER',
+        )
+
+        self.pest = PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='cl_apple_scab',
+        )
+        #: 可训练样本：识别纠错 + 用户说错了 + 给了正确类别（口径同 `Feedback.is_trainable`）
+        self.trainable = Feedback.objects.create(
+            user=self.author, category='recognition', suggestion='识别错了',
+            disease_name='苹果黑腐病', confidence=0.6, is_correct=False,
+            corrected_pest=self.pest,
+        )
+        #: 不可训练：普通建议
+        self.plain = Feedback.objects.create(
+            user=self.author, category='suggestion', suggestion='希望加一个导出按钮',
+        )
+        self.others = Feedback.objects.create(
+            user=self.plain_user, category='suggestion', suggestion='别人的反馈',
+        )
+
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain_user)
+
+    # ---------- 样本确认 ----------
+    def test_verify_sample_confirms_trainable_record(self):
+        response = self.client_editor.post(
+            f'/api/feedback/{self.trainable.id}/verify-sample/',
+            {'verify_status': 'confirmed'}, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.trainable.refresh_from_db()
+        self.assertEqual(self.trainable.verify_status, 'confirmed')
+        self.assertEqual(response.data['verify_status'], 'confirmed')
+
+    def test_verify_sample_rejects_non_trainable_record(self):
+        """普通建议不参与训练样本池 —— 点了"确认"会让样本数虚高。"""
+        response = self.client_editor.post(
+            f'/api/feedback/{self.plain.id}/verify-sample/',
+            {'verify_status': 'confirmed'}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.verify_status, 'pending')
+
+    def test_verify_sample_rejects_invalid_status(self):
+        response = self.client_editor.post(
+            f'/api/feedback/{self.trainable.id}/verify-sample/',
+            {'verify_status': 'whatever'}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_plain_user_cannot_verify_samples(self):
+        response = self.client_plain.post(
+            f'/api/feedback/{self.trainable.id}/verify-sample/',
+            {'verify_status': 'confirmed'}, format='json',
+        )
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_bulk_verify_reports_per_item(self):
+        """批量里混了不可训练的那条：整体不失败，逐条给成败。"""
+        response = self.client_editor.post('/api/feedback/bulk-verify-samples/', {
+            'ids': [self.trainable.id, self.plain.id], 'verify_status': 'rejected',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['succeeded'], 1)
+        self.assertEqual(response.data['failed'], 1)
+        self.trainable.refresh_from_db()
+        self.assertEqual(self.trainable.verify_status, 'rejected')
+
+    # ---------- 统计跟随筛选 ----------
+    def test_stats_follow_filters(self):
+        all_stats = self.client_editor.get('/api/feedback/stats/').data
+        self.assertGreaterEqual(all_stats['total'], 3)
+        self.assertEqual(all_stats['samples_pending'], 1, '待确认样本应当只有 1 条')
+
+        only_recognition = self.client_editor.get(
+            '/api/feedback/stats/', {'category': 'recognition'}).data
+        self.assertLess(only_recognition['total'], all_stats['total'],
+                        '按类型筛选后总数必须变小，否则统计没跟随筛选')
+
+        only_confirmed = self.client_editor.get(
+            '/api/feedback/stats/', {'verify_status': 'confirmed'}).data
+        self.assertEqual(only_confirmed['total'], 0)
+
+    def test_stats_accepts_date_range(self):
+        today = timezone.localdate().strftime('%Y-%m-%d')
+        data = self.client_editor.get(
+            '/api/feedback/stats/', {'date_from': today, 'date_to': today}).data
+        self.assertGreaterEqual(data['total'], 3)
+        old = self.client_editor.get(
+            '/api/feedback/stats/',
+            {'date_to': (timezone.localdate() - timedelta(days=30)).strftime('%Y-%m-%d')}).data
+        self.assertEqual(old['total'], 0, '时间范围应当把今天的记录排除掉')
+
+    # ---------- 回复通知 ----------
+    def test_reply_notifies_submitter(self):
+        Notification.objects.filter(recipient=self.author).delete()
+        response = self.client_editor.post(f'/api/feedback/{self.plain.id}/reply/', {
+            'status': 'resolved', 'admin_reply': '已记录，下个版本加导出',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+
+        note = Notification.objects.filter(recipient=self.author, type='feedback').first()
+        self.assertIsNotNone(note, '回复后必须给提交人发站内通知')
+        self.assertEqual(note.url, '/feedback')
+        self.assertIn('回复', note.title)
+        self.assertTrue(note.title_en, '英文界面下不能是中文')
+        self.assertEqual(note.get_type_display(), '反馈回复')
+
+    def test_bulk_status_notifies_resolved_submitters(self):
+        Notification.objects.filter(type='feedback').delete()
+        response = self.client_editor.post('/api/feedback/bulk-status/', {
+            'ids': [self.plain.id, self.others.id],
+            'status': 'resolved', 'admin_reply': '统一回复：已收到',
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            Notification.objects.filter(type='feedback').count(), 2,
+            '两条反馈的提交人都该收到通知',
+        )
+
+    def test_reply_to_own_feedback_does_not_notify_self(self):
+        """`notify()` 默认不给"自己发给自己"—— 管理员处理自己提的反馈也不该打扰。"""
+        Notification.objects.filter(recipient=self.editor).delete()
+        mine = Feedback.objects.create(user=self.editor, category='bug', suggestion='我自己提的')
+        self.client_editor.post(f'/api/feedback/{mine.id}/reply/', {
+            'status': 'resolved', 'admin_reply': '已修复',
+        }, format='json')
+        self.assertEqual(
+            Notification.objects.filter(recipient=self.editor, type='feedback').count(), 0)
+
 class FeedbackBulkActionTests(APITestCase):
     """批量改状态 / 批量删除（第 138 批）"""
 

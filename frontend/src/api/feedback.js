@@ -105,6 +105,29 @@ export async function bulkDeleteFeedback(ids) {
   return response.data;
 }
 
+/** 统计卡数据（第 224 批）：一次请求、**跟随当前筛选** */
+export async function fetchFeedbackStats(params = {}) {
+  const response = await http.get('/feedback/stats/', { params });
+  return response.data;
+}
+
+/** 确认 / 排除一条识别纠错样本（第 224 批；改前只能在 Django 原生 admin 里勾选） */
+export async function verifyFeedbackSample(id, verifyStatus) {
+  const response = await http.post(`/feedback/${id}/verify-sample/`, {
+    verify_status: verifyStatus,
+  });
+  return response.data;
+}
+
+/** 批量确认 / 排除样本 */
+export async function bulkVerifyFeedbackSamples(ids = [], verifyStatus = 'confirmed') {
+  const response = await http.post('/feedback/bulk-verify-samples/', {
+    ids,
+    verify_status: verifyStatus,
+  });
+  return response.data;
+}
+
 export default {
   submitFeedback,
   fetchMyFeedback,
@@ -112,4 +135,7 @@ export default {
   replyFeedback,
   bulkUpdateFeedbackStatus,
   bulkDeleteFeedback,
+  fetchFeedbackStats,
+  verifyFeedbackSample,
+  bulkVerifyFeedbackSamples,
 };

@@ -203,6 +203,14 @@ api_urlpatterns = [
     # ⚠️ FeedbackView 是用 as_view({...}) **显式映射**注册的（不是 router.register），
     # 所以 @action 装饰器不会自动生成路由，必须在这里手写一条，否则 /reply/ 会 404。
     path('feedback/<int:pk>/reply/', FeedbackView.as_view({'post': 'reply'}), name='feedback-reply'),
+    #: ⚠️ 第 224 批：同样**必须手写**（`@action` 不会自动生成路由，上面两处注释已提醒过）。
+    #: 统计：四张卡改成一次请求，并且跟随当前筛选。
+    path('feedback/stats/', FeedbackView.as_view({'get': 'stats'}), name='feedback-stats'),
+    #: 样本确认（识别纠错的"待确认/已确认/已排除"）—— 改前只能进 Django 原生 admin 勾选。
+    path('feedback/<int:pk>/verify-sample/', FeedbackView.as_view({'post': 'verify_sample'}),
+         name='feedback-verify-sample'),
+    path('feedback/bulk-verify-samples/', FeedbackView.as_view({'post': 'bulk_verify_samples'}),
+         name='feedback-bulk-verify-samples'),
     
     # 认证相关
     path('register/', RegisterView.as_view(), name='register'),

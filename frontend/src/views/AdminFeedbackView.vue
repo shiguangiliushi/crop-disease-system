@@ -34,6 +34,27 @@
         <el-option :label="t('feedbackAdmin.catRecognition')" value="recognition" />
         <el-option :label="t('feedbackAdmin.catOther')" value="other" />
       </el-select>
+      <!-- 第 224 批：后端早就支持 is_correct / verify_status / 时间范围，
+           前端一直只给"状态 / 类型 / 关键字" —— 想筛"识别错的"或"待确认样本"
+           只能自己翻页找。 -->
+      <el-select v-model="filters.is_correct" :placeholder="t('feedbackAdmin.filterIsCorrect')" clearable style="width: 130px" @change="handleFilter" @clear="handleFilter">
+        <el-option :label="t('feedbackAdmin.isCorrectTrue')" value="true" />
+        <el-option :label="t('feedbackAdmin.isCorrectFalse')" value="false" />
+      </el-select>
+      <el-select v-model="filters.verify_status" :placeholder="t('feedbackAdmin.filterVerifyStatus')" clearable style="width: 140px" @change="handleFilter" @clear="handleFilter">
+        <el-option :label="t('feedbackAdmin.verifyPending')" value="pending" />
+        <el-option :label="t('feedbackAdmin.verifyConfirmed')" value="confirmed" />
+        <el-option :label="t('feedbackAdmin.verifyRejected')" value="rejected" />
+      </el-select>
+      <el-date-picker
+        v-model="dateRange"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        :start-placeholder="t('feedbackAdmin.dateRange')"
+        end-placeholder=" "
+        style="width: 240px"
+        @change="handleFilter"
+      />
       <el-input
         v-model="filters.search"
         :placeholder="t('feedbackAdmin.searchPlaceholder')"
@@ -80,6 +101,15 @@
           <div class="stat-tile-label">{{ t('feedbackAdmin.statusResolved') }}</div>
         </div>
       </div>
+      <!--: 第 224 批：样本池的待确认量 —— 它决定 `export_feedback_dataset` 能导出多少，
+           原来这个数字只在 Django 原生 admin 里看得到。 -->
+      <div class="stat-tile">
+        <span class="stat-tile-icon"><i class="fas fa-microscope"></i></span>
+        <div>
+          <div class="stat-tile-value">{{ stats.samples_pending }}</div>
+          <div class="stat-tile-label">{{ t('feedbackAdmin.statSamplesPending') }}</div>
+        </div>
+      </div>
     </div>
 
     <!-- 列表头条（第 29 批：原来列表直接铺在白底上，加一条着色头条 + 状态图例）
@@ -122,6 +152,27 @@
           @click="openBulkStatus"
         >
           <i class="fas fa-list-check"></i> {{ t('feedbackAdmin.bulkStatusAction') }}
+        </el-button>
+        <!--: 第 224 批：批量确认/排除样本（逐条成败由后端返回，不整体失败） -->
+        <el-button
+          size="small"
+          plain
+          type="success"
+          :disabled="selectedIds.length === 0"
+          :loading="verifyingId === 'bulk'"
+          @click="bulkChangeSamples('confirmed')"
+        >
+          <i class="fas fa-check-double"></i> {{ t('feedbackAdmin.confirmSample') }}
+        </el-button>
+        <el-button
+          size="small"
+          plain
+          type="danger"
+          :disabled="selectedIds.length === 0"
+          :loading="verifyingId === 'bulk'"
+          @click="bulkChangeSamples('rejected')"
+        >
+          <i class="fas fa-ban"></i> {{ t('feedbackAdmin.rejectSample') }}
         </el-button>
         <el-button
           v-if="canDeleteOthers"
@@ -212,6 +263,55 @@
           </template>
         </div>
 
+        <!--: ⚠️ 第 224 批：**识别纠错样本的闭环**。
+             后端一直下发 verify_status / corrected_pest_name / detection_summary，
+             但网页后台一个都没显示，也不能改 —— 管理员只能进 Django 原生 admin 勾选
+             "确认/排除"，于是三步闭环（提交 → 人工确认 → 导出训练集）断在中间，
+            且断在网页之外。 -->
+        <div v-if="item.is_trainable" class="item-sample">
+          <el-tag size="small" :type="verifyTagType(item.verify_status)" effect="light">
+            {{ t('feedbackAdmin.sampleLabel') }}：{{ verifyLabel(item.verify_status) }}
+          </el-tag>
+          <span v-if="item.corrected_pest_name" class="sample-corrected">
+            {{ t('feedbackAdmin.correctedTo', { name: item.corrected_pest_name }) }}
+          </span>
+          <span v-if="item.detection_summary" class="sample-summary">
+            <i class="fas fa-link"></i> {{ item.detection_summary }}
+          </span>
+          <RouterLink
+            v-if="item.detection_id"
+            :to="{ path: '/history', query: { record: item.detection_id } }"
+            class="sample-link"
+          >
+            {{ t('feedbackAdmin.viewDetection') }} <i class="fas fa-arrow-up-right-from-square"></i>
+          </RouterLink>
+          <span class="sample-actions">
+            <el-button
+              size="small"
+              type="success"
+              plain
+              :loading="verifyingId === item.id"
+              :disabled="item.verify_status === 'confirmed'"
+              @click="changeSample(item, 'confirmed')"
+            >{{ t('feedbackAdmin.confirmSample') }}</el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :loading="verifyingId === item.id"
+              :disabled="item.verify_status === 'rejected'"
+              @click="changeSample(item, 'rejected')"
+            >{{ t('feedbackAdmin.rejectSample') }}</el-button>
+            <el-button
+              v-if="item.verify_status !== 'pending'"
+              size="small"
+              text
+              :loading="verifyingId === item.id"
+              @click="changeSample(item, 'pending')"
+            >{{ t('feedbackAdmin.resetSample') }}</el-button>
+          </span>
+        </div>
+
         <div v-if="item.admin_reply" class="item-reply">
           <strong><i class="fas fa-reply-all"></i> {{ t('feedbackAdmin.adminReply') }}</strong>
           <p>{{ localizedField(item, 'admin_reply') }}</p>
@@ -244,6 +344,33 @@
         </el-form-item>
         <el-form-item :label="t('feedbackAdmin.originalContent')">
           <el-input :model-value="localizedField(current, 'suggestion') || t('feedbackAdmin.noText')" type="textarea" :rows="3" disabled />
+        </el-form-item>
+        <!--: 第 224 批：弹窗里补上**截图与识别摘要** ——
+             原来只有"提交人 + 原文 + 状态 + 回复框"，管理员想核对"用户说识别错了，
+             到底是哪张图、当时判成了什么"，得关掉弹窗回到卡片上看。 -->
+        <el-form-item v-if="current?.image_url" :label="t('feedbackAdmin.screenshot')">
+          <el-image
+            :src="current.image_url"
+            :preview-src-list="[current.image_url]"
+            fit="contain"
+            preview-teleported
+            style="max-height: 160px"
+          />
+        </el-form-item>
+        <el-form-item v-if="current?.detection_summary || current?.corrected_pest_name"
+                      :label="t('feedbackAdmin.sampleLabel')">
+          <div class="reply-context">
+            <span v-if="current?.detection_summary">{{ current.detection_summary }}</span>
+            <span v-if="current?.corrected_pest_name" class="sample-corrected">
+              {{ t('feedbackAdmin.correctedTo', { name: current.corrected_pest_name }) }}
+            </span>
+            <RouterLink
+              v-if="current?.detection_id"
+              :to="{ path: '/history', query: { record: current.detection_id } }"
+              class="sample-link"
+              @click="replyVisible = false"
+            >{{ t('feedbackAdmin.viewDetection') }}</RouterLink>
+          </div>
         </el-form-item>
         <el-form-item :label="t('feedbackAdmin.statusFilter')">
           <el-radio-group v-model="replyForm.status">
@@ -336,7 +463,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { fetchMyFeedback, replyFeedback, deleteFeedback, bulkDeleteFeedback, bulkUpdateFeedbackStatus } from '@/api/feedback';
+import { fetchFeedbackStats, verifyFeedbackSample, bulkVerifyFeedbackSamples, fetchMyFeedback, replyFeedback, deleteFeedback, bulkDeleteFeedback, bulkUpdateFeedbackStatus } from '@/api/feedback';
 import { formatApiError } from '@/api/http';
 import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 67 批：多语言
@@ -411,6 +538,62 @@ export default {
     //    所以第一版端到端脚本（只看 pageerror）还是绿的 —— 是截图里那三条红提示才暴露出来。
     //    现在它挪到 `filters` 声明之后。
 
+    // ── 第 224 批：识别纠错样本的确认/排除 ──────────────────────────────
+    const verifyingId = ref(null);
+
+    const verifyLabel = (value) => ({
+      pending: t('feedbackAdmin.verifyPending'),
+      confirmed: t('feedbackAdmin.verifyConfirmed'),
+      rejected: t('feedbackAdmin.verifyRejected'),
+    }[value] || t('feedbackAdmin.verifyPending'));
+
+    const verifyTagType = (value) => ({
+      pending: 'warning', confirmed: 'success', rejected: 'info',
+    }[value] || 'warning');
+
+    /** 单条：确认 / 排除 / 改回待确认 */
+    const changeSample = async (item, nextStatus) => {
+      verifyingId.value = item.id;
+      try {
+        const updated = await verifyFeedbackSample(item.id, nextStatus);
+        item.verify_status = updated?.verify_status || nextStatus;
+        ElMessage.success(nextStatus === 'confirmed'
+          ? t('feedbackAdmin.sampleConfirmed')
+          : nextStatus === 'rejected'
+            ? t('feedbackAdmin.sampleRejected')
+            : t('feedbackAdmin.verifyPending'));
+        //: 卡片上的状态变了，待确认样本数也要跟着变
+        fetchStats();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('feedbackAdmin.sampleFailed')));
+      } finally {
+        verifyingId.value = null;
+      }
+    };
+
+    /** 批量：整体不失败，逐条成败由后端返回 */
+    const bulkChangeSamples = async (nextStatus) => {
+      if (!selectedIds.value.length) return;
+      verifyingId.value = 'bulk';
+      try {
+        const result = await bulkVerifyFeedbackSamples(selectedIds.value, nextStatus);
+        const ok = result?.succeeded ?? 0;
+        const failed = result?.failed ?? 0;
+        if (failed) {
+          ElMessage.warning(`${t('feedbackAdmin.sampleFailed')}：${ok}/${ok + failed}`);
+        } else {
+          ElMessage.success(nextStatus === 'confirmed'
+            ? t('feedbackAdmin.sampleConfirmed')
+            : t('feedbackAdmin.sampleRejected'));
+        }
+        await loadList();
+      } catch (error) {
+        ElMessage.error(formatApiError(error, t('feedbackAdmin.sampleFailed')));
+      } finally {
+        verifyingId.value = null;
+      }
+    };
+
     const openBulkStatus = () => {
       bulkStatusForm.value = { status: 'processing', admin_reply: '' };
       bulkStatusVisible.value = true;
@@ -475,7 +658,25 @@ export default {
       }
     };
 
-    const filters = ref({ status: '', category: '', search: '' });
+    const filters = ref({
+      status: '',
+      category: '',
+      search: '',
+      //: 第 224 批：后端早就支持这三个筛选，前端一直没接
+      is_correct: '',
+      verify_status: '',
+      date_from: '',
+      date_to: '',
+    });
+    //: 日期区间的 UI 模型 → 拆成 date_from / date_to 两个查询参数。
+    //: ⚠️ 必须用 watch 同步：`el-date-picker` 的 daterange 值是个数组，
+    //: 直接绑到两个查询参数上做不到；而且 `@change` 只在交互时触发，
+    //: 清空、URL 回填这些路径不会走它。
+    const dateRange = ref([]);
+    watch(dateRange, (range) => {
+      filters.value.date_from = Array.isArray(range) && range[0] ? range[0] : '';
+      filters.value.date_to = Array.isArray(range) && range[1] ? range[1] : '';
+    });
 
     /** 翻页/换筛选时清空选择：选中的是"上一屏的东西"，留着容易误操作
      *  ⚠️ 必须放在 `filters` 声明**之后**（取值函数会立刻读它，写在前面就是 TDZ 报错） */
@@ -515,34 +716,44 @@ export default {
     }[status] || status);
 
     // 状态统计小卡（第 28 批）：各用一次 page_size=1 的请求拿 count
-    const stats = ref({ total: 0, pending: 0, processing: 0, resolved: 0 });
+    const stats = ref({ total: 0, pending: 0, processing: 0, resolved: 0, samples_pending: 0 });
 
     const fetchStats = async () => {
       try {
-        const [all, pending, processing, resolved] = await Promise.all([
-          fetchMyFeedback({ page: 1, page_size: 1 }),
-          fetchMyFeedback({ page: 1, page_size: 1, status: 'pending' }),
-          fetchMyFeedback({ page: 1, page_size: 1, status: 'processing' }),
-          fetchMyFeedback({ page: 1, page_size: 1, status: 'resolved' }),
-        ]);
+        //: ⚠️ 第 224 批：改成一个 `stats` 接口，**并且带上当前筛选**。
+        //: 原来是 4 个 `page_size=1` 的并发请求，且一个筛选参数都不带 ——
+        //: 切了类型/关键字之后数字仍是全量，和下面的列表对不上（最容易被误读）。
+        const data = await fetchFeedbackStats(buildFilterParams());
         stats.value = {
-          total: all?.count || 0,
-          pending: pending?.count || 0,
-          processing: processing?.count || 0,
-          resolved: resolved?.count || 0,
+          total: data?.total || 0,
+          pending: data?.pending || 0,
+          processing: data?.processing || 0,
+          resolved: data?.resolved || 0,
+          samples_pending: data?.samples_pending || 0,
         };
       } catch (error) {
         console.warn('获取反馈统计失败:', error);
       }
     };
 
-    const buildParams = () => {
-      const params = { page: page.value, page_size: pageSize.value };
+    /** 只含筛选条件（不含分页）—— 统计接口与列表共用同一套口径 */
+    const buildFilterParams = () => {
+      const params = {};
       if (filters.value.status) params.status = filters.value.status;
       if (filters.value.category) params.category = filters.value.category;
       if (filters.value.search.trim()) params.search = filters.value.search.trim();
+      if (filters.value.is_correct) params.is_correct = filters.value.is_correct;
+      if (filters.value.verify_status) params.verify_status = filters.value.verify_status;
+      if (filters.value.date_from) params.date_from = filters.value.date_from;
+      if (filters.value.date_to) params.date_to = filters.value.date_to;
       return params;
     };
+
+    const buildParams = () => ({
+      page: page.value,
+      page_size: pageSize.value,
+      ...buildFilterParams(),
+    });
 
     /**
      * 拉取列表（第 89 批：由"追加"改为**分页替换**）
@@ -674,6 +885,8 @@ export default {
     }, { immediate: true });
 
     return {
+      //: 第 224 批：样本确认/排除 + 日期区间 + 统计联动
+      dateRange, verifyingId, verifyLabel, verifyTagType, changeSample, bulkChangeSamples,
       t,
       items,
       stats,
