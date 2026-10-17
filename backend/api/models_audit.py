@@ -44,6 +44,10 @@ class AdminAuditLog(models.Model):
         ('comment.restore', '恢复已删除的评论'),
         ('comment.hard_delete', '彻底删除评论'),
         ('comment.bulk_delete', '批量软删除评论'),
+        #: ⚠️ 第 219 批：**帖子删除**（作者自删或管理员/版主代删）。
+        #: 以前只有评论有审计、帖子没有 —— 用户问"用户自己删了帖子，
+        #: 后台管理操作那里看不到吗"，答案就是这条缺失。
+        ('post.soft_delete', '删除帖子'),
         ('feedback.bulk_status', '批量流转反馈状态'),
         ('feedback.bulk_delete', '批量删除反馈'),
         # 第 172 批：控制台「识别记录」页的删除（不可逆，图片文件一并删）

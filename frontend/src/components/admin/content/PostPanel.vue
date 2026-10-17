@@ -444,7 +444,15 @@ const statusTagType = (status) => ({
 const buildParams = () => {
   const params = { page: forumPage.value, page_size: forumPageSize.value };
   if (forumFilters.value.board) params.board = forumFilters.value.board;
-  if (forumFilters.value.status) params.status = forumFilters.value.status;
+  //: ⚠️ 第 219 批：`deleted` 是**前端自己的**筛选项，不是后端的状态值 ——
+  //: 后端认的是 `only_deleted=true`（且只对管理员/版主生效，其他人传了也拿不到）。
+  //: 这里**不能**再把 `status=deleted` 发过去：那不是合法的 status，
+  //: 会让后端按状态过滤 → 一条都查不到（看着像"没有已删除帖子"，实际是参数传错）。
+  if (forumFilters.value.status === 'deleted') {
+    params.only_deleted = 'true';
+  } else if (forumFilters.value.status) {
+    params.status = forumFilters.value.status;
+  }
   if (forumFilters.value.mark === 'pinned') params.ordering = 'pinned';
   if (forumFilters.value.mark === 'essence') params.is_essence = 'true';
   if (forumFilters.value.search.trim()) params.search = forumFilters.value.search.trim();
@@ -1061,6 +1069,12 @@ onMounted(loadAll);
           <el-option :label="t('forumAdmin.statusPublished')" value="published" />
           <el-option :label="t('forumAdmin.statusDraft')" value="draft" />
           <el-option :label="t('forumAdmin.statusHidden')" value="hidden" />
+          <!-- ⚠️ 第 219 批：**已删除**（审计用）。
+               后端第 91 批就支持 `?only_deleted=true`（仅管理员/版主），
+               但前端一直没接 —— 于是用户在论坛删掉自己的帖子后，
+               管理端**翻不到任何痕迹**（用户就是这样问上来的）。
+               选它时走的是 `only_deleted`，不再发 `status`（见 buildParams）。 -->
+          <el-option :label="t('forumAdmin.statusDeleted')" value="deleted" />
         </el-select>
         <el-select v-model="forumFilters.mark" :placeholder="t('forumAdmin.markFilter')" clearable
                    style="width: 140px" @change="applyFilter" @clear="applyFilter">
@@ -1081,7 +1095,9 @@ onMounted(loadAll);
       </div>
 
       <!-- 批量操作条：只有能操作帖子的人才看得到 -->
-      <div v-if="forumCanModerate" class="bulk-bar">
+      <!--: ⚠️ 第 219 批：「已删除」视图里**不显示** — 批量通过/驳回/删除对已删除的帖子
+           全部会失败（后端按 `Post.active` 取对象 → 404）。留着只会让人以为功能坏了。 -->
+      <div v-if="forumCanModerate && forumFilters.status !== 'deleted'" class="bulk-bar">
         <span v-if="forumSelectedIds.length" class="bulk-count">
           {{ t('forumAdmin.selectedCount', { count: forumSelectedIds.length }) }}
         </span>
@@ -1116,7 +1132,9 @@ onMounted(loadAll);
         class="admin-table"
         @selection-change="onSelectionChange"
       >
-        <el-table-column v-if="forumCanModerate" type="selection" width="46" reserve-selection />
+        <!--: ⚠️ 第 219 批：勾选列同理 —— 「已删除」视图里没有可批量操作的对象，勾了也没用 -->
+        <el-table-column v-if="forumCanModerate && forumFilters.status !== 'deleted'"
+                         type="selection" width="46" reserve-selection />
 
         <el-table-column :label="t('forumAdmin.colTitle')" min-width="320">
           <template #default="{ row }">
@@ -1128,7 +1146,13 @@ onMounted(loadAll);
             <div class="post-sub">
               <span><i class="fas fa-user"></i> {{ row.author?.username || t('forum.unknownUser') }}</span>
               <span v-if="row.board"><i class="fas fa-layer-group"></i> {{ localizedField(row.board, 'name') }}</span>
-              <span><i class="fas fa-clock"></i> {{ formatTime(row.created_at, 'YYYY-MM-DD HH:mm') }}</span>
+              <!--: ⚠️ 第 219 批：看"已删除"时，**创建时间没有意义，删除时间才有**。
+                   软删除会把标题改成 `[已删除]`、正文清空，剩下能读的信息只有
+                   "谁发的、哪个版块、什么时候删的"。 -->
+              <span v-if="forumFilters.status === 'deleted' && row.deleted_at">
+                <i class="fas fa-trash-can"></i> {{ t('forumAdmin.deletedAt', { time: formatTime(row.deleted_at, 'YYYY-MM-DD HH:mm') }) }}
+              </span>
+              <span v-else><i class="fas fa-clock"></i> {{ formatTime(row.created_at, 'YYYY-MM-DD HH:mm') }}</span>
             </div>
           </template>
         </el-table-column>
@@ -1151,52 +1175,60 @@ onMounted(loadAll);
 
         <el-table-column :label="t('forumAdmin.colActions')" width="330" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" text @click="forumPreview(row)">
-              {{ t('review.view') }}
-            </el-button>
-            <!--
-              第 188 批：**已隐藏**的帖子也要能在行内恢复发布。
-              后端从第 187 批起就让"通过"接受 hidden（`pending`/`hidden` → published），
-              但这里原先判的是 `row.status === 'pending'` —— 于是"批量能恢复、单条没入口"，
-              管理员点开一条已隐藏的帖子，行内只有「置顶/加精/删除」，没有恢复的办法。
-              文案也分开：对待审叫「通过」，对已隐藏叫「恢复发布」，别让人以为
-              自己在处理一条待审帖。
-            -->
-            <el-button v-if="row.status === 'pending' || row.status === 'hidden'"
-                       size="small" type="primary" link
-                       :loading="forumActing === row.id" @click="forumApprove(row)">
-              {{ row.status === 'hidden' ? t('review.restore') : t('review.approve') }}
-            </el-button>
-            <!-- 驳回只对待审显示：已隐藏的再"驳回"是重复操作（后端也会跳过并说明原因） -->
-            <el-button v-if="row.status === 'pending'" size="small" type="danger" link
-                       @click="forumOpenReject(row)">
-              {{ t('review.reject') }}
-            </el-button>
-            <!--
-              第 182 批：**已发布**的帖子给一个「下架」入口。
-              原先界面上没有任何办法撤回已发布的内容：单条驳回只对待审显示、
-              批量驳回（后端）只处理 pending —— 用户反馈"点批量驳回没用"就是这个。
-              后端第 182 批已允许驳回处理 published（语义=下架，可再次通过恢复），
-              这里补上对应入口，走同一个驳回对话框（要填理由，进审核轨迹）。
-            -->
-            <el-button v-if="row.status === 'published' && forumCanModerate" size="small"
-                       type="warning" link @click="forumOpenReject(row)">
-              {{ t('review.unpublish') }}
-            </el-button>
-            <el-button v-if="forumCanModerate" size="small" link
-                       :type="row.is_pinned ? 'danger' : 'default'"
-                       :loading="forumActing === `pin-${row.id}`" @click="togglePin(row)">
-              {{ row.is_pinned ? t('forum.unpinAction') : t('forum.pinAction') }}
-            </el-button>
-            <el-button v-if="forumCanModerate" size="small" link
-                       :type="row.is_essence ? 'warning' : 'default'"
-                       :loading="forumActing === `essence-${row.id}`" @click="toggleEssence(row)">
-              {{ row.is_essence ? t('forum.unessenceAction') : t('forum.essenceAction') }}
-            </el-button>
-            <!-- 第 181 批：删帖只给全权管理员（后端 CanDeletePost 的既定口径）—— 原先这个按钮**没有任何 v-if**，编辑员看得到、点了必然 403 -->
-            <el-button v-if="forumCanDelete" size="small" type="danger" link title="仅全权管理员可删除帖子；编辑员请用【驳回】或软删评论处置" @click="removeOne(row)">
-              {{ t('feedbackAdmin.delete') }}
-            </el-button>
+            <!--: ⚠️ 第 219 批：已删除的帖子在这个视图里**只能看、不能操作** ——
+                 `retrieve` 走 `Post.active`，点「查看」会 404；置顶/加精/驳回对一条已删除的帖子
+                 也没有意义。一排点了必然报错的按钮，比没有按钮更糟。 -->
+            <span v-if="forumFilters.status === 'deleted'" class="muted">
+              {{ t('forumAdmin.deletedNoAction') }}
+            </span>
+            <template v-else>
+              <el-button size="small" text @click="forumPreview(row)">
+                {{ t('review.view') }}
+              </el-button>
+              <!--
+                第 188 批：**已隐藏**的帖子也要能在行内恢复发布。
+                后端从第 187 批起就让"通过"接受 hidden（`pending`/`hidden` → published），
+                但这里原先判的是 `row.status === 'pending'` —— 于是"批量能恢复、单条没入口"，
+                管理员点开一条已隐藏的帖子，行内只有「置顶/加精/删除」，没有恢复的办法。
+                文案也分开：对待审叫「通过」，对已隐藏叫「恢复发布」，别让人以为
+                自己在处理一条待审帖。
+              -->
+              <el-button v-if="row.status === 'pending' || row.status === 'hidden'"
+                         size="small" type="primary" link
+                         :loading="forumActing === row.id" @click="forumApprove(row)">
+                {{ row.status === 'hidden' ? t('review.restore') : t('review.approve') }}
+              </el-button>
+              <!-- 驳回只对待审显示：已隐藏的再"驳回"是重复操作（后端也会跳过并说明原因） -->
+              <el-button v-if="row.status === 'pending'" size="small" type="danger" link
+                         @click="forumOpenReject(row)">
+                {{ t('review.reject') }}
+              </el-button>
+              <!--
+                第 182 批：**已发布**的帖子给一个「下架」入口。
+                原先界面上没有任何办法撤回已发布的内容：单条驳回只对待审显示、
+                批量驳回（后端）只处理 pending —— 用户反馈"点批量驳回没用"就是这个。
+                后端第 182 批已允许驳回处理 published（语义=下架，可再次通过恢复），
+                这里补上对应入口，走同一个驳回对话框（要填理由，进审核轨迹）。
+              -->
+              <el-button v-if="row.status === 'published' && forumCanModerate" size="small"
+                         type="warning" link @click="forumOpenReject(row)">
+                {{ t('review.unpublish') }}
+              </el-button>
+              <el-button v-if="forumCanModerate" size="small" link
+                         :type="row.is_pinned ? 'danger' : 'default'"
+                         :loading="forumActing === `pin-${row.id}`" @click="togglePin(row)">
+                {{ row.is_pinned ? t('forum.unpinAction') : t('forum.pinAction') }}
+              </el-button>
+              <el-button v-if="forumCanModerate" size="small" link
+                         :type="row.is_essence ? 'warning' : 'default'"
+                         :loading="forumActing === `essence-${row.id}`" @click="toggleEssence(row)">
+                {{ row.is_essence ? t('forum.unessenceAction') : t('forum.essenceAction') }}
+              </el-button>
+              <!-- 第 181 批：删帖只给全权管理员（后端 CanDeletePost 的既定口径）—— 原先这个按钮**没有任何 v-if**，编辑员看得到、点了必然 403 -->
+              <el-button v-if="forumCanDelete" size="small" type="danger" link title="仅全权管理员可删除帖子；编辑员请用【驳回】或软删评论处置" @click="removeOne(row)">
+                {{ t('feedbackAdmin.delete') }}
+              </el-button>
+            </template>
           </template>
         </el-table-column>
 

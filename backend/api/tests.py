@@ -3677,6 +3677,54 @@ class PostSoftDeleteTests(TestCase):
         self.post.refresh_from_db()
         self.assertTrue(self.post.is_deleted)
 
+    # ---------- 第 219 批：删帖要留审计（用户问"后台操作那里看不到吗"） ----------
+
+    def test_author_delete_writes_audit_with_title_snapshot(self):
+        """⚠️ 标题快照必须是**删除前**的标题。
+
+        `soft_delete()` 会把标题改成 `[已删除]` —— 若审计写在它之后取标题，
+        记下来的就是一个没有信息量的字符串，"删的是哪条"事后无从查起。
+        """
+        original_title = self.post.title
+        self.author_client.delete(f'/api/forums/posts/{self.post.id}/')
+
+        log = AdminAuditLog.objects.filter(action='post.soft_delete').first()
+        self.assertIsNotNone(log, '删帖必须留一条审计日志')
+        self.assertEqual(log.target_type, 'post')
+        self.assertEqual(log.target_id, str(self.post.id))
+        self.assertEqual(log.target_repr, original_title, '标题快照应取删除前的值')
+        self.assertEqual(log.actor_id, self.author.id)
+        self.assertIn('作者删除自己的帖子', log.detail)
+        #: 中文标签能取出来（choices 里必须登记过这个动作）
+        self.assertEqual(log.get_action_display(), '删除帖子')
+
+    def test_admin_delete_audit_distinguishes_from_self_delete(self):
+        """同一张表里要能分清"作者自删"和"管理员代删" —— 这是审计最想知道的区别。"""
+        self.admin_client.delete(f'/api/forums/posts/{self.post.id}/')
+
+        log = AdminAuditLog.objects.filter(action='post.soft_delete').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.actor_id, self.admin.id)
+        self.assertIn('删除他人帖子', log.detail)
+        self.assertIn(self.author.username, log.detail, '代删要记下作者是谁')
+
+    def test_deleted_audit_exposes_deleted_at_for_admin(self):
+        """管理端「已删除」列表要能显示**什么时候删的** —— 否则只剩一个 `[已删除]`。"""
+        self.author_client.delete(f'/api/forums/posts/{self.post.id}/')
+        audited = self.admin_client.get('/api/forums/posts/', {'only_deleted': 'true', 'page_size': 100})
+        row = next(r for r in audited.data['results'] if r['id'] == self.post.id)
+        self.assertTrue(row['is_deleted'])
+        self.assertIsNotNone(row['deleted_at'], '要下发 deleted_at 供界面显示删除时间')
+
+    def test_is_deleted_cannot_be_reverted_through_api(self):
+        """`is_deleted` 是只读的：否则客户端可以自己把帖子"复活"，绕过软删除。"""
+        self.author_client.delete(f'/api/forums/posts/{self.post.id}/')
+        #: 已删除帖子取不到对象 → 404（比"忽略字段"更强的一道保险）
+        self.admin_client.patch(f'/api/forums/posts/{self.post.id}/',
+                                {'is_deleted': False}, format='json')
+        self.post.refresh_from_db()
+        self.assertTrue(self.post.is_deleted, '帖子不能被 API 改回未删除')
+
     def test_board_post_count_is_not_recounted_on_soft_delete(self):
         """
         软删除不回收版块计数 —— 这是刻意的：版块统计是**历史累计**口径，

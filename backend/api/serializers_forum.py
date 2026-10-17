@@ -208,11 +208,18 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
             'is_pinned', 'is_essence', 'status', 'is_draft', 'created_at', 'updated_at',
             'translation_stale', 'translation_source',
             'pests', 'pest_ids',   # 第 168 批：病害标签
+            #: 第 219 批：管理端「已删除」筛选要显示**什么时候被删的**。
+            #: 以前不下发这个字段 → 翻出来的记录只有 `[已删除]` 标题和创建时间，
+            #: 看不出"删了多久"，审计价值很低。
+            'is_deleted', 'deleted_at',
         ]
         read_only_fields = [  # 只读字段
             'author', 'view_count', 'like_count', 'comment_count',
             'status', 'created_at', 'updated_at',
-            'translation_stale', 'translation_source'
+            'translation_stale', 'translation_source',
+            #: ⚠️ 必须只读：否则客户端可以自己把 `is_deleted` 置回 False，
+            #: 等于绕过软删除把帖子"复活"。
+            'is_deleted', 'deleted_at',
         ]
 
     # ========================================================================

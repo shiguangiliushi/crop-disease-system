@@ -1042,13 +1042,36 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         权限不变（`CanDeletePost`：作者或管理员），响应仍是 204。
         需要**真删**（GDPR 式清理、清理测试数据）时请用管理命令，
         不要把这个入口改回硬删除。
+
+        ## 第 219 批：补一条审计日志
+
+        用户问"用户自己删除帖子，后台管理操作那里看不到吗" —— 核实后**确实看不到**：
+
+        - 这里原来只有一句 `logger.info`（写进 `logs/` 文本日志，页面上翻不到）；
+        - `AdminAuditLog.ACTION_CHOICES` 里当时**根本没有"删除帖子"这一项**（只有评论的）。
+
+        于是评论能审计、帖子不能 —— 同一套内容两套口径。现在两者都落表。
+
+        ⚠️ **必须在 `soft_delete()` 之前取标题**：`soft_delete()` 会把标题改成
+        `[已删除]`，之后再取就只能记到一个没有信息量的字符串（标题快照正是事后
+        "删的是哪条"的唯一线索）。
         """
         post = self.get_object()
         title = post.title
+        #: 作者自删 vs 管理员/版主代删 —— 审计最想知道的就是这个区别
+        is_self = post.author_id == getattr(request.user, 'id', None)
         post.soft_delete()
         logger.info(
             '帖子软删除 id=%s title=%r 操作人=%s（评论/点赞/收藏保留在库中）',
             post.id, title, request.user,
+        )
+        #: 第 219 批：落库留痕。标题用上面取到的快照（此刻 `post.title` 已是 `[已删除]`）。
+        log_admin_action(
+            request.user, 'post.soft_delete',
+            target_type='post', target_id=str(post.id), target_repr=title,
+            detail=('作者删除自己的帖子' if is_self
+                    else f'管理员/版主删除他人帖子（作者：{post.author.username if post.author_id else "已注销"}）'),
+            request=request,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
