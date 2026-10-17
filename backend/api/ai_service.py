@@ -97,9 +97,23 @@ class AIService:
     _instance = None
     model = None
 
-    # 恢复手动定义的类别名称列表
+    # ⚠️ 第 219 批：这份手写列表**只是兜底**，正常路径读的是权重里的 `names`。
+    #
+    # 它曾经导致一个真实的错位 bug：这里只有 38 条、**漏了 index 4 的
+    # `Background_without_leaves`**，而模型有 39 类 → 从 index 4 起全部错位一位，
+    # 于是"健康番茄"的图片会显示成"番茄晚疫病"（框上却写着健康番茄）。
+    #
+    # 现在两条防线：
+    #   ① `predict()` 优先用 `results[0].names`（与权重一起训练出来的，唯一权威）；
+    #   ② 这份列表**已补齐到 39 条并与模型顺序一致**，万一权重里没有 `names`，
+    #      兜底结果也是对的。
+    #
+    # 🔧 以后换模型，**先看权重里的 `names`**，再回来同步这份列表
+    #    （`python manage.py check_model_labels` 会直接比对并报出差异，见第 219 批）。
     class_names = [
         'Apple___Apple_scab', 'Apple___Black_rot', 'Apple___Cedar_apple_rust', 'Apple___healthy',
+        #: ⚠️ 这一条以前漏了，是那次错位 bug 的起点，别删
+        'Background_without_leaves',
         'Blueberry___healthy', 'Cherry___healthy', 'Cherry___Powdery_mildew',
         'Corn___Cercospora_leaf_spot Gray_leaf_spot', 'Corn___Common_rust', 'Corn___healthy',
         'Corn___Northern_Leaf_Blight', 'Grape___Black_rot', 'Grape___Esca_(Black_Measles)',
@@ -277,19 +291,73 @@ class AIService:
                         'annotated_image': None
                     }
 
-                # 检查类别ID是否有效
-                if class_id < 0 or class_id >= len(self.class_names):
+                # ══════════════════════════════════════════════════════════════
+                # 第 219 批：**类名以模型自带的 `names` 为准**，不再按索引取手写列表
+                # ══════════════════════════════════════════════════════════════
+                #
+                # ## 这里原来有一个真实的"错位一位"bug
+                #
+                # 用户报：拿 `Tomato___healthy` 的图片识别，**框上写"健康番茄 1.00"，
+                # 但下面的病害详情是"番茄晚疫病"**。模型没错，是这里错了。
+                #
+                # 手写的 `class_names` 只有 **38** 条，**漏了模型 index 4 的
+                # `Background_without_leaves`**（背景/无叶片），而模型实际有 **39** 类。
+                # 于是从 index 4 起全部错位一位：
+                #
+                # ```
+                # 模型 names[32]        = 'Tomato___healthy'     → 框上标签（读模型 names）→ 健康番茄 ✅
+                # 手写 class_names[32]  = 'Tomato___Late_blight'  → 详情标识（读手写列表）→ 番茄晚疫病 ❌
+                # ```
+                #
+                # **同一个 box 用了两套类名表**，所以界面会自相矛盾 ——
+                # 框和详情各说各的，而且不报错、不越界（38 条下标都有效），全程静默。
+                #
+                # ## 为什么改成读模型
+                #
+                # 权重文件里的 `names` 是**和权重一起训练出来的**，它才是唯一权威；
+                # 手写列表再准也是抄的，模型一换就错位，而且错得没有任何征兆。
+                # 手写列表保留为兜底（老权重里没有 `names` 时仍能用）。
+                model_names = (getattr(results[0], 'names', None)
+                               or getattr(self.model, 'names', None))
+                raw_class_name = ''
+                if isinstance(model_names, dict):
+                    raw_class_name = str(model_names.get(class_id) or '')
+
+                if raw_class_name:
+                    disease_identifier = raw_class_name
+                elif class_id < 0 or class_id >= len(self.class_names):
                     error_msg = f"无效的类别ID: {class_id}"
                     logger.error(error_msg)
                     return {
-                        'status': 'error', 
+                        'status': 'error',
                         'message': f'无效的类别ID: {class_id}',
                         'confidence': confidence,
                         'identifier': 'unknown',
                         'annotated_image': None
                     }
+                else:
+                    #: 权重里没有 `names` 才会走到这里（老模型兜底）
+                    disease_identifier = self.class_names[class_id]
+                    logger.warning('模型未提供 names，回落到手写 class_names[%s]=%s',
+                                   class_id, disease_identifier)
 
-                disease_identifier = self.class_names[class_id]
+                #: ⚠️ 第 219 批：`Background_without_leaves` 是"**画面里没有叶片**"，
+                #: 不是病害、也不是"健康"。以前它会被当成一个普通类名去查库，
+                #: 查不到就落进"未收录"分支，用户看到的是一个莫名其妙的占位结果。
+                #: 这里显式拦下来，给一句能指导动作的提示。
+                if disease_identifier == 'Background_without_leaves':
+                    logger.info('模型判定为背景/无叶片（class_id=%s），按未检出处理', class_id)
+                    return {
+                        'status': 'not_found',
+                        'message': '画面里没有找到叶片，请把叶片放满画面中间、避开杂乱背景后再试一次',
+                        'confidence': confidence,
+                        'identifier': 'no_leaf',
+                        'annotated_image': None
+                    }
+                #: ⚠️ 这里**不能再**写 `disease_identifier = self.class_names[class_id]`。
+                #: 第一版改的时候把这行漏掉了，它会把上面按模型算好的值**又覆盖回错位的那份**，
+                #: 表面上"改完了"，实际行为一点没变（而且不报错）——
+                #: 这就是为什么改动之后必须**端到端实测**，而不是只看代码对不对。
 
                 # 渲染带框图片
                 img_base64 = None

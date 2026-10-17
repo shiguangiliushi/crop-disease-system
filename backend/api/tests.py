@@ -11731,7 +11731,13 @@ class PestClassCoverageTests(TestCase):
     def test_every_class_name_matches_a_pest(self):
         missing = []
         wrong_crop = []
+        #: ⚠️ 第 219 批：`class_names` 里现在有 `Background_without_leaves`（第 4 条）。
+        #: 它代表"画面里没有叶片"，**本来就不该有词条**（既不是病害也不是健康植株），
+        #: 所以这里要排除掉 —— 否则这条护栏会误报。
+        #: 它在 `predict()` 里被显式拦下并返回"没有找到叶片"的提示。
         for label in AIService.class_names:
+            if label == 'Background_without_leaves':
+                continue
             pest, note = find_pest_info(label)
             if pest is None:
                 missing.append(f'{label}（{note}）')
@@ -11745,8 +11751,103 @@ class PestClassCoverageTests(TestCase):
         self.assertEqual(wrong_crop, [], '这些类名匹配到了别的作物：' + '；'.join(wrong_crop))
 
     def test_class_names_are_all_covered_by_seed_data(self):
-        """词条数应当不少于模型类名数（少一条就意味着有人会看到英文名）"""
-        self.assertGreaterEqual(PestInfo.objects.count(), len(AIService.class_names))
+        """词条数应当不少于**有病害的**类名数（少一条就意味着有人会看到英文名）
+
+        ⚠️ 第 219 批：要减掉 `Background_without_leaves` —— 它不需要词条。
+        原来这里是 `PestInfo.objects.count() >= len(class_names)`，
+        加上那一条之后 `38 >= 39` 会失败（不是词条少了，是尺子量错了）。
+        """
+        pest_classes = [n for n in AIService.class_names if n != 'Background_without_leaves']
+        self.assertGreaterEqual(PestInfo.objects.count(), len(pest_classes))
+
+
+class ModelLabelAlignmentTests(TestCase):
+    """
+    权重里的类名 ↔ 系统里用的类名（第 219 批）
+
+    ## 这一批修的是什么
+
+    用户拿 `Tomato___healthy` 的图片识别：**框上写"健康番茄 1.00"，
+    下面的病害详情却是"番茄晚疫病"**。模型没错 —— 错在这里：
+
+    ```
+    框上标签 ← results[0].names[class_id]      （模型自带，39 类）
+    详情标识 ← AIService.class_names[class_id] （手写列表，当时只有 38 类）
+    ```
+
+    手写列表漏了权重 index 4 的 `Background_without_leaves`，于是从 index 4 起
+    **整体错位一位**：`names[32]='Tomato___healthy'` 而 `class_names[32]='Tomato___Late_blight'`。
+    两个下标都合法、不越界、不报错，**全程静默**，界面自己跟自己矛盾。
+
+    ## 护栏分两层
+
+    * **不依赖权重**（任何环境都能跑）：`Tomato___healthy` 必须解析成"健康番茄"；
+      手写列表必须含 background、且无重复。
+    * **依赖权重**（没有权重就跳过）：逐索引比对权重 `names` 与 `class_names` ——
+      这正是当初能提前发现错位的那条断言。
+    """
+
+    def setUp(self):
+        #: 与 `PestClassCoverageTests` 同一个数据来源（自带数据、不联网）。
+        #: ⚠️ 不灌种子的话 `find_pest_info` 会返回"病害库为空"，
+        #: 用例会以"查不到词条"的形式失败 —— 看着像代码坏了，其实是测试没数据。
+        call_command('add_detailed_pests', stdout=StringIO())
+
+    #: 用户报的那一条，最直接的回归
+    def test_tomato_healthy_resolves_to_healthy_entry(self):
+        pest, note = find_pest_info('Tomato___healthy')
+        self.assertIsNotNone(pest, f'没匹配到词条：{note}')
+        self.assertEqual(pest.english_identifier, 'tomato_healthy')
+        self.assertEqual(pest.name, '健康番茄')
+        #: 反向：不能被错位到"晚疫病"上（那正是用户看到的错误结果）
+        self.assertNotEqual(pest.name, '番茄晚疫病')
+
+    def test_manual_class_names_include_background_and_are_unique(self):
+        names = list(AIService.class_names)
+        self.assertIn(
+            'Background_without_leaves', names,
+            '手写列表必须有"背景/无叶片"这一类 —— 当初漏了它就导致整体错位一位')
+        self.assertEqual(len(names), len(set(names)), '手写类名列表里有重复项')
+
+    @staticmethod
+    def _weights_names():
+        """取权重里的类名；取不到返回 None（让依赖权重的用例跳过）。"""
+        try:
+            AIService()
+            model = AIService.model
+            names = getattr(model, 'names', None) if model is not None else None
+            return dict(names) if isinstance(names, dict) and names else None
+        except Exception:      # noqa: BLE001 - 诊断性用例，加载失败就跳过
+            return None
+
+    def test_weights_names_match_manual_class_names(self):
+        """**逐索引**比对 —— 数量差一条、顺序差一位，都会让详情串到别的病害上。"""
+        names = self._weights_names()
+        if names is None:
+            self.skipTest('权重未加载（没有 best.pt 或加载失败），跳过依赖权重的比对')
+
+        manual = list(AIService.class_names)
+        self.assertEqual(len(names), len(manual),
+                         f'权重 {len(names)} 类 / 手写 {len(manual)} 类 —— 差一条即错位')
+        diff = [(i, names.get(i), manual[i]) for i in range(len(manual)) if names.get(i) != manual[i]]
+        self.assertEqual(diff, [], '以下索引的类名不一致（权重, 手写）：'
+                          + '；'.join(f'[{i}] {a!r} vs {b!r}' for i, a, b in diff))
+
+    def test_every_weight_class_resolves_to_a_pest_except_background(self):
+        """权重能输出的每个类都要能查到词条（background 除外，它不是病害）。"""
+        names = self._weights_names()
+        if names is None:
+            self.skipTest('权重未加载，跳过')
+
+        missing = []
+        for index in sorted(names):
+            raw = names[index]
+            if raw == 'Background_without_leaves':
+                continue
+            pest, _note = find_pest_info(raw)
+            if pest is None:
+                missing.append(f'[{index}] {raw}')
+        self.assertEqual(missing, [], '这些权重类名查不到词条：' + '；'.join(missing))
 
 
 class DetectResultContentTests(TestCase):
@@ -14017,6 +14118,32 @@ class HealthyPlantFallbackTests(TestCase):
         # 描述与建议要是人话，不能是"词条缺失"式的占位
         self.assertNotEqual(det['description'], '暂无详细描述')
         self.assertNotIn('请咨询农业专家获取防治建议', det['prevention'])
+
+    #: ⚠️ 第 219 批：`no_leaf`（画面里没有叶片）与 `healthy_plant` 是**同一类坑** ——
+    #: 不特判就会走通用回落 → `'no_leaf'.replace('_',' ').title()` = "No Leaf"
+    #: 被当成病害名，下面还跟着"暂无详细描述"。
+    def test_no_leaf_returns_actionable_chinese_text(self):
+        fake = {
+            'status': 'not_found',
+            'message': '画面里没有找到叶片',
+            'confidence': 0.6,
+            'identifier': 'no_leaf',
+            'annotated_image': None,
+        }
+        with patch.object(AIService, 'predict', return_value=fake):
+            resp = self._post_leaf()
+        self.assertEqual(resp.status_code, 200, resp.data)
+        det = resp.data['data']['detection']
+        self.assertNotIn('No Leaf', det['disease'], '中文界面不该出现英文占位病名')
+        self.assertIn('叶片', det['disease'])
+        #: 要给"怎么拍"的可执行提示，而不是词条缺失式的占位
+        self.assertNotEqual(det['description'], '暂无详细描述')
+        self.assertNotIn('请咨询农业专家获取防治建议', det['prevention'])
+        self.assertIn('拍', det['prevention'] + det['description'])
+        #: 英文侧同样不能空
+        self.assertTrue(det['disease_en'])
+        self.assertTrue(det['description_en'])
+        self.assertTrue(det['prevention_en'])
 
     def test_zero_detection_english_side_not_blank(self):
         """英文侧不能留空 —— 空串会让英文界面的"症状描述"整块空白。"""

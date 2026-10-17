@@ -928,6 +928,21 @@ class DetectView(APIView):
                         prevention_en = ('No treatment needed. Keep sensible spacing and ventilation; '
                                          're-check if abnormal leaves appear.')
 
+                    #: ⚠️ 第 219 批：`no_leaf`（画面里没有叶片）**同理必须特判**。
+                    #: 不特判就会走上面那条通用回落 → `'no_leaf'.replace('_',' ').title()`
+                    #: = **"No Leaf" 被当成病害名**，下面还跟着"暂无详细描述"。
+                    #: 这类"把失败装扮成一个像样的结果"的毛病，在第 213/219 批已经踩过两次。
+                    elif disease_identifier == 'no_leaf':
+                        disease_name = '没有识别到叶片'
+                        disease_name_en = 'No leaf detected in the photo'
+                        description = ('画面里没有找到明显的叶片主体。请把叶片放满画面中间、'
+                                       '避开杂乱背景，光线均匀后再拍一次。')
+                        description_en = ('No clear leaf was found in the frame. Fill the frame with a single '
+                                          'leaf against a plain background, in even light, and try again.')
+                        prevention = '这不是病害，无需用药。拍照时让叶片占满画面、背景干净、避免反光与阴影。'
+                        prevention_en = ('This is not a disease, so no treatment is needed. Fill the frame with '
+                                         'the leaf, keep the background plain and avoid glare or shadows.')
+
                     # 保存带标注的图片
                     annotated_image_path = None
                     if prediction.get('annotated_image'):
