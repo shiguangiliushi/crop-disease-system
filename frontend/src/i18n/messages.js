@@ -3067,10 +3067,10 @@ export const zhCN = {
   },
   calendar: {
     // ── 第 216 批：月历网格（口径必须写清楚，别被误读成日程表）──
-    gridTitle: '{month} 月 · 田间活动一览',
+    gridTitle: '{month} 月识别记录分布',
     gridSummary: '{days} 天有识别记录，共 {count} 条',
     //: ⚠️ 这句是**准确性关键**：任务只有月份粒度，格子里标的是识别记录。
-    gridHint: '格子里的数字是当天收到的识别记录条数（用于看出哪几天问题集中），不是排定在那天的农事任务；农事任务按月份列在下方。',
+    gridHint: '格子里的数字是当天收到的识别记录条数（用于看出哪几天问题集中），不是排定在那天的农事任务；农事任务按月列在本页上方。',
     gridMine: '我在这天识别过',
     gridLegendDot: '识别记录',
     gridNoData: '{month} 月还没有识别记录',
@@ -6101,9 +6101,9 @@ export const en = {
     statTotal: 'alerts',
   },
   calendar: {
-    gridTitle: 'Activity in {month}',
+    gridTitle: 'Diagnoses in {month}',
     gridSummary: '{days} day(s) with diagnoses, {count} in total',
-    gridHint: 'The number in each cell is how many diagnoses came in that day (so you can see when the trouble peaked) — it is NOT a scheduled field task. Monthly tasks are listed below.',
+    gridHint: 'The number in each cell is how many diagnoses came in that day (so you can see when the trouble peaked) — it is NOT a scheduled field task. Monthly tasks are listed above.',
     gridMine: 'You diagnosed on this day',
     gridLegendDot: 'diagnoses',
     gridNoData: 'No diagnoses in {month} yet',

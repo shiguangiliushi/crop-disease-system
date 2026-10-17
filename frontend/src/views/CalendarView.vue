@@ -64,6 +64,62 @@
         </button>
       </div>
 
+      <!-- 农事任务 -->
+      <section class="panel-card tasks-card">
+        <div class="panel-head">
+          <span class="panel-icon"><i class="fas fa-list-check"></i></span>
+          <h2 class="panel-title">{{ t('calendar.tasksOfMonth', { month }) }}</h2>
+          <span class="panel-count">{{ t('calendar.taskCount', { count: taskTotal }) }}</span>
+        </div>
+        <div class="panel-body">
+          <el-empty
+            v-if="!taskGroups.length"
+            :description="t('calendar.noTasks')"
+            :image-size="70"
+          />
+
+          <div v-for="group in taskGroups" :key="group.crop_type" class="crop-group">
+            <h3 class="crop-group-title">
+              <i class="fas fa-leaf"></i> {{ cropLabel(group.crop_type, group.crop_type_en) }}
+              <el-button
+                v-if="isAdmin"
+                size="small"
+                text
+                type="primary"
+                @click="openAddDialog(group.crop_type)"
+              >
+                <i class="fas fa-plus"></i> {{ t('calendar.addTask') }}
+              </el-button>
+            </h3>
+
+            <ul class="task-list">
+              <li v-for="task in group.tasks" :key="task.id" class="task-item">
+                <span class="task-type" :class="`is-${task.task_type}`">{{ taskTypeLabel(task.task_type) }}</span>
+                <div class="task-body">
+                  <div class="task-title-row">
+                    <strong>{{ localizedField(task, 'title') }}</strong>
+                    <!-- 第 77 批：用语言无关的 source_key 判断要不要显示来源（原来比中文串） -->
+                    <span v-if="task.source_key !== 'template'" class="task-source">
+                      {{ localizedField(task, 'source') }}
+                    </span>
+                  </div>
+                  <p v-if="task.detail" class="task-detail">{{ localizedField(task, 'detail') }}</p>
+                </div>
+                <button
+                  v-if="isAdmin"
+                  type="button"
+                  class="task-delete"
+                  :title="t('common.delete')"
+                  @click="removeTask(task)"
+                >
+                  <i class="fas fa-trash"></i>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- ⚠️ 第 216 批：**月历网格**。
            格子里标的是"这一天有几天识别记录"，**不是**排定在那天的农事任务 ——
            `CalendarTask` 只有月份粒度、没有日期，把任务摆进格子就是编数据。
@@ -113,111 +169,53 @@
         </div>
       </section>
 
-      <div class="calendar-main">
-        <!-- 农事任务 -->
+      <!-- 本月重点防范（真实统计） -->
+      <aside class="calendar-side">
         <section class="panel-card">
           <div class="panel-head">
-            <span class="panel-icon"><i class="fas fa-list-check"></i></span>
-            <h2 class="panel-title">{{ t('calendar.tasksOfMonth', { month }) }}</h2>
-            <span class="panel-count">{{ t('calendar.taskCount', { count: taskTotal }) }}</span>
+            <span class="panel-icon"><i class="fas fa-shield-virus"></i></span>
+            <h2 class="panel-title">{{ t('calendar.keyPrevention', { month }) }}</h2>
           </div>
           <div class="panel-body">
-            <el-empty
-              v-if="!taskGroups.length"
-              :description="t('calendar.noTasks')"
-              :image-size="70"
-            />
-
-            <div v-for="group in taskGroups" :key="group.crop_type" class="crop-group">
-              <h3 class="crop-group-title">
-                <i class="fas fa-leaf"></i> {{ cropLabel(group.crop_type, group.crop_type_en) }}
-                <el-button
-                  v-if="isAdmin"
-                  size="small"
-                  text
-                  type="primary"
-                  @click="openAddDialog(group.crop_type)"
-                >
-                  <i class="fas fa-plus"></i> {{ t('calendar.addTask') }}
-                </el-button>
-              </h3>
-
-              <ul class="task-list">
-                <li v-for="task in group.tasks" :key="task.id" class="task-item">
-                  <span class="task-type" :class="`is-${task.task_type}`">{{ taskTypeLabel(task.task_type) }}</span>
-                  <div class="task-body">
-                    <div class="task-title-row">
-                      <strong>{{ localizedField(task, 'title') }}</strong>
-                      <!-- 第 77 批：用语言无关的 source_key 判断要不要显示来源（原来比中文串） -->
-                      <span v-if="task.source_key !== 'template'" class="task-source">
-                        {{ localizedField(task, 'source') }}
-                      </span>
-                    </div>
-                    <p v-if="task.detail" class="task-detail">{{ localizedField(task, 'detail') }}</p>
-                  </div>
-                  <button
-                    v-if="isAdmin"
-                    type="button"
-                    class="task-delete"
-                    :title="t('common.delete')"
-                    @click="removeTask(task)"
-                  >
-                    <i class="fas fa-trash"></i>
-                  </button>
-                </li>
-              </ul>
-            </div>
+            <p class="panel-hint">{{ t('calendar.keyPreventionHint') }}</p>
+            <ul v-if="seasonalPests.length" class="pest-stat-list">
+              <li v-for="item in seasonalPests" :key="item.identifier">
+                <RouterLink :to="item.url" class="pest-stat">
+                  <span class="pest-stat-name">
+                    {{ localizedField(item, 'crop_type') }}·{{ localizedField(item, 'name') }}
+                  </span>
+                  <span class="pest-stat-count">{{ item.count }} {{ t('calendar.times') }}</span>
+                </RouterLink>
+              </li>
+            </ul>
+            <el-empty v-else :description="t('calendar.noRecords')" :image-size="60" />
           </div>
         </section>
 
-        <!-- 本月重点防范（真实统计） -->
-        <aside class="calendar-side">
-          <section class="panel-card">
-            <div class="panel-head">
-              <span class="panel-icon"><i class="fas fa-shield-virus"></i></span>
-              <h2 class="panel-title">{{ t('calendar.keyPrevention', { month }) }}</h2>
-            </div>
-            <div class="panel-body">
-              <p class="panel-hint">{{ t('calendar.keyPreventionHint') }}</p>
-              <ul v-if="seasonalPests.length" class="pest-stat-list">
-                <li v-for="item in seasonalPests" :key="item.identifier">
-                  <RouterLink :to="item.url" class="pest-stat">
-                    <span class="pest-stat-name">
-                      {{ localizedField(item, 'crop_type') }}·{{ localizedField(item, 'name') }}
-                    </span>
-                    <span class="pest-stat-count">{{ item.count }} {{ t('calendar.times') }}</span>
-                  </RouterLink>
-                </li>
-              </ul>
-              <el-empty v-else :description="t('calendar.noRecords')" :image-size="60" />
-            </div>
-          </section>
-
-          <section v-if="myHistory.length" class="panel-card">
-            <div class="panel-head">
-              <span class="panel-icon"><i class="fas fa-clock-rotate-left"></i></span>
-              <h2 class="panel-title">{{ t('calendar.lastYear') }}</h2>
-            </div>
-            <div class="panel-body">
-              <p class="panel-hint">{{ t('calendar.lastYearHint', { month }) }}</p>
-              <ul class="pest-stat-list">
-                <li v-for="item in myHistory" :key="item.name">
-                  <span class="pest-stat">
-                    <span class="pest-stat-name">
-                      {{ localizedField(item, 'crop_type') }}·{{ localizedField(item, 'name') }}
-                    </span>
-                    <span class="pest-stat-count">{{ item.count }} {{ t('calendar.times') }}</span>
+        <section v-if="myHistory.length" class="panel-card">
+          <div class="panel-head">
+            <span class="panel-icon"><i class="fas fa-clock-rotate-left"></i></span>
+            <h2 class="panel-title">{{ t('calendar.lastYear') }}</h2>
+          </div>
+          <div class="panel-body">
+            <p class="panel-hint">{{ t('calendar.lastYearHint', { month }) }}</p>
+            <ul class="pest-stat-list">
+              <li v-for="item in myHistory" :key="item.name">
+                <span class="pest-stat">
+                  <span class="pest-stat-name">
+                    {{ localizedField(item, 'crop_type') }}·{{ localizedField(item, 'name') }}
                   </span>
-                </li>
-              </ul>
-            </div>
-          </section>
+                  <span class="pest-stat-count">{{ item.count }} {{ t('calendar.times') }}</span>
+                </span>
+              </li>
+            </ul>
+          </div>
+        </section>
 
-          <RouterLink to="/alerts" class="side-link">
-            <i class="fas fa-triangle-exclamation"></i> {{ t('calendar.viewAlerts') }}
-          </RouterLink>
-        </aside>
-      </div>
+        <RouterLink to="/alerts" class="side-link">
+          <i class="fas fa-triangle-exclamation"></i> {{ t('calendar.viewAlerts') }}
+        </RouterLink>
+      </aside>
 
       <p class="calendar-source">
         <i class="fas fa-circle-info"></i> {{ localizedField(sourceNote, 'source_note') }}
@@ -786,17 +784,41 @@ export default {
   gap: 4px;
 }
 
-.calendar-main {
+/* ⚠️ 第 218 批：`.calendar-main`（1fr + 340px 双列）已随模板调整删除 ——
+ * 农事任务与网格现在都是全宽单列块，需要并排的只剩侧栏那两张统计卡。
+ * 用 `auto-fit` 而不是写死两列：`去年这个时候`这张卡是 `v-if` 的，
+ * 只有一张时它会自动铺满，不会留下一个空坑。 */
+.calendar-side {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  /*: 用 460px 而不是 300px：1200px 宽下 300px 会切出 **3 列**，
+   *  两张统计卡只占前两列，右边留下一个空坑（实测过）。
+   *  460px 时正好 2 列，窄屏自动降为 1 列。 */
+  /*: ⚠️ 下限必须写成 `min(460px, 100%)`：
+   *  直接写 `minmax(460px, 1fr)` 时，375px 的手机上这一列会**硬撑到 460px**，
+   *  整页横向溢出 105px（实测过）。`min()` 让下限随容器收缩，窄屏自动变一列。 */
+  grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr));
   gap: 16px;
   align-items: start;
 }
 
-.calendar-side {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.tasks-card {
+  margin-bottom: 16px;
+}
+
+/*: ⚠️ 第 218 批：补全数据后**每个月有 9~14 条任务、分属 8~10 种作物**。
+ * 按作物一组一组竖着排，这一块会长到 1000px 以上（实测 1184px），
+ * 把下面所有内容都挤到第二屏之外 —— "当主角"不等于"占满一屏"。
+ * 改成自适应多列：桌面 3 列、平板 2 列、手机 1 列。 */
+.tasks-card .panel-body {
+  display: grid;
+  /*: 同理：下限夹到 100%，否则 320px 屏上这一块会溢出 */
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 16px 22px;
+}
+
+/*: 网格自带 gap 了，别让"相邻作物组"的老规则再叠一层 margin（会一边紧一边松） */
+.tasks-card .crop-group + .crop-group {
+  margin-top: 0;
 }
 
 .crop-group + .crop-group {
@@ -958,6 +980,8 @@ a.pest-stat:hover {
 }
 
 .side-link {
+  /*: 第 218 批：侧栏改成 auto-fit 网格后，这个链接要横跨整行，不能当第三张卡 */
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -993,10 +1017,7 @@ a.pest-stat:hover {
 }
 
 @media (max-width: 900px) {
-  .calendar-main {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
+  /*: 第 218 批：`.calendar-main` 已删，这里只剩"月份快捷条独占一行" */
   .month-quick {
     margin-left: 0;
     width: 100%;
