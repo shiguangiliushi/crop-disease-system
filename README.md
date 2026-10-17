@@ -133,6 +133,12 @@ cd mobile && npm install && npm run dev        # http://127.0.0.1:5174
 > 演示数据可用 `add_sample_news` / `add_popular_pests` / `add_detailed_pests` 等管理命令灌入
 > （共 **25 个**管理命令，`python manage.py help` 可查）。
 
+> 🔧 **本项目约定的开发环境是一个 conda 环境**（`crop_env`，Python 3.11；`requirements.txt`
+> 与它逐项一致，`python manage.py check_env` 会先打印**解释器路径**）。
+> 如果仓库里还有 `backend/venv/`，那是某次本地临时建、**不随仓库同步**的旧环境 ——
+> 用它启动会看到「系统健康」一片红（7 项「依赖版本不符」，其实只是环境不对，
+> 不需要去升级 torch 之类的包）。
+>
 > 🔧 编辑帖子页顶部那块「开发信息」面板**默认不显示**；要排查问题时用
 > `.env.development` 里的 `VITE_SHOW_DEBUG_PANEL=true`，或控制台
 > `localStorage.setItem('dsh_debug_panel','1')` 后刷新（见 `frontend/src/utils/debugFlags.js`）。

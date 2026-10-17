@@ -75,6 +75,19 @@ def _prepare_chinese_labels(result) -> str:
         if not isinstance(names, dict) or boxes is None or boxes.cls is None:
             return 'Arial'
 
+        #: ⚠️ 第 223 批：**必须在副本上改，不能就地改 `names`**。
+        #:
+        #: `result.names` 与 `model.names` 常常是同一个 dict —— 就地改等于把模型自己的
+        #: 类名表改成了中文。于是**下一次**识别拿到的"类名"就是 `马铃薯晚疫病` 这种中文，
+        #: `find_pest_info` 查不到词条（它只认英文标识符），这条历史记录就**丢掉了病害关联**。
+        #:
+        #: 日志实证（同一进程连续两次识别同一张图）：
+        #:     第 1 次  检测结果: Potato___Late_blight  → 匹配成功
+        #:     第 2 次  检测结果: 马铃薯晚疫病           → 匹配失败 → 关联病害：无
+        #:
+        #: 这是"为了给标注图换个中文标签"污染了识别结果本身 —— 一个典型的
+        #: **副作用越界**：只该影响画图，不该影响数据。
+        patched = dict(names)
         replaced = False
         for class_index in {int(value) for value in boxes.cls.tolist()}:
             raw_name = names.get(class_index)
@@ -82,11 +95,11 @@ def _prepare_chinese_labels(result) -> str:
                 continue
             pest, _note = find_pest_info(raw_name)
             if pest:
-                names[class_index] = pest.name
+                patched[class_index] = pest.name
                 replaced = True
         if not replaced:
             return 'Arial'
-        result.names = names
+        result.names = patched      #: 只换这一份副本给 plot() 用
         return _cjk_font_path() or 'Arial'
     except Exception as exc:  # noqa: BLE001
         logger.warning(f'标注图中文标签不可用（退回英文）：{exc}')
@@ -317,8 +330,11 @@ class AIService:
                 # 权重文件里的 `names` 是**和权重一起训练出来的**，它才是唯一权威；
                 # 手写列表再准也是抄的，模型一换就错位，而且错得没有任何征兆。
                 # 手写列表保留为兜底（老权重里没有 `names` 时仍能用）。
-                model_names = (getattr(results[0], 'names', None)
-                               or getattr(self.model, 'names', None))
+                #: ⚠️ 第 223 批：**先取 `self.model.names`，再退回 `results[0].names`**。
+                #: 后者可能已经被 `_prepare_chinese_labels` 换成中文（它只该影响画图），
+                #: 拿它当"病害标识符"会把中文写进库、导致关联不到词条。
+                model_names = (getattr(self.model, 'names', None)
+                               or getattr(results[0], 'names', None))
                 raw_class_name = ''
                 if isinstance(model_names, dict):
                     raw_class_name = str(model_names.get(class_id) or '')

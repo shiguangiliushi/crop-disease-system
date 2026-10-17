@@ -28,6 +28,9 @@ from __future__ import annotations
 
 import importlib
 import re
+import os
+import platform
+import sys
 from pathlib import Path
 
 from django.apps import apps
@@ -112,6 +115,43 @@ class Command(BaseCommand):
         #: 监控侧 `json.loads(stdout)` 直接失败（第一版就是这样）
         self._silent = as_json
 
+        # ══════════════════════════════════════════════════════════════════
+        # 第 223 批：**先报跑在哪个解释器上**
+        #
+        # 起因：管理端「系统健康」爆红 7 项，全是"依赖版本不符"；而 `requirements.txt`
+        # 与项目那套 conda 环境（`crop_env`）**逐项一致** —— 真正的原因是 dev server
+        # 跑在仓库里一份 gitignored 的旧 `backend/venv` 上。
+        #
+        # 没有这一行时，第一反应必然是"依赖装坏了"，接着就是去升级 torch（几百 MB、
+        # 风险极高）—— 而真正该做的是换个解释器。**环境问题的第一诊断信息是解释器路径**。
+        # ══════════════════════════════════════════════════════════════════
+        self._section('〇、运行环境（版本不符时先看这里）', quiet)
+        in_venv = sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
+        self._ok(f'解释器：{sys.executable}', quiet)
+        #: ⚠️ 第 223 批：**conda 环境不算 venv**。
+        #: conda 里 `sys.prefix == sys.base_prefix`（它不使用 venv 那套语义），
+        #: 只看 venv 判据会把 conda 环境报成「系统/基础环境」—— 而本项目的约定环境
+        #: 恰恰就是 conda 的 `crop_env`。报错成"系统环境"会把人引到完全错误的方向。
+        conda_prefix = os.environ.get('CONDA_PREFIX') or ''
+        looks_conda = bool(conda_prefix) or '\\envs\\' in sys.prefix or '/envs/' in sys.prefix
+        if in_venv:
+            env_desc = f'虚拟环境：{sys.prefix}'
+        elif looks_conda:
+            env_desc = f'conda 环境：{conda_prefix or sys.prefix}'
+        else:
+            env_desc = '系统/基础环境（未使用虚拟环境或 conda）'
+        self._ok(f'Python {platform.python_version()}（{env_desc}）', quiet)
+        #: 仓库里自带一份 venv 是**最容易被误用**的情形：它 gitignored、不会同步，
+        #: 却和项目共用同一个 BASE_DIR。命中时直接点出来。
+        repo_venv = str(base) in sys.prefix or str(base) in str(Path(sys.executable).parent)
+        if in_venv and repo_venv:
+            self._warn(
+                '使用的解释器位于**仓库目录内**（通常是某次本地临时建的 venv）。'
+                '它不是项目约定的环境、也不随仓库同步 —— 若依赖版本不符，'
+                '请改用项目约定的解释器再跑一次，而不是去升级包',
+                quiet=quiet,
+            )
+
         self._section('一、依赖包（对照 %s）' % req_path.name, quiet)
         if not req_path.exists():
             self.problems.append(f'找不到 {req_path}')
@@ -139,6 +179,14 @@ class Command(BaseCommand):
             if strict and self.problems:
                 raise SystemExit(1)
             return
+
+        #: 第 223 批：版本不符时把"先确认解释器"写进提示里 —— 否则看报告的人
+        #: 只会想到升级包，而升级 torch 这种动作代价极高、且常常根本不是问题所在。
+        if any('版本不符' in item for item in self.problems):
+            self.warnings.append(
+                f'有依赖版本不符：先确认这次跑的是不是约定的解释器（本次：{sys.executable}）。'
+                f'{req_path.name} 对应的可能是另一套环境 —— 换解释器重跑，往往就不红了'
+            )
 
         # ---------------- 汇总 ----------------
         self.stdout.write('')
@@ -283,28 +331,48 @@ class Command(BaseCommand):
         # 4) 识别模型文件（按**实际加载优先级**报，不要只看文件大小）
         from pathlib import Path as _P
         api_dir = _P(settings.BASE_DIR) / 'api'
+        #: ⚠️ 第 223 批：这里的候选**必须与 `ai_service` 完全一致**。
+        #:
+        #: 原来多列了一个「兜底（仓库根 yolov8n.pt）」，而 `ai_service.__new__` 只会尝试
+        #: `api/newmodels/best.pt` → `api/models/best.pt`，**从不加载仓库根的 yolov8n.pt**。
+        #: 于是当两处权重都缺、只剩 yolov8n.pt 时，报告会显示「✓ 模型文件：yolov8n.pt」，
+        #: 而识别接口实际返回 503 —— **假绿**，比没检查更糟。
+        #:
+        #: 同时把"多份权重"的提示改准：
+        #:   · 首选在位、回退也在 → **正常**（回退就是为此存在的），不再报警；
+        #:   · 首选缺失、只能用回退 → **要提醒**（回退权重类数更少，识别面会变窄）；
+        #:   · 两处都缺 → 识别必然 503，按问题上报（不再只是提示）。
         candidates = [
             ('首选（api/newmodels/）', api_dir / 'newmodels' / 'best.pt'),
             ('回退（api/models/）', api_dir / 'models' / 'best.pt'),
-            ('兜底（仓库根）', _P(settings.BASE_DIR) / 'yolov8n.pt'),
         ]
+        preferred_path = candidates[0][1]
         picked = next(((label, path) for label, path in candidates if path.exists()), None)
         if picked:
             label, path = picked
+            others = [p for _, p in candidates if p.exists() and p != path]
+            note = ''
+            if others:
+                note = '；回退权重也在（api/models/best.pt，正常保留）'
+            #: 仓库根那份 yolov8n.pt 是 ultralytics 下载的基础模型，**不在加载链路上** ——
+            #: 提一句就够，不该混进"候选"里，也不该变成警告。
+            stray = _P(settings.BASE_DIR) / 'yolov8n.pt'
+            if stray.exists():
+                note += '；另有仓库根 yolov8n.pt（ultralytics 基础模型，不参与识别）'
             self._ok(
                 f'模型文件：{path.relative_to(_P(settings.BASE_DIR))}'
-                f'（{label}，{path.stat().st_size / 1024 / 1024:.1f} MB）', quiet
+                f'（{label}，{path.stat().st_size / 1024 / 1024:.1f} MB）{note}', quiet
             )
-            others = [p for _, p in candidates if p.exists() and p != path]
-            if others:
-                names = '、'.join(str(p.relative_to(_P(settings.BASE_DIR))) for p in others)
+            if path != preferred_path:
                 self.warnings.append(
-                    f'同时存在多份权重（{names}）：ai_service 会按上面的顺序挑一个，'
-                    '确认挑中的是你想用的那一版'
+                    '首选权重 api/newmodels/best.pt 不存在，正在用**回退权重** api/models/best.pt '
+                    '—— 它的病害类数更少，能识别的范围比首选的窄'
                 )
         else:
-            self.warnings.append('没找到模型权重（api/newmodels/best.pt 等）—— 识别接口会返回 503')
-            self._warn('没找到模型权重：识别接口会返回 503')
+            #: 两处都没有 = 识别必然 503，这是**问题**而不是提示
+            msg = '没找到模型权重（api/newmodels/best.pt 与 api/models/best.pt 都不存在）—— 识别接口会返回 503'
+            self.problems.append(msg)
+            self._bad(msg)
 
         # 5) 媒体/静态目录可写（上传头像、帖子配图要用）
         for name in ('MEDIA_ROOT', 'STATIC_ROOT'):

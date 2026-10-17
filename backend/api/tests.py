@@ -4483,6 +4483,65 @@ class PruneMediaCommandTests(TestCase):
 # ============================================================================
 # 第 107 批：AI 启动预热
 # ============================================================================
+class ChineseLabelIsolationTests(TestCase):
+    """标注图的**中文标签不能污染识别结果本身**（第 223 批）
+
+    ## 这个 bug 是怎么暴露的
+
+    切到项目约定的解释器后，我连续识别同一张马铃薯晚疫病图片，日志里出现：
+
+        第 1 次  检测结果: Potato___Late_blight  → 词条匹配成功
+        第 2 次  检测结果: 马铃薯晚疫病           → **匹配失败 → 关联病害：无**
+
+    原因是 `_prepare_chinese_labels()` 为了给标注图换中文标签，**就地改写**了
+    `result.names` —— 而它与 `model.names` 常常是**同一个 dict**。于是模型自己的类名表
+    被换成了中文，下一次识别拿到的"类名"就是 `马铃薯晚疫病`，`find_pest_info` 只认
+    英文标识符，查不到 → 那条历史记录**丢掉病害关联**（详情页只剩占位文字）。
+
+    典型的**副作用越界**：只该影响画图，结果改了数据。
+
+    ## 护栏
+
+    ① 传进去的 names 字典**不得被改动**；② `result.names` 必须是**副本**；
+    ③ 副本里那一项确实变成了中文（说明功能还在）。
+    """
+
+    def setUp(self):
+        call_command('add_detailed_pests', stdout=StringIO())
+
+    def _fake_result(self, names):
+        class _Cls:
+            @staticmethod
+            def tolist():
+                return [23]
+
+        from types import SimpleNamespace
+        return SimpleNamespace(names=names, boxes=SimpleNamespace(cls=_Cls()))
+
+    def test_prepare_chinese_labels_does_not_mutate_source_names(self):
+        from api.ai_service import _prepare_chinese_labels
+
+        names = {23: 'Potato___Late_blight'}
+        result = self._fake_result(names)
+        _prepare_chinese_labels(result)
+
+        self.assertEqual(
+            names[23], 'Potato___Late_blight',
+            '模型自己的类名表被就地改写了 —— 下一次识别会把中文当类名，导致关联不到词条')
+        self.assertIsNot(result.names, names, 'result.names 必须是副本，不能是同一个 dict')
+        self.assertEqual(result.names[23], '马铃薯晚疫病', '画图用的中文标签要仍然生效')
+
+    def test_repeated_label_pass_keeps_source_names_clean(self):
+        """连跑两次也不能累积污染（第一次改的是副本，第二次仍能拿到英文类名）。"""
+        from api.ai_service import _prepare_chinese_labels
+
+        names = {23: 'Potato___Late_blight'}
+        for _ in range(2):
+            self._fake_result(names)          #: 注意：每轮仍用**同一个**原字典
+            _prepare_chinese_labels(self._fake_result(names))
+        self.assertEqual(names[23], 'Potato___Late_blight')
+
+
 class AIWarmUpTests(TestCase):
     """
     AI 启动预热（第 107 批新增，第 113 批**改为后台线程**）
