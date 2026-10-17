@@ -48,6 +48,10 @@ class AdminAuditLog(models.Model):
         #: 以前只有评论有审计、帖子没有 —— 用户问"用户自己删了帖子，
         #: 后台管理操作那里看不到吗"，答案就是这条缺失。
         ('post.soft_delete', '删除帖子'),
+        #: ⚠️ 第 221 批补：`views_forum.py` 里的批量软删帖子一直在写 `post.bulk_delete`，
+        #: 但 choices 里没登记 → 操作日志的"动作"列显示的是**原始标识符**，
+        #: 筛选下拉里也找不到它。截图里一眼就能看见（`post.bulk_delete`）。
+        ('post.bulk_delete', '批量删除帖子'),
         ('feedback.bulk_status', '批量流转反馈状态'),
         ('feedback.bulk_delete', '批量删除反馈'),
         # 第 172 批：控制台「识别记录」页的删除（不可逆，图片文件一并删）

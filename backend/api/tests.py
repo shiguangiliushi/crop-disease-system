@@ -10650,6 +10650,57 @@ class ForumAdminListingTests(APITestCase):
         self.assertEqual(titles, ['zz已发布'])
 
 
+class AuditActionDeclaredTests(TestCase):
+    """**代码里写的每个 action，都必须在 `ACTION_CHOICES` 里登记**（第 221 批）
+
+    ## 为什么加这一条
+
+    操作日志的"动作"列取的是 `get_action_display()`。Django 的 choices 只做**表单层**校验，
+    `objects.create()` 完全不拦 —— 于是代码里写一个没登记的 action，
+    存进去、查出来都正常，只是界面上显示成**原始标识符**：
+
+        post.bulk_delete   ← 截图里就是这么暴露出来的
+        post.pin           ← 截图脚本自己编的，全仓根本不存在这个动作
+
+    这种漏登记**不会报错、不会失败**，只有人盯着界面才会发现。
+
+    ## 为什么是静态扫描
+
+    逐个动作去构造调用太重（23 个动作散布在 7 个视图文件里）。
+    直接读源码正则匹配 `log_admin_action(<x>, '动作'` —— 新加动作忘了登记会立刻红。
+    """
+
+    #: 扫描范围：只扫生产代码，不带 tests.py 自己
+    SCAN_DIR = 'api'
+
+    def test_every_action_used_in_code_is_declared(self):
+        import pathlib
+        import re
+
+        declared = {choice[0] for choice in AdminAuditLog.ACTION_CHOICES}
+        pattern = re.compile(r"log_admin_action\(\s*[^,]+,\s*'([a-z_]+\.[a-z_]+)'")
+        root = pathlib.Path(__file__).resolve().parent
+        used = {}
+        for path in root.glob('*.py'):
+            if path.name == 'tests.py':
+                continue
+            for match in pattern.finditer(path.read_text(encoding='utf-8', errors='replace')):
+                used.setdefault(match.group(1), set()).add(path.name)
+
+        undeclared = {a: src for a, src in used.items() if a not in declared}
+        self.assertEqual(
+            undeclared, {},
+            '这些 action 在代码里用了但没登记到 ACTION_CHOICES，界面会显示原始标识符：'
+            + '；'.join(f'{a}（{", ".join(sorted(s))}）' for a, s in sorted(undeclared.items())),
+        )
+
+    def test_every_declared_action_has_chinese_label(self):
+        """登记了就得有中文标签 —— 空标签等于又把原始标识符露给用户。"""
+        for value, label in AdminAuditLog.ACTION_CHOICES:
+            self.assertTrue(label.strip(), f'{value} 的标签是空的')
+            self.assertNotEqual(value, label, f'{value} 的标签与标识符相同，等于没翻译')
+
+
 class AuditLogDateFilterTests(APITestCase):
     """
     操作日志的时间范围筛选（第 148 批，控制台「操作日志」页要用）

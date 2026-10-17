@@ -71,7 +71,7 @@ const seedOutput = runDjango([
   //    ① 演示帖/评论/版块：按前缀删（标题带 zz演示 是我们自己的约定）；
   "print('cleaned stale demo posts:', Post.objects.filter(title__startswith='zz演示').delete()[0])",
   "print('cleaned stale demo comments:', Comment.objects.filter(content__startswith='zz演示').delete()[0])",
-  "print('cleaned stale demo boards:', ForumBoard.objects.filter(name__startswith='zze2e演示版块').delete()[0])",
+  "print('cleaned stale demo boards:', (ForumBoard.objects.filter(name__startswith='zze2e演示版块').delete()[0] + ForumBoard.objects.filter(order=999).delete()[0]))",
   //    ② 操作日志：分三类清（这段逻辑原来只在收尾，现在提前到截图前，收尾保留一份做兜底）
   //       · 操作人是以 zz 开头的临时账号（历次 E2E 留下的 `zze2e_xxx` 机器名）；
   //       · detail / target_repr / target_id 里含 zz 的（测试对象）；
@@ -86,7 +86,10 @@ const seedOutput = runDjango([
   // 演示版块 + 三条帖子（都归 admin，标题带 zz演示 便于清理）
   // ⚠️ 第 189 批：版块名改成**像真的**（原来叫 `zze2e演示版块`，会显示在截图里的帖子行上，
   //    既是机器名又难看）；清理仍按 `zze2e演示版块` 前缀，所以这里保留前缀只改后半段。
-  "board, _ = ForumBoard.objects.get_or_create(name='zze2e演示版块 · 作物病害交流', defaults={'order': 900})",
+  // ⚠️ 第 221 批：版块名原来带 `zze2e演示版块` 前缀，会**原样显示在帖子的版块列**上
+  //    （挂在 GitHub 首屏像机器名）。改成自然名字，改用 `order=999` 作清理标记
+  //    —— 现有真实版块 order 只到 3，999 不会撞。
+  "board, _ = ForumBoard.objects.get_or_create(name='露地蔬菜交流', defaults={'order': 999})",
   // 上一版留下的旧名版块也清掉（第 202 批起，帖/评论/日志的清理统一提到了前面）
   "print('cleaned stale old-name boards:', ForumBoard.objects.filter(name='zze2e演示版块').delete()[0])",
   "p1 = Post.objects.create(title='叶片背面这些白点是什么？', content='<p>大棚里的黄瓜，最近叶子背面出现密集白色小点，摸上去有点黏。请问是白粉虱还是别的原因？</p>', author=admin, board=board, status='published', is_pinned=True, is_essence=True, view_count=128, like_count=12)",
@@ -108,7 +111,10 @@ const seedOutput = runDjango([
   // ⚠️ target 要传**对象**（快照从 user.username / post.title 取）；想显示成自定义文字
   //    就显式给 target_repr。第一版把字符串当 target 传，页面渲染成
   //    「built-in method title of str object at 0x...」。
-  "log_admin_action(admin, 'post.pin', p1, '演示：置顶了一篇求助帖', target_type='post', target_id=p1.id)",
+  //: ⚠️ 第 221 批：原来写 `post.pin` —— 那个动作**全仓都不存在**（置顶/加精没有审计），
+  //: 于是日志的"动作"列显示成原始标识符 `post.pin`，直接出现在 README 截图里。
+  //: 换成真实存在、中文标签也说得通的动作。
+  "log_admin_action(admin, 'comment.restore', None, '演示：恢复了一条误删的评论', target_type='comment', target_id=c.id, target_repr='一条灌水评论')",
   "log_admin_action(admin, 'comment.soft_delete', None, '演示：删除了一条不当评论', target_type='comment', target_id=c.id, target_repr='一条灌水评论')",
   "log_admin_action(admin, 'user.role_change', admin, '演示：调整了一位用户的角色')",
   // 第 202 批：给「智能问答」页种**演示问答**（挂在 admin 名下）。
@@ -328,7 +334,7 @@ runDjango([
   // 兜底：万一有更早版本留下的、带前缀的演示帖
   "print('cleaned legacy prefixed posts:', Post.objects.filter(title__startswith='zz演示').delete()[0])",
   "print('cleaned comments:', Comment.objects.filter(content__startswith='zz演示').delete()[0])",
-  "print('cleaned boards:', ForumBoard.objects.filter(name__startswith='zze2e演示版块').delete()[0])",
+  "print('cleaned boards:', (ForumBoard.objects.filter(name__startswith='zze2e演示版块').delete()[0] + ForumBoard.objects.filter(order=999).delete()[0]))",
   // ⚠️ 操作日志会**快照目标标题**，所以删掉演示帖后日志里仍留着那些标题 ——
   //    必须同时清掉日志行（按演示帖 id 定位 target_id）。
   `print('cleaned demo audit:', AdminAuditLog.objects.filter(target_id__in=[str(i) for i in demo_ids]).delete()[0])`,
