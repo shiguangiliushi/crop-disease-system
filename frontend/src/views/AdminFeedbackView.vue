@@ -287,8 +287,8 @@
           <span v-if="item.corrected_pest_name" class="sample-corrected">
             {{ t('feedbackAdmin.correctedTo', { name: item.corrected_pest_name }) }}
           </span>
-          <span v-if="item.detection_summary" class="sample-summary">
-            <i class="fas fa-link"></i> {{ item.detection_summary }}
+          <span v-if="item.detection_info || item.detection_summary" class="sample-summary">
+            <i class="fas fa-link"></i> {{ formatDetection(item) }}
           </span>
           <RouterLink
             v-if="item.detection_id"
@@ -381,7 +381,7 @@
         <el-form-item v-if="current?.detection_summary || current?.corrected_pest_name"
                       :label="t('feedbackAdmin.sampleLabel')">
           <div class="reply-context">
-            <span v-if="current?.detection_summary">{{ current.detection_summary }}</span>
+            <span v-if="current?.detection_info || current?.detection_summary">{{ formatDetection(current) }}</span>
             <span v-if="current?.corrected_pest_name" class="sample-corrected">
               {{ t('feedbackAdmin.correctedTo', { name: current.corrected_pest_name }) }}
             </span>
@@ -507,7 +507,7 @@ import { useAuthStore } from '@/stores/auth';  // 第 126 批：按能力决定"
 export default {
   name: 'AdminFeedbackView',
   setup() {
-    const { t } = useI18n();  // 必须在 setup 内取，模板才能拿到
+    const { t, locale } = useI18n();  // 必须在 setup 内取，模板才能拿到（locale：第 226 批）
     const { localizedField } = useLocalized();  // 第 79 批：病害名（中文快照 → 英文）
     const authStore = useAuthStore();
 
@@ -631,6 +631,24 @@ export default {
     const exporting = ref(false);
 
     /** 有没有生效中的筛选 —— 空态要能区分"本来就没数据"和"被筛掉了" */
+    /**
+     * 关联识别摘要（第 226 批）：`时间 · 结论 · 置信度`
+     *
+     * 优先用结构化的 `detection_info` 按当前语言拼（英文界面取 `result_en`）；
+     * 老数据没有这个字段时回落到后端拼好的 `detection_summary`（中文）。
+     */
+    const formatDetection = (item) => {
+      const info = item?.detection_info;
+      if (!info) return item?.detection_summary || '';
+      const useEn = String(locale.value || '').toLowerCase().startsWith('en');
+      const result = (useEn && info.result_en) ? info.result_en : info.result;
+      const when = info.timestamp ? formatTime(info.timestamp) : '';
+      const conf = (info.confidence === null || info.confidence === undefined)
+        ? '—'
+        : `${Math.round(info.confidence * 100)}%`;
+      return [when, result, conf].filter(Boolean).join(' · ');
+    };
+
     const hasActiveFilter = computed(() => Boolean(
       filters.value.status || filters.value.category || filters.value.search.trim()
       || filters.value.is_correct || filters.value.verify_status
@@ -983,6 +1001,7 @@ export default {
       //: 第 224 批：样本确认/排除 + 日期区间 + 统计联动
       dateRange, verifyingId, verifyLabel, verifyTagType, changeSample, bulkChangeSamples,
       exporting, exportCsv, hasActiveFilter, clearFilters, replyTemplates, applyTemplate,
+      formatDetection,
       t,
       items,
       stats,

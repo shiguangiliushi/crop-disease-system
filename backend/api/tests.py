@@ -9814,6 +9814,40 @@ class FeedbackClosureTests(APITestCase):
             '/api/feedback/stats/', {'verify_status': 'confirmed'}).data
         self.assertEqual(only_confirmed['total'], 0)
 
+    def test_stats_numbers_match_actual_counts(self):
+        """统计卡的数字必须与真实条数一致（第 226 批修的真 bug）
+
+        `get_queryset()` 显式 `.order_by('-timestamp')`，Django（4.0+）会把**显式**
+        order_by 的字段带进 GROUP BY —— 生成 `GROUP BY status, timestamp`，
+        于是每条记录各自成组、`n` 全是 1，循环里"最后一次赋值"赢，
+        统计卡永远显示 1/1。**不报错、不崩，只是数字不对。**
+        """
+        from django.db.models import Count
+        from api.models import Feedback as F
+
+        #: 造一批真实分布：3 待处理 + 2 已处理 + 1 处理中
+        for _ in range(3):
+            F.objects.create(user=self.author, category='bug', suggestion='待处理')
+        for _ in range(2):
+            F.objects.create(user=self.author, category='bug', suggestion='已处理',
+                             status='resolved')
+        F.objects.create(user=self.author, category='bug', suggestion='处理中',
+                         status='processing')
+
+        data = self.client_editor.get('/api/feedback/stats/').data
+        expected = dict(
+            F.objects.order_by().values('status').annotate(n=Count('id'))
+            .values_list('status', 'n')
+        )
+        self.assertEqual(data['pending'], expected.get('pending', 0),
+                         '待处理数不对（很可能又被 GROUP BY 的默认排序坑了）')
+        self.assertEqual(data['resolved'], expected.get('resolved', 0))
+        self.assertEqual(data['processing'], expected.get('processing', 0))
+        self.assertEqual(data['total'], sum(expected.values()))
+        self.assertEqual(data['total'],
+                         data['pending'] + data['processing'] + data['resolved'],
+                         '三项之和必须等于总数')
+
     def test_stats_accepts_date_range(self):
         today = timezone.localdate().strftime('%Y-%m-%d')
         data = self.client_editor.get(
@@ -9860,6 +9894,60 @@ class FeedbackClosureTests(APITestCase):
         }, format='json')
         self.assertEqual(
             Notification.objects.filter(recipient=self.editor, type='feedback').count(), 0)
+
+class FeedbackDetectionInfoTests(APITestCase):
+    """`detection_info`（第 226 批）：关联识别摘要要能按语言拼
+
+    `detection_summary` 是后端拼好的中文串（`时间 · 结论 · 置信度`），
+    英文界面下原样显示中文 —— 文案表管不到一段拼好的句子。
+    这里断言结构化字段存在、英文名可用、没关联识别时为 None。
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_superuser(
+            username='zz_di_admin', password='pw12345678', email='', role='ADMIN',
+        )
+        self.author = User.objects.create_user(
+            username='zz_di_author', password='pw12345678', role='USER',
+        )
+        self.pest = PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='di_apple_scab',
+            name_en='Apple scab',
+        )
+        self.detection = DetectionHistory.objects.create(
+            user=self.author, detection_result='苹果黑星病', confidence=0.93,
+            pest_info=self.pest,
+        )
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin)
+
+    def test_detection_info_is_structured(self):
+        feedback = Feedback.objects.create(
+            user=self.author, category='recognition', suggestion='识别错了',
+            disease_name='苹果黑星病', confidence=0.93, is_correct=False,
+            corrected_pest=self.pest, detection=self.detection,
+        )
+        response = self.client_admin.get(f'/api/feedback/{feedback.id}/')
+        self.assertEqual(response.status_code, 200)
+        info = response.data['detection_info']
+        self.assertIsNotNone(info)
+        self.assertEqual(info['id'], self.detection.id)
+        self.assertEqual(info['result'], '苹果黑星病')
+        self.assertEqual(info['result_en'], 'Apple scab', '英文界面要靠它，不能为空')
+        self.assertAlmostEqual(info['confidence'], 0.93, places=2)
+        self.assertTrue(info['timestamp'], '时间要单独给，前端要按语言格式化')
+        #: 老字段仍然保留（前端对老数据有回落）
+        self.assertIn('detection_summary', response.data)
+
+    def test_detection_info_is_none_without_detection(self):
+        feedback = Feedback.objects.create(
+            user=self.author, category='suggestion', suggestion='没有关联识别',
+        )
+        response = self.client_admin.get(f'/api/feedback/{feedback.id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data['detection_info'])
 
 class FeedbackContactAndExportTests(APITestCase):
     """联系方式（P2-7）与 CSV 导出（P2-8）—— 第 225 批"""

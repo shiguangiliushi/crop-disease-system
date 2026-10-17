@@ -1703,14 +1703,23 @@ class FeedbackView(viewsets.ModelViewSet):
         """
         queryset = self.get_queryset()
         by_status = {value: 0 for value, _label in Feedback.STATUS_CHOICES}
-        for row in queryset.values('status').annotate(n=Count('id')):
+        #: ⚠️ 第 226 批修的真 bug：**必须先 `.order_by()` 清掉默认排序**。
+        #:
+        #: `get_queryset()` 显式 `.order_by('-timestamp')`，而 Django（4.0+）会把
+        #: **显式** order_by 的字段带进 GROUP BY —— 生成的是：
+        #:     GROUP BY 1, "api_feedback"."timestamp"
+        #: 于是每条记录各自成组、`n` 全是 1，循环里"最后一次赋值"赢，
+        #: 统计卡上的「待处理 / 已处理」永远显示 1/1（真实是 26/2）。
+        #: 这个错误**不报错、不崩**，只是数字不对 —— 最坏的一类。
+        for row in queryset.order_by().values('status').annotate(n=Count('id')):
             if row['status'] in by_status:
                 by_status[row['status']] = row['n']
         #: 训练样本三态：只统计"可训练"的那些（口径与 `Feedback.is_trainable` 一致）
         trainable = queryset.filter(category='recognition', is_correct=False,
                                     corrected_pest__isnull=False)
         samples = {value: 0 for value, _label in Feedback.VERIFY_CHOICES}
-        for row in trainable.values('verify_status').annotate(n=Count('id')):
+        #: 同上：样本三态也吃同一套坑
+        for row in trainable.order_by().values('verify_status').annotate(n=Count('id')):
             if row['verify_status'] in samples:
                 samples[row['verify_status']] = row['n']
         return Response({

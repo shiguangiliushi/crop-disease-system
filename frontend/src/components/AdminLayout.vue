@@ -20,11 +20,12 @@
  * 这样做而不是改路由成父子结构：路径、路由名、重定向全部保持不变，
  * 书签、外链与 E2E 用例里的 `/admin/users` 一律照旧。
  */
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useI18n } from '@/i18n';
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
+import { fetchFeedbackStats } from '@/api/feedback';   //: 第 226 批：侧栏待处理角标
 
 const { t } = useI18n();
 const route = useRoute();
@@ -90,6 +91,26 @@ const navItems = [
  * 看板不带 module（任何能进后台的人都该有个落脚页，否则"只勾一块"的编辑员
  * 登录后会落在空白侧栏上）。
  */
+/**
+ * 待处理反馈数（第 226 批 · P2-10）
+ *
+ * 只在**有 feedback 模块**时拉：`/feedback/stats/` 的权限是 IsFeedbackEditor，
+ * 没有该模块的账号会拿到 403 —— 那时不该在控制台里刷红。
+ * 拉不到就保持 0（角标不显示），这是"锦上添花"的信息，不能影响后台可用性。
+ */
+const pendingFeedback = ref(0);
+
+const fetchPendingFeedback = async () => {
+  if (!authStore.hasCapability(authStore.CAP_CONTENT)) return;
+  if (!authStore.hasContentModule(authStore.MODULE_FEEDBACK)) return;
+  try {
+    const data = await fetchFeedbackStats({ status: 'pending' });
+    pendingFeedback.value = Number(data?.total || 0);
+  } catch {
+    pendingFeedback.value = 0;
+  }
+};
+
 const visibleNavItems = computed(() => navItems.filter((item) => {
   if (!authStore.hasCapability(item.capability)) return false;
   if (item.module && !authStore.hasContentModule(item.module)) return false;
@@ -127,7 +148,13 @@ const roleLabel = computed(() => {
 
 // 窄屏抽屉：<1024px 时侧栏收起来，点顶部条的菜单键展开
 const drawerOpen = ref(false);
-watch(() => route.fullPath, () => { drawerOpen.value = false; });
+onMounted(fetchPendingFeedback);
+
+watch(() => route.fullPath, () => {
+  drawerOpen.value = false;
+  //: 第 226 批：从反馈页回来时角标要跟着更新（刚处理完的那几条不该还算"待处理"）
+  fetchPendingFeedback();
+});
 
 // ============================================================================
 // 侧栏折叠（第 117 批）
@@ -185,6 +212,13 @@ const handleLogout = async () => {
         >
           <i :class="item.icon"></i>
           <span>{{ t(item.labelKey) }}</span>
+          <!--: ⚠️ 第 226 批（P2-10）：待处理反馈角标。
+               改前"意见反馈"和其他菜单长得一模一样，新反馈被旧条目淹没，
+               管理员得主动点进去才知道有没有新东西。 -->
+          <span
+            v-if="item.to === '/admin/feedback' && pendingFeedback > 0"
+            class="admin-nav-badge"
+          >{{ pendingFeedback }}</span>
         </RouterLink>
       </nav>
 
@@ -325,6 +359,24 @@ const handleLogout = async () => {
   font-size: 11.5px;
   color: rgba(255, 255, 255, 0.55);
   letter-spacing: 0.4px;
+}
+
+/*: 第 226 批（P2-10）：待处理反馈角标 —— 让"有新东西"在侧栏就能看见 */
+.admin-nav-badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: #e5484d;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .admin-nav {

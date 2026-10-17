@@ -875,6 +875,11 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
     )
     #: 只读回显：管理员在反馈列表里要能看出"这条纠错指的是哪条识别、纠正成了什么"
     detection_summary = serializers.SerializerMethodField()
+    #: ⚠️ 第 226 批：**结构化**的关联识别信息。
+    #: `detection_summary` 是后端拼好的中文串（`时间 · 结论 · 置信度`），
+    #: 英文界面下原样显示中文 —— 文案表管不到一段拼好的句子。
+    #: 给结构化字段，前端按当前语言拼，`detection_summary` 保留做兼容。
+    detection_info = serializers.SerializerMethodField()
     corrected_pest_name = serializers.SerializerMethodField()
     is_trainable = serializers.BooleanField(read_only=True)  # 模型属性，只读透出
 
@@ -887,7 +892,8 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
             'status', 'status_display', 'admin_reply', 'handled_at', 'timestamp',
             'contact',   #: 第 225 批（P2-7）：联系方式（选填，提交人自己填）
             # 第 91 批
-            'detection_id', 'detection_summary', 'corrected_pest_id', 'corrected_pest_name',
+            'detection_id', 'detection_summary', 'detection_info',
+            'corrected_pest_id', 'corrected_pest_name',
             'verify_status', 'exported_at', 'is_trainable',
         ]
         read_only_fields = ['id', 'timestamp', 'status', 'admin_reply', 'handled_at',
@@ -906,6 +912,22 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
             if detection.timestamp else ''
         conf = f'{detection.confidence:.0%}' if detection.confidence is not None else '—'
         return f'{when} · {detection.detection_result} · {conf}'
+
+    def get_detection_info(self, obj):
+        """关联识别的**结构化**快照（第 226 批）：时间 / 结论（中英）/ 置信度"""
+        detection = obj.detection
+        if detection is None:
+            return None
+        result_en = ''
+        if detection.pest_info_id:
+            result_en = getattr(detection.pest_info, 'name_en', '') or ''
+        return {
+            'id': detection.id,
+            'timestamp': detection.timestamp.isoformat() if detection.timestamp else None,
+            'result': detection.detection_result,
+            'result_en': result_en,
+            'confidence': detection.confidence,
+        }
 
     def get_corrected_pest_name(self, obj):
         """纠正为的病害名（按当前语言给英文名，缺失回落中文）"""
