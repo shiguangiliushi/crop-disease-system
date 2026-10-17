@@ -2593,20 +2593,73 @@ const clearAllHistory = async () => {
   }
 
   /* 详情弹窗 */
+  /* ══════════════════════════════════════════════════════════════════════
+   * 第 222 批：详情弹窗**限高 + 只让内容区滚动**
+   *
+   * 改前的实测（1440×900，苹果黑星病那条记录）：
+   *   · `.modal-content` 高 **2608px**，`max-height: none`、`overflow: visible`；
+   *   · 遮罩用 `align-items: center` 居中 → 内容比视口高时**上下同时溢出**，
+   *     实测 `contentTop = -854` —— **顶部 854px 在屏幕外，连关闭按钮都够不到**；
+   *   · `.modal-body` 两列都是 `flex: 1`：文本被挤到半宽（于是更长，防治建议 1841px），
+   *     而图片列被拉到和文本一样高，图片下方留出一大片空白。
+   *
+   * 修法三件：
+   *   ① 遮罩改 `flex-start` + 允许自己滚（兜底），内容再长顶部也不会跑出屏幕；
+   *   ② 弹窗 `max-height` 限到视口内，`.modal-body` 独立滚动 —— 关闭按钮始终可见；
+   *   ③ 图片列**定宽**、文本列吃剩余宽度（弹窗加宽到 960），正文变宽后整体自然变矮。
+   * ══════════════════════════════════════════════════════════════════════ */
   .modal-overlay {
     background: rgba(19, 58, 41, 0.45);
     backdrop-filter: blur(2px);
+    /*: 顶部对齐：内容比视口高时，顶部内容仍可见（居中会让上下都溢出） */
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 24px 16px;
   }
 
   .modal-content {
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-lg);
     padding: 28px;
+    /*: 加宽：文本列从约 360px 变成约 590px，正文矮下来一大截 */
+    max-width: 1040px;
+    max-height: calc(100vh - 48px);
+    max-height: calc(100dvh - 48px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /*: 只有这一层滚动 —— 关闭按钮与标题留在原位 */
+  .modal-body {
+    overflow-y: auto;
+    min-height: 0;            /* flex 子项不收缩的话滚动条不会生效 */
+    gap: 24px;
+  }
+
+  /*: 图片列定宽：否则它会被拉到和文本一样高，下面留一大片空白。
+   *  `align-self: flex-start` 让这一列**不再拉伸**（空白消失），
+   *  `position: sticky` 让图片在阅读长文时留在视野里 —— 那块空间就有了用处。 */
+  .modal-image {
+    flex: 0 0 320px;
+    align-self: flex-start;
+    position: sticky;
+    top: 0;
+  }
+
+  .modal-image img {
+    max-height: 320px;
+    object-fit: contain;
+  }
+
+  .modal-details {
+    flex: 1 1 auto;
+    min-width: 0;             /* 允许长文本换行而不是把列撑宽 */
   }
 
   .detail-section {
-    margin-bottom: 18px;
-    padding: 16px 18px;
+    margin-bottom: 14px;
+    padding: 14px 16px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-muted);
@@ -2619,9 +2672,11 @@ const clearAllHistory = async () => {
     color: var(--brand-700);
   }
 
+  /*: 第 222 批：5 条防治方法合计 1351px，是弹窗里最长的一块 ——
+   *  内边距与条目间距各收一点（正文行高本来就是 1.6，没动它）。 */
   .prevention-method {
-    padding: 12px 14px;
-    margin-bottom: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
     border-radius: var(--radius-sm);
     background: var(--surface);
     border: 1px solid var(--border);
@@ -2630,6 +2685,26 @@ const clearAllHistory = async () => {
   @media (max-width: 768px) {
     .history-view {
       padding: 0 16px 32px;
+    }
+
+    /*: 第 222 批：竖排后"定宽 320"会变成"固定高度 320"，图片占比过大；
+     *  sticky 在单列里也会盖住正文，一并取消。 */
+    .modal-image {
+      flex: 0 0 auto;
+      position: static;
+    }
+
+    .modal-image img {
+      max-height: 200px;
+    }
+
+    .modal-content {
+      padding: 20px;
+      max-height: calc(100dvh - 32px);
+    }
+
+    .modal-overlay {
+      padding: 16px 12px;
     }
 
     .history-header h1 {
