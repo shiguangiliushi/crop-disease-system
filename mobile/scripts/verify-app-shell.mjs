@@ -36,6 +36,16 @@ const EXPECT = {
 };
 
 const AUTHED = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'zh-CN' };
+
+// ⚠️ 口令**只从环境变量读**，不写默认值（2026-10 安全核查）：
+//    这个仓库是公开的，把测试账号口令写死在脚本里 = 把凭据一起公开。
+const E2E_USER = process.env.MOBILE_E2E_USER || 'admin';
+const E2E_PASS = process.env.MOBILE_E2E_PASS;
+if (!E2E_PASS) {
+  console.error('缺少环境变量 MOBILE_E2E_PASS。设置后再跑，例如：\n  $env:MOBILE_E2E_PASS="<测试账号口令>"');
+  process.exit(1);
+}
+
 // ⚠️ 先清限流：登录接口有频率限制，E2E 连跑几轮就会被挡住
 clearThrottle();
 
@@ -48,8 +58,8 @@ const page = await authed.newPage();
 page.on('pageerror', (error) => errors.push(String(error).slice(0, 160)));
 await page.goto(`${UI}/login`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(1500);
-await page.locator('input').nth(0).fill(process.env.MOBILE_E2E_USER || 'admin');
-await page.locator('input').nth(1).fill(process.env.MOBILE_E2E_PASS || 'admin123456');
+await page.locator('input').nth(0).fill(E2E_USER);
+await page.locator('input').nth(1).fill(E2E_PASS);
 await page.getByRole('button', { name: /登录/ }).first().click();
 await page.waitForTimeout(3000);
 check('能正常登录（后续受保护页面才拍得到真页面）', !page.url().includes('/login'), page.url());

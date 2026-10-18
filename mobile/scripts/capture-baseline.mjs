@@ -39,7 +39,12 @@ const PAGES = [...PAGES_AUTHED, ...PAGES_GUEST];
  */
 const AUTHED = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'zh-CN' };
 const USERNAME = process.env.MOBILE_E2E_USER || 'admin';
-const PASSWORD = process.env.MOBILE_E2E_PASS || 'admin123456';
+// ⚠️ 口令只从环境变量读，不写默认值（2026-10 安全核查）：仓库是公开的
+const PASSWORD = process.env.MOBILE_E2E_PASS;
+if (!PASSWORD) {
+  console.error('缺少环境变量 MOBILE_E2E_PASS。设置后再跑，例如：\n  $env:MOBILE_E2E_PASS="<测试账号口令>"');
+  process.exit(1);
+}
 
 // ⚠️ 先清限流：登录接口有频率限制，E2E 连跑几轮就会被挡住
 clearThrottle();

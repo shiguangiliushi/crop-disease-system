@@ -1,24 +1,54 @@
-from django.core.management.base import BaseCommand
+"""
+添加示例新闻（演示数据）
+
+⚠️ **不要在生产库上跑**。它会：
+  · 写入 5 条假新闻 —— 来源写的是"农业农村部""中国农业科学院"等**真实机构名**，
+    混进真数据里很难分辨；
+  · 库里没有超管时**顺手建一个超管账号** —— 改前用的是 admin/admin123 这种弱口令，
+    而这个仓库是公开的，等于把后台入口一起公开了。
+
+护栏（2026-10 安全核查）：
+  · DJANGO_DEBUG=False（生产）时**默认拒绝执行**，确需执行加 --force；
+  · 建超管的口令由 --admin-password 指定，不传则随机生成并打印一次。
+"""
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from api.models import News
+import secrets
 import random
 
 class Command(BaseCommand):
-    help = 'Adds sample news articles to the database'
+    help = 'Adds sample news articles to the database（演示数据，禁止在生产库运行）'
+
+    def add_arguments(self, parser):
+        parser.add_argument('--force', action='store_true',
+                            help='DEBUG=False 时也允许执行（生产库勿用）')
+        parser.add_argument('--admin-password', default=None,
+                            help='需要新建超管时使用的口令；不传则随机生成并打印一次')
 
     def handle(self, *args, **options):
+        if not settings.DEBUG and not options['force']:
+            raise CommandError(
+                '这是演示数据命令，已拒绝在生产（DJANGO_DEBUG=False）环境执行。'
+                '确实需要就加 --force。'
+            )
         User = get_user_model()
         
         # Get or create a superuser for the author
         admin_user = User.objects.filter(is_superuser=True).first()
         if not admin_user:
+            password = options['admin_password'] or secrets.token_urlsafe(16)
             admin_user = User.objects.create_superuser(
                 username='admin',
                 email='admin@example.com',
-                password='admin123'
+                password=password
             )
             self.stdout.write(self.style.SUCCESS('Created admin user'))
+            self.stdout.write(self.style.WARNING(
+                f'admin 口令：{password}（**只显示这一次**，请立刻保存）'
+            ))
 
         sample_news = [
             {

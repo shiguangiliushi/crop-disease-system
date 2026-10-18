@@ -1,15 +1,34 @@
+"""
+添加示例新闻（演示数据）—— **独立脚本版**，与 management command
+`api/management/commands/add_sample_news.py` 功能重复，两份都在公开仓库里。
+
+⚠️ **不要在生产库上跑**：没有超管时会建一个 admin 超管账号
+（改前是 admin123 弱口令，而这是公开仓库）。
+
+护栏（2026-10 安全核查）：DJANGO_DEBUG=False（生产）时**默认拒绝执行**；
+确需执行就设环境变量 ALLOW_DEMO_SEED=1。建超管的口令随机生成并打印一次。
+"""
 import os
+import secrets
+
 import django
 
 # 设置Django环境
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'crop_disease_backend.settings')
 django.setup()
 
-from django.contrib.auth import get_user_model
-from api.models import News
-from django.utils import timezone
+from django.conf import settings  # noqa: E402
+from django.contrib.auth import get_user_model  # noqa: E402
+from django.utils import timezone  # noqa: E402
+from api.models import News  # noqa: E402
 
 def create_sample_news():
+    if not settings.DEBUG and os.environ.get('ALLOW_DEMO_SEED') != '1':
+        raise SystemExit(
+            '这是演示数据脚本，已拒绝在生产（DJANGO_DEBUG=False）环境执行。'
+            '确实需要就设 ALLOW_DEMO_SEED=1。'
+        )
+
     # 获取或创建管理员用户
     User = get_user_model()
     admin_user, created = User.objects.get_or_create(
@@ -21,8 +40,10 @@ def create_sample_news():
         }
     )
     if created:
-        admin_user.set_password('admin123')
+        password = secrets.token_urlsafe(16)
+        admin_user.set_password(password)
         admin_user.save()
+        print(f'已创建 admin 超管，口令：{password}（只显示这一次，请立刻保存）')
     
     # 示例新闻数据 - 根据实际模型结构调整
     sample_news = [

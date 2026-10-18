@@ -26,10 +26,15 @@ logs/
 *.log.*
 
 # ── 本机配置与密钥 ───────────────────────────────────────────────────────────
+# 口径（2026-10 安全核查后收紧）：.env* 一律忽略，只放行下面三个白名单。
+# 为什么不再用旧的两条（`.env` + `.env.*.local`）：`.env.development` 与
+# `.env.production` **都不以 .local 结尾**，旧规则匹配不到 —— 新造一个同名文件
+# 写进密钥就会被直接提交。
 .env
-.env.local
-.env.*.local
-!.env.example          # 模板要入库
+.env.*
+!.env.example          # 模板要入库（只有占位符）
+!.env.development      # 已入库：只许放地址；VITE_ 变量会被打进前端包、公开可见
+!.env.production       # 同上
 *.pem
 *.key
 

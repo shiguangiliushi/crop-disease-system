@@ -21,8 +21,9 @@ cache/
 # 不该进版本库 —— 它包含 admin/DRF 的样式副本与带 hash 的压缩版本。
 staticfiles/
 
-# 本机密钥
+# 本机密钥（.env* 全忽略，只放行模板；口径见项目根 .gitignore 的说明）
 .env
+.env.*
 !.env.example
 
 # Python 缓存与虚拟环境

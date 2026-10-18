@@ -23,6 +23,15 @@ const check = (name, ok, detail = '') => {
 };
 
 const BRAND = 'rgb(46, 125, 50)';
+
+// ⚠️ 口令**只从环境变量读**，不写默认值（2026-10 安全核查）：仓库是公开的
+const E2E_USER = process.env.MOBILE_E2E_USER || 'admin';
+const E2E_PASS = process.env.MOBILE_E2E_PASS;
+if (!E2E_PASS) {
+  console.error('缺少环境变量 MOBILE_E2E_PASS。设置后再跑，例如：\n  $env:MOBILE_E2E_PASS="<测试账号口令>"');
+  process.exit(1);
+}
+
 const AUTH_PAGES = [
   ['登录', '/login'],
   ['注册', '/register'],
@@ -133,7 +142,7 @@ await emptyPage.screenshot({ path: 'dsh-shots/history-empty-after.png' });
 const detectContext = await browser.newContext(AUTHED);
 const detectPage = await detectContext.newPage();
 detectPage.on('pageerror', (error) => errors.push(String(error).slice(0, 160)));
-await login(detectPage, process.env.MOBILE_E2E_USER || 'admin', process.env.MOBILE_E2E_PASS || 'admin123456');
+await login(detectPage, E2E_USER, E2E_PASS);
 await detectPage.goto(`${UI}/detect`, { waitUntil: 'domcontentloaded' });
 await detectPage.waitForTimeout(2200);
 const detectColors = await detectPage.evaluate(() => {
