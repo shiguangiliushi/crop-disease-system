@@ -214,8 +214,9 @@ class CustomUser(AbstractUser):  # 定义自定义用户模型，继承自Abstra
         ])
 
         # 凭证一起失效：申请注销后不该再有设备能用这张账号
-        from rest_framework.authtoken.models import Token
-        Token.objects.filter(user=self).delete()
+        # 第 231 批：两种 token 一起吊销（见 models_token.revoke_all）
+        from .models_token import revoke_all
+        revoke_all(self)
         self._clear_sessions()
 
         logger.info('账号进入注销冷静期: id=%s 计划删除=%s', self.id, self.deletion_scheduled_for)
@@ -303,9 +304,9 @@ class CustomUser(AbstractUser):  # 定义自定义用户模型，继承自Abstra
             'failed_login_attempts', 'locked_until', 'password',
         ])
 
-        # 4) 失效 API Token
-        from rest_framework.authtoken.models import Token
-        Token.objects.filter(user=self).delete()
+        # 4) 失效 API Token（第 231 批：含每设备一张的 DeviceToken）
+        from .models_token import revoke_all
+        revoke_all(self)
 
         # 5) 清会话（关键：不做这一步，已登录的 admin 会话还能继续操作）
         #    第 101 批：这段逻辑与 request_deletion 共用 `_clear_sessions()`
@@ -786,3 +787,10 @@ from . import models_notify  # noqa: E402,F401
 from . import models_points  # noqa: E402,F401
 from . import models_report  # noqa: E402,F401
 from . import models_social  # noqa: E402,F401
+# 第 231 批：**必须在这里导入**。Django 只会自动加载 `api/models.py` 这一个模块；
+# `DeviceToken` 定义在 `models_token.py`，不被导入时它就不在 app registry 里 ——
+# 后果不是"模型用不了"，而是更隐蔽：**删用户时 Django 的 collector 不知道还有这张表**，
+# 于是留下孤儿行，直到 COMMIT 才由 SQLite 外键检查报 `FOREIGN KEY constraint failed`。
+# 实测：E2E 清理临时账号时踩到；正常请求路径因为 views 里 import 过反而没事 ——
+# 这种"看运气"的 bug 必须收敛成唯一入口。
+from . import models_token  # noqa: E402,F401

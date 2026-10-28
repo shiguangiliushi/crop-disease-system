@@ -55,6 +55,8 @@ from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志
 from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
 # 第 193 批：智能回答助手（会话/消息）+ 闸门/检索/上下文/LLM 四个可单独测的模块
 from .models_assistant import AssistantMessage, AssistantSession
+# 第 231 批：每设备一张 token（手机与桌面同时在线）
+from .models_token import DeviceToken
 from .assistant import context, guard, llm, prompts, retriever  # prompts：第 197 批语言归一用例要用
 from .assistant import orchestrator  # 第 212 批：单来源折叠用例要直接调它的纯函数
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
@@ -1304,6 +1306,114 @@ class LoginLockoutTests(TestCase):
             '/api/login/', {'username': 'nobody_here', 'password': 'whatever'}, format='json',
         )
         self.assertEqual(response.status_code, 404)
+
+
+class DeviceTokenTests(APITestCase):
+    """
+    第 231 批：**每设备一张 token** —— 手机与桌面可以同时在线
+
+    改前：DRF 的 `Token` 与用户一对一，而登录是"先删后建"，于是手机登录就把桌面那张删了，
+    桌面下一次请求 401 —— 用户的原话是"为什么我登录移动端，客户端不能同时在线"。
+
+    现在：登录只作废**同一设备**的旧凭证；改密码/停用这类"安全状态变了"的操作仍然
+    吊销**所有设备**（这条语义不能因为多端而放松）。
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(username='dev_user', password='pw-123456')
+        self.client = APIClient()
+
+    def _login(self, device=None, client=None, password='pw-123456'):
+        payload = {'username': 'dev_user', 'password': password}
+        if device:
+            payload['device'] = device
+        response = (client or self.client).post('/api/login/', payload, format='json')
+        return response
+
+    @staticmethod
+    def _token_of(response):
+        return response.data['data']['token']
+
+    @staticmethod
+    def _status_with(token):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {token}')
+        return client.get('/api/users/me/points/').status_code
+
+    # ── 核心：两端同时在线 ────────────────────────────────────────────────
+    def test_web_and_mobile_stay_online_together(self):
+        web = self._token_of(self._login('web'))
+        mobile = self._token_of(self._login('mobile'))
+        self.assertNotEqual(web, mobile, '不同设备应当是两张不同的凭证')
+        self.assertEqual(self._status_with(web), 200)
+        self.assertEqual(self._status_with(mobile), 200)
+
+    def test_missing_device_defaults_to_web(self):
+        """不传 device（脚本、老客户端）按 web 处理 —— 行为与改前一致"""
+        token = self._token_of(self._login())
+        self.assertTrue(DeviceToken.objects.filter(key=token, device='web').exists())
+
+    def test_same_device_relogin_rotates_only_that_device(self):
+        web = self._token_of(self._login('web'))
+        mobile = self._token_of(self._login('mobile'))
+        web2 = self._token_of(self._login('web'))
+        self.assertNotEqual(web, web2)
+        self.assertEqual(self._status_with(web), 401, '同一设备重新登录，旧凭证必须失效')
+        self.assertEqual(self._status_with(web2), 200)
+        self.assertEqual(self._status_with(mobile), 200, '手机那张不该被桌面登录挤掉')
+
+    def test_logout_only_kills_current_device(self):
+        web = self._token_of(self._login('web'))
+        mobile = self._token_of(self._login('mobile'))
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {web}')
+        self.assertEqual(client.post('/api/logout/').status_code, 200)
+
+        self.assertEqual(self._status_with(web), 401)
+        self.assertEqual(self._status_with(mobile), 200, '桌面退出登录不该让手机掉线')
+
+    # ── 安全状态变了：所有设备一起失效 ────────────────────────────────────
+    def test_password_change_revokes_every_device(self):
+        web = self._token_of(self._login('web'))
+        mobile = self._token_of(self._login('mobile'))
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {web}')
+        response = client.post(
+            f'/api/users/{self.user.id}/password/',
+            {'old_password': 'pw-123456', 'new_password': 'newpw-123456'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        fresh = response.data['token']
+
+        self.assertEqual(self._status_with(web), 401)
+        self.assertEqual(self._status_with(mobile), 401, '改密码后手机也必须重新登录')
+        self.assertEqual(self._status_with(fresh), 200, '当前设备要能继续用')
+
+    def test_admin_suspend_revokes_every_device(self):
+        admin = User.objects.create_user(username='dev_admin', password='pw-123456', is_staff=True)
+        web = self._token_of(self._login('web'))
+        mobile = self._token_of(self._login('mobile'))
+
+        admin_client = APIClient()
+        admin_client.force_authenticate(user=admin)
+        response = admin_client.post(
+            f'/api/admin/users/{self.user.id}/status/', {'is_active': False}, format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._status_with(web), 401)
+        self.assertEqual(self._status_with(mobile), 401)
+        self.assertFalse(DeviceToken.objects.filter(user=self.user).exists())
+
+    # ── 兼容：老的 DRF Token 仍然能认证 ──────────────────────────────────
+    def test_legacy_drf_token_still_works(self):
+        from rest_framework.authtoken.models import Token
+
+        legacy, _ = Token.objects.get_or_create(user=self.user)
+        self.assertEqual(self._status_with(legacy.key), 200)
 
 
 class LoginBackdoorRemovedTests(TestCase):

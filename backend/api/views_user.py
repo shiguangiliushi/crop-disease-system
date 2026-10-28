@@ -25,7 +25,9 @@ from rest_framework.generics import get_object_or_404  # 导入获取对象或40
 from rest_framework.pagination import PageNumberPagination  # 导入分页类
 from .pagination import CustomPagination  # 第 76 批：认 page_size 的全站统一分页
 from rest_framework.parsers import MultiPartParser, FormParser  # 第23批：头像上传需要 multipart 解析
-from rest_framework.authtoken.models import Token  # 第23批：改密码后轮换 token
+# 第 231 批：改密码/停用时要吊销**所有设备**的凭证（含新的 DeviceToken）；
+# 轮换后给当前设备补发一张 —— 不再直接用 DRF 的 Token
+from .models_token import DeviceToken, device_of, revoke_all
 from django.contrib.auth import get_user_model  # 导入获取用户模型的函数
 from .audit import log_admin_action  # 第 146 批：管理操作日志
 from django.contrib.auth import logout  # 第 95 批：注销账号时清掉当前会话
@@ -258,7 +260,8 @@ class PasswordResetConfirmView(APIView):
         user.save(update_fields=['password', 'failed_login_attempts', 'locked_until'])
 
         # 旧 token 全部作废：密码变了，之前登录过的设备必须重新登录
-        Token.objects.filter(user=user).delete()
+        # 第 231 批：两种 token 一起吊销（DeviceToken + 老 Token）
+        revoke_all(user)
 
         logger.info('用户通过邮件重置了密码: user_id=%s', user.id)
         return Response({'status': 'success', 'message': '密码已重置，请用新密码登录'})
@@ -469,8 +472,9 @@ class UserPasswordChangeView(APIView):
         target.save(update_fields=['password'])
 
         # 作废该用户的所有旧 token，并签发一个新的给当前调用方
-        Token.objects.filter(user=target).delete()
-        new_token = Token.objects.create(user=target)
+        # 第 231 批：所有**设备**都要重登（安全状态变了），只给当前设备补一张
+        revoke_all(target)
+        new_token = DeviceToken.issue(target, device_of(request))
 
         logger.info('用户 %s 修改了密码并轮换了 token', target.username)
         return Response({
@@ -628,9 +632,9 @@ class AccountCancelDeletionView(APIView):
         user.cancel_deletion()
 
         # 取消成功即视为身份有效：直接签发新 Token，用户不必再登一次
-        from rest_framework.authtoken.models import Token
-        Token.objects.filter(user=user).delete()
-        token = Token.objects.create(user=user)
+        # 第 231 批：先吊销所有设备，再给当前设备一张（冷静期内账号本来就登不上）
+        revoke_all(user)
+        token = DeviceToken.issue(user, device_of(request))
 
         logger.info('用户 %s 取消了注销申请', user.id)
         return Response({
@@ -1054,7 +1058,8 @@ class AdminUserStatusView(APIView):
         target.save(update_fields=['is_active'])
 
         if not raw:
-            Token.objects.filter(user=target).delete()
+            # 第 231 批：停用要踢掉**所有设备**（含手机那张 DeviceToken）
+            revoke_all(target)
 
         logger.info(
             '管理员 %s %s了用户 %s(%s)%s',

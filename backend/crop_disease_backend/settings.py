@@ -606,7 +606,10 @@ REST_FRAMEWORK = {  # REST框架配置
     # 代价：DRF 自带可浏览 API（BrowsableAPIRenderer）的登录表单不再可用，
     # 浏览器里直接打开 /api/... 会以匿名身份呈现；Django admin 是普通视图，不受影响。
     'DEFAULT_AUTHENTICATION_CLASSES': [  # 默认认证类
-        'rest_framework.authentication.TokenAuthentication',  # Token认证（唯一身份来源）
+        # 第 231 批：**每设备一张 token**（手机与桌面可以同时在线）。
+        # 先认 `DeviceToken`（新主路径），再退回 DRF 的 `Token`（老客户端/老数据/测试）。
+        'api.authentication.DeviceTokenAuthentication',
+        'rest_framework.authentication.TokenAuthentication',  # 兼容旧 Token
     ],
     'DEFAULT_PERMISSION_CLASSES': [  # 默认权限类
         'rest_framework.permissions.IsAuthenticated',  # 需要认证

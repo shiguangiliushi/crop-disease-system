@@ -4,7 +4,8 @@ from django.conf import settings  # 第 94 批：读 Token 有效期
 from django.utils import timezone  # 第 94 批：判断 Token 是否过期
 from rest_framework.authentication import TokenAuthentication  # 导入DRF Token认证类
 from rest_framework.exceptions import AuthenticationFailed  # 导入认证失败异常
-from rest_framework.authtoken.models import Token  # 导入Token模型
+from rest_framework.authtoken.models import Token  # 导入Token模型（老凭证，兼容用）
+from .models_token import DeviceToken  # 第 231 批：每设备一张的 token
 from django.utils.deprecation import MiddlewareMixin  # 导入中间件基类
 
 logger = logging.getLogger(__name__)  # 获取日志记录器
@@ -67,7 +68,12 @@ class TokenAuthenticationMiddleware(MiddlewareMixin):  # 定义Token认证中间
             if len(auth_header) == 2 and auth_header[0].lower() == 'token':  # 检查认证头格式
                 token_key = auth_header[1]  # 获取Token值
                 try:  # 尝试验证Token
-                    token = Token.objects.select_related('user').get(key=token_key)  # 获取Token及相关用户
+                    # 第 231 批：先认"每设备一张"的 DeviceToken，再退回 DRF 的老 Token。
+                    # 两者字段同构（key/user/created），后面那套过期判定与赋值不用分叉。
+                    try:
+                        token = DeviceToken.objects.select_related('user').get(key=token_key)
+                    except DeviceToken.DoesNotExist:
+                        token = Token.objects.select_related('user').get(key=token_key)
 
                     # 第 94 批：**真正执行有效期**。
                     # 过期就当作"没有凭证"处理（删掉这张 Token + 不做身份认证），
@@ -95,7 +101,7 @@ class TokenAuthenticationMiddleware(MiddlewareMixin):  # 定义Token认证中间
                     request.user = token.user  # 设置请求用户
                     request.auth = token  # 设置认证Token
                     logger.debug("User %s authenticated with token", request.user.username)  # 记录认证成功信息
-                except Token.DoesNotExist:  # 捕获Token不存在异常
+                except (DeviceToken.DoesNotExist, Token.DoesNotExist):  # 两种都查不到
                     # 🔒 不要把 token 明文写进日志（哪怕它是无效的：它可能只是过期/被截断的真实凭证，
                     #    而且这行是 WARNING 级，会稳定落盘）。只记录"收到无效 token"这个事实。
                     logger.warning("Invalid token presented for %s", request.path)  # 记录警告信息

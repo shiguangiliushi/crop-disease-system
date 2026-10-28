@@ -67,6 +67,9 @@ media/detection_uploads/
 media/news_images/news_*.png
 media/avatars/
 media/consult_images/
+# 第 230 批：助手看图问答上传的原图（压过之后的副本）—— 与 avatars/consult_images
+# 同类，是**用户上传**而不是种子内容，不该进仓库。
+media/assistant_uploads/
 # 第 196 批：i18n 审计夹具的占位图（`_seed_i18n_audit_tmp.py` 生成）。
 # 它们是**临时夹具**，不是种子内容 —— 进仓库只会让每台机器都多 10 个 0.6KB 的垃圾文件。
 # 之所以要真写文件（而不是只存路径字符串）：页面加载它们时若 404，

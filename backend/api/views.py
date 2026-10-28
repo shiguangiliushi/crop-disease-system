@@ -79,6 +79,8 @@ from reportlab.platypus import (
 )
 from rest_framework import status, viewsets, permissions
 from rest_framework.authtoken.models import Token
+# 第 231 批：每设备一张登录凭证（手机与桌面可同时在线）
+from .models_token import DeviceToken, device_of, revoke_all
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.exceptions import ParseError  # 请求体解析失败（应作为 400 而不是 500 处理）
 from rest_framework.response import Response
@@ -177,7 +179,8 @@ class RegisterView(APIView):
             # 响应结构与 LoginView 对齐：{status, message, data:{user, token}}。
             # （此前只返回扁平的用户信息、且不含 token，前端只能注册完再让用户手动登录一次）
             # 第 94 批：与登录一致 —— 直接建新 Token，不复用（避免拿到过期的旧凭证）。
-            token = Token.objects.create(user=user)
+            # 第 231 批：注册也走"每设备一张"，与登录保持同一套凭证
+            token = DeviceToken.issue(user, device_of(request))
             return Response({
                 'status': 'success',
                 'message': '注册成功',
@@ -460,8 +463,12 @@ class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        # 清除用户的认证token
-        if hasattr(request.user, 'auth_token'):
+        # 清除**当前这张**凭证（第 231 批：不再是"这个人的所有凭证"）。
+        # `request.auth` 可能来自 DeviceToken（新）或 DRF Token（兼容旧客户端）。
+        token = getattr(request, 'auth', None)
+        if token is not None and hasattr(token, 'delete'):
+            token.delete()
+        elif hasattr(request.user, 'auth_token'):
             request.user.auth_token.delete()
 
         # 清除session
@@ -688,9 +695,14 @@ class LoginView(APIView):
             # 为什么必须换：Token 现在真的会过期（见 api/middleware.py）。若沿用
             # `get_or_create`，一个"过期但还没被用过"的 Token 会被原样返回 ——
             # 用户刚输对密码，拿到的却是一张已经失效的凭证（实测就是这么复现的）。
-            # 顺带两个安全好处：登录即轮换，旧凭证立即失效；多设备不会共用同一张。
-            Token.objects.filter(user=user).delete()
-            token = Token.objects.create(user=user)
+            #
+            # 第 231 批：范围收窄到**同一设备**。原来 `Token.objects.filter(user=user)`
+            # 是把"这个人的所有凭证"都删掉 —— 手机登录就把桌面那张删了，桌面下次请求 401。
+            # 现在只作废同名设备的旧凭证，"同设备重复登录旧凭证立即失效"仍然成立，
+            # 而手机与桌面可以同时在线（多设备各自一张，见 models_token.py）。
+            device = device_of(request)
+            DeviceToken.objects.filter(user=user, device=device).delete()
+            token = DeviceToken.issue(user, device)
 
             # 返回用户信息和token
             response_data = {
