@@ -13,10 +13,20 @@
 降级原因（`degrade_reason`，写进库便于事后统计）：
 
     empty / too_long / sensitive / rate_limited   ← 闸门挡下（不消耗模型额度）
+    session_full                                  ← 单个会话消息到顶（第 228 批，建议新开会话）
     no_source                                      ← 检索为空：无来源不回答
     llm_disabled                                   ← 没配 key 或开关关着
     llm_error                                      ← 超时 / HTTP 错误 / 响应结构不对
     no_citation                                    ← 生成成功但引用校验全被剔除（疑似编造）
+
+## 多轮对话（第 228 批）
+
+会话表一直是"壳"：消息都落库了，但**从没被读回来喂给模型** —— 于是"那它用什么药"
+这种追问既没有上下文、检索也命中不了。现在 `_prepare()` 做两件事：
+
+  · `_recent_history()` 取最近 N 轮（`ASSISTANT_HISTORY_TURNS`）塞进 `messages`；
+  · `_contextual_query()` 在**像追问**的问题上把上一轮用户问题接进检索查询
+    （只影响检索，发给模型的仍然是用户原话）。
 """
 from __future__ import annotations
 
@@ -30,7 +40,7 @@ from django.db import transaction
 
 from ..models_assistant import AssistantMessage, AssistantSession
 from . import context as context_builder
-from . import guard, llm, prompts
+from . import guard, llm, prompts, vision
 from .retriever import detect_intent, search
 
 logger = logging.getLogger(__name__)
@@ -173,6 +183,89 @@ def _rate_limit() -> int:
     return guard.DEFAULT_RATE_PER_MINUTE if value is None else value
 
 
+def _history_turns() -> int:
+    """带几轮历史进模型（第 228 批）。0 / 负数 = 不带（退回"只看当前问题"）。"""
+    from django.conf import settings as django_settings
+
+    try:
+        return max(0, int(getattr(django_settings, 'ASSISTANT_HISTORY_TURNS', 4)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _session_max_messages() -> int:
+    """单个会话的消息上限（第 228 批）。0 / 负数 = 不限。"""
+    from django.conf import settings as django_settings
+
+    try:
+        return max(0, int(getattr(django_settings, 'ASSISTANT_SESSION_MAX_MESSAGES', 50)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _recent_history(session) -> list[dict]:
+    """取这个会话最近几轮对话（`[{'role','content'}, …]`，时间正序）。
+
+    三个刻意的取舍：
+      · **只取 `content` 非空的**：流式回答会先建一条空行再回填，取到空行等于没上下文；
+      · **多取一轮再交给 `prompts.prepare_history()` 裁**：那里按字数预算丢最旧的，
+        这里只负责"别把整个会话都读出来"（一屏 200 条历史就是 200 次 IO 的隐患）；
+      · **不含本轮问题**：调用它时本轮还没落库（`_persist` 在生成之后），
+        所以天然不会把同一个问题重复喂两遍。
+    """
+    turns = _history_turns()
+    if not turns or session is None:
+        return []
+    rows = list(
+        AssistantMessage.objects.filter(session=session)
+        .exclude(content='')
+        .order_by('-id')[:turns * 2]
+    )
+    rows.reverse()
+    return [{'role': row.role, 'content': row.content} for row in rows]
+
+
+#: 像"追问"的开头 —— 这些词本身没有实体信息，必须借上一轮才能检索到东西。
+FOLLOW_UP_MARKERS = (
+    '那', '它', '这个', '这种', '该', '还有', '再', '另外', '同样', '上面', '刚才',
+    'them', 'it', 'that', 'those', 'what about', 'and',
+)
+#: 短于这个长度的问题按追问处理（"用什么药""多久打一次"）
+FOLLOW_UP_MAX_CHARS = 12
+
+
+def _contextual_query(question: str, history: list[dict]) -> str:
+    """追问补全：把**上一条用户问题**接进检索查询（第 228 批）。
+
+    ## 为什么只在"像追问"时拼
+
+    拼得太多会让检索跑偏：一个完整问题（"葡萄霜霉病怎么防"）自己就带全了实体，
+    再掺上一轮（"番茄晚疫病"）会同时命中两种作物，把上下文撑成两份无关资料。
+    所以只在两种情况下补：**问题很短**（"用什么药"），或**以指代词开头**
+    （"那它呢"）—— 这两个特征覆盖了实测里的绝大多数追问。
+
+    ⚠️ 只影响检索与意图判定，**发给模型的仍然是用户原话**（见 `_prepare` 里
+       `prompts.build_messages(prepared.question, …)`）—— 否则模型会看到一句
+       自己没说过的话，回答里出现"你刚才问的…"这种怪句子。
+    """
+    if not history:
+        return question
+    last_user = next(
+        (item['content'] for item in reversed(history) if item.get('role') == 'user'), '',
+    )
+    text = (question or '').strip()
+    if not last_user or not text or last_user.strip() == text:
+        return question
+    lowered = text.lower()
+    looks_like_follow_up = (
+        len(text) <= FOLLOW_UP_MAX_CHARS
+        or any(lowered.startswith(marker) or text.startswith(marker) for marker in FOLLOW_UP_MARKERS)
+    )
+    if not looks_like_follow_up:
+        return question
+    return f'{last_user} {text}'
+
+
 @dataclass
 class Prepared:
     """同步与流式**共用**的"决策阶段"产物（第 195 批抽出）。
@@ -189,14 +282,26 @@ class Prepared:
     #: 非空表示**不必生成**，直接把这段话当答案（降级）
     early_answer: str = ''
     early_reason: str = ''
+    #: 这次降级要不要落库（第 228 批）。
+    #: `session_full` 是唯一一个 False：会话已经到顶，再把这条提示写进去只会
+    #: 让"到顶"永远成立（每条都写 → 永远超限 → 用户看到一次就再也新开不了）。
+    persist: bool = True
     messages: list[dict] = field(default_factory=list)
     citations: list[dict] = field(default_factory=list)
     prompt_version: str = ''
+    #: 第 229 批：这条问题带了图片时，"看图的结论"一行字（落进用户消息的
+    #: `image_summary`，图片本身不落盘 —— 见 `assistant/vision.py` 的说明）
+    image_summary: str = ''
 
 
 def _prepare(*, user, question: str, session: AssistantSession | None,
-             pest_identifier: str, lang: str = prompts.DEFAULT_LANG) -> Prepared | dict:
-    """跑完"决策阶段"。返回 `Prepared`；对**空问题**直接返回响应字典（连会话都不建）。"""
+             pest_identifier: str, lang: str = prompts.DEFAULT_LANG,
+             image=None) -> Prepared | dict:
+    """跑完"决策阶段"。返回 `Prepared`；对**空问题**直接返回响应字典（连会话都不建）。
+
+    `image`（第 229 批）：上传的图片文件。给了就先"看图"（本地 YOLO），
+    结论既当**检索锚点**，也写进提示词的知识区（见 `assistant/vision.py`）。
+    """
     code = prompts.normalize_lang(lang)
     guard_result = guard.check(question, user=user, rate_per_minute=_rate_limit())
 
@@ -223,25 +328,73 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
         prepared.early_answer, prepared.early_reason = _guard_reply(guard_result, code)
         return prepared
 
-    intent = detect_intent(prepared.question)
+    # 第 228 批：**会话到顶** —— 先拦，别花检索与模型的额度。
+    # 改前 `ASSISTANT_SESSION_MAX_MESSAGES` 只在 `check_assistant` 里被打印，
+    # 代码里没有任何地方执行它（"50 条上限"是文档里的一句话）。
+    max_messages = _session_max_messages()
+    if max_messages and session.messages.count() >= max_messages:
+        prepared.early_answer = prompts.degrade_text('session_full', code, limit=max_messages)
+        prepared.early_reason = 'session_full'
+        # 这条**不落库**：写进去只会让"已到顶"继续成立，用户永远开不了新话题
+        prepared.persist = False
+        return prepared
+
+    # 第 228 批：多轮上下文（问"那它用什么药"时，模型与检索都得知道"它"是谁）
+    history = prompts.prepare_history(_recent_history(session))
+
+    # 第 229 批：**看图**。先跑识别，再决定"能不能答、按哪个词条答"。
+    #
+    # 顺序很重要：必须在检索**之前**（识别结果就是检索锚点），并且必须在
+    # 会话已建之后（结论要落在这条用户消息上，历史才读得懂"他问的是这张图"）。
+    vision_result = None
+    if image is not None:
+        vision_result = vision.describe(image, lang=code)
+        prepared.image_summary = vision.summary(vision_result, code)
+        if vision_result.status not in ('success', 'healthy'):
+            # 图看不清 / 识别服务挂了：给可操作的提示，不调模型（也别浪费额度）
+            prepared.early_answer = vision.failure_text(vision_result, code)
+            prepared.early_reason = 'vision_unreadable'
+            return prepared
+        if vision_result.pest is not None:
+            # 识别结果 = 最确定的锚点（比任何文本匹配都准），但**不覆盖**调用方传来的
+            pest_identifier = pest_identifier or (
+                getattr(vision_result.pest, 'english_identifier', '') or vision_result.identifier
+            )
+    query = _contextual_query(prepared.question, history)
+
+    intent = detect_intent(query)
     from django.conf import settings as django_settings
 
-    hits = search(prepared.question, pest_identifier=pest_identifier,
+    hits = search(query, pest_identifier=pest_identifier,
                   top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 8))
     hits = _trim_dominated_hits(hits)
     built = context_builder.build(hits, lang=code)
+
+    # 第 229 批：看图的结论要进**知识区**（模型必须知道"这是识别结果、不是用户原话"），
+    # 而不是塞进问题里 —— 塞问题里会让模型把观察复述成"你说…"。
+    knowledge_text = built.text
+    if vision_result is not None:
+        observation = vision.observation_text(vision_result, code)
+        knowledge_text = f'{observation}\n\n{knowledge_text}' if knowledge_text else observation
 
     if built.is_empty:
         # 无来源不回答：农业场景答错药是事故，不是体验问题
         prepared.early_answer = prompts.degrade_text('no_source', code)
         prepared.early_reason = 'no_source'
+        if vision_result is not None:
+            # 图看出来了、但词库没有这条：先说清"我看到了什么"，再说"没收录"
+            prepared.early_answer = f'{vision.observation_text(vision_result, code)}\n\n{prepared.early_answer}'
     elif not llm.enabled():
         prepared.early_answer = prompts.degrade_text('no_llm', code, body=_fallback_body(hits, code))
         prepared.early_reason = 'llm_disabled'
         # 第 207 批：降级给的是**档案原文**，出处就是这些命中 —— 必须带上引用
         prepared.citations = _citations_from_hits(hits, code)
     else:
-        prepared.messages = prompts.build_messages(prepared.question, built.text, intent, code)
+        # ⚠️ 传给模型的是**用户原话** `prepared.question`，不是补全后的 `query`：
+        #    补全句里有上一轮的问题，模型会把它当成"这句也是用户说的"而重复回答。
+        prepared.messages = prompts.build_messages(
+            prepared.question, knowledge_text, intent, code, history=history,
+        )
         prepared.citations = [c.as_dict() for c in built.citations[:MAX_CITATIONS]]
         prepared.prompt_version = prompts.PROMPT_VERSION
     return prepared
@@ -331,10 +484,15 @@ def _citations_from_hits(hits, lang: str = prompts.DEFAULT_LANG) -> list[dict]:
 def _persist(session, question: str, *, answer: str, reason: str, model: str = '',
              latency_ms: int = 0, citations: list | None = None,
              usage: dict | None = None, prompt_version: str = '',
-             lang: str = prompts.DEFAULT_LANG, truncated: bool = False) -> AssistantMessage:
+             lang: str = prompts.DEFAULT_LANG, truncated: bool = False,
+             image_summary: str = '') -> AssistantMessage:
     """落库：用户消息 + 助手消息（单事务，要么都写要么都不写）。"""
     with transaction.atomic():
-        AssistantMessage.objects.create(session=session, role='user', content=question)
+        AssistantMessage.objects.create(
+            session=session, role='user', content=question,
+            # 第 229 批：这张图"看到了什么"记在**用户消息**上（图片本身不落盘）
+            image_summary=image_summary or '',
+        )
         message = AssistantMessage.objects.create(
             session=session,
             role='assistant',
@@ -355,12 +513,25 @@ def _persist(session, question: str, *, answer: str, reason: str, model: str = '
 
 
 def ask(*, user, question: str, session: AssistantSession | None = None,
-        pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG) -> dict:
+        pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None) -> dict:
     """问一个问题，返回结构化结果。**永不抛异常给调用方**（见模块 docstring）。"""
     prepared = _prepare(user=user, question=question, session=session,
-                        pest_identifier=pest_identifier, lang=lang)
+                        pest_identifier=pest_identifier, lang=lang, image=image)
     if isinstance(prepared, dict):
         return prepared
+
+    # 第 228 批：会话到顶 —— 给可操作话术，但**不写库**（`message_id` 为 None）
+    if not prepared.persist:
+        return {
+            'session_id': prepared.session.pk,
+            'message_id': None,
+            'answer': prepared.early_answer,
+            'degraded': True,
+            'degrade_reason': prepared.early_reason,
+            'citations': [],
+            'usage': {},
+            'truncated': False,
+        }
 
     answer, reason, citations, usage, actual_model, prompt_version = '', '', [], {}, '', ''
     truncated = False
@@ -442,7 +613,7 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         prepared.session, prepared.question, answer=answer, reason=reason,
         model=actual_model, latency_ms=latency_ms, citations=citations,
         usage=usage, prompt_version=prompt_version, lang=prepared.lang,
-        truncated=truncated,
+        truncated=truncated, image_summary=prepared.image_summary,
     )
 
     return {
@@ -469,7 +640,7 @@ def _sse(event: str, data: dict) -> bytes:
 
 
 def ask_stream(*, user, question: str, session: AssistantSession | None = None,
-               pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG):
+               pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None):
     """流式问答：yield SSE 事件字节串。
 
     事件序列（与 `docs/智能回答助手框架.md` 第五节一致）：
@@ -487,13 +658,24 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     代价是"空内容的助手消息"会短暂存在 —— 但它必然被同一个请求补全。
     """
     prepared = _prepare(user=user, question=question, session=session,
-                        pest_identifier=pest_identifier, lang=lang)
+                        pest_identifier=pest_identifier, lang=lang, image=image)
     if isinstance(prepared, dict):
         # 空问题：不落库，只把同一套响应翻译成 SSE
         yield _sse('meta', {'session_id': prepared['session_id'], 'message_id': None,
                             'degraded': True, 'degrade_reason': 'empty', 'citations': []})
         yield _sse('delta', {'text': prepared['answer']})
         yield _sse('done', {'usage': {}, 'degraded': True, 'degrade_reason': 'empty',
+                            'truncated': False})
+        return
+
+    # 第 228 批：会话到顶 —— 同"空问题"那样只发事件、不落库
+    if not prepared.persist:
+        yield _sse('meta', {'session_id': prepared.session.pk, 'message_id': None,
+                            'degraded': True, 'degrade_reason': prepared.early_reason,
+                            'citations': []})
+        yield _sse('delta', {'text': prepared.early_answer})
+        yield _sse('done', {'usage': {}, 'degraded': True,
+                            'degrade_reason': prepared.early_reason,
                             'truncated': False})
         return
 
@@ -504,7 +686,7 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
         message = _persist(prepared.session, prepared.question,
                            answer=prepared.early_answer, reason=prepared.early_reason,
                            citations=[], prompt_version=prepared.prompt_version,
-                       lang=prepared.lang)
+                       lang=prepared.lang, image_summary=prepared.image_summary)
         yield _sse('meta', {'session_id': prepared.session.pk, 'message_id': message.pk,
                             'degraded': True, 'degrade_reason': prepared.early_reason,
                             'citations': []})
@@ -516,8 +698,11 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
 
     # ── 生产路径：先建消息行（内容待补），拿到 id 后再开始流 ─────────────
     with transaction.atomic():
-        AssistantMessage.objects.create(session=prepared.session, role='user',
-                                        content=prepared.question)
+        AssistantMessage.objects.create(
+            session=prepared.session, role='user', content=prepared.question,
+            # 第 229 批：看图的结论跟着用户消息走（图片不落盘，见 vision.py）
+            image_summary=prepared.image_summary or '',
+        )
         message = AssistantMessage.objects.create(
             session=prepared.session, role='assistant', content='', degraded=False,
             prompt_version=prepared.prompt_version, lang=prepared.lang,

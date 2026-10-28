@@ -144,6 +144,10 @@ class AssistantSessionDetailView(APIView):
                     'id': m.pk,
                     'role': m.role,
                     'content': m.content,
+                    # 第 229 批：这条提问带了一张图时，"看图看到了什么"的一行摘要。
+                    # 图片本身不落盘（助手不是相册），但没有这一行，历史里只会剩下
+                    # 一句"这张图怎么了"—— 用户根本想不起当时问的是哪张。
+                    'image_summary': m.image_summary or '',
                     'degraded': bool(m.degraded),
                     'degrade_reason': m.degrade_reason,
                     # 第 204 批：当初是否被长度上限截断 —— 历史里的回答也要一直提示，

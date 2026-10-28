@@ -803,7 +803,14 @@ LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '30'))
 LLM_MAX_TOKENS = int(os.environ.get('LLM_MAX_TOKENS', '2000'))
 
 #: 单个会话最多多少条消息（到顶就建议新开会话，不做摘要压缩 —— 见框架文档"明确不做"）
+#: ⚠️ 第 228 批之前这个值**只被 `check_assistant` 打印出来，没有任何地方真的执行** ——
+#:    "50 条上限"是文档里的一句话，代码里并不存在。现在在 `orchestrator._prepare()`
+#:    里按它拦：到顶给可操作话术（去新开会话），且**不再往这个会话里写消息**。
 ASSISTANT_SESSION_MAX_MESSAGES = int(os.environ.get('ASSISTANT_SESSION_MAX_MESSAGES', '50'))
+#: 多轮对话带几轮历史进模型（第 228 批；0 = 不带，退回"只看当前问题"）。
+#: 一轮 = 一条用户消息 + 一条助手回答。默认 4 轮：够覆盖"这个病→那用什么药→多久打一次"
+#: 这类连续追问，又不至于把上下文预算挤掉检索资料（历史总字数另有 1200 字上限）。
+ASSISTANT_HISTORY_TURNS = int(os.environ.get('ASSISTANT_HISTORY_TURNS', '4'))
 #: 每用户每分钟提问上限（0 = 不限）。闸门在**动模型之前**执行，所以拒绝不花额度。
 ASSISTANT_RATE_PER_MINUTE = int(os.environ.get('ASSISTANT_RATE_PER_MINUTE', '10'))
 #: 检索取前几条进上下文。5 条约 2000~3000 字，是"够用且不跑题"的平衡点。

@@ -184,7 +184,7 @@ class Command(BaseCommand):
                     else '对全体用户发声与系统开关（公告/预警/敏感词/版块）')
             lines.append(f'| `{capability}` | {"、".join(pages)} | {desc} |')
         lines.append(f'| （任何能进后台的人） | {"、".join(COMMON_PAGES)} | 只读聚合，没有他人明细 |')
-        lines.append(f'| `FULL_ADMIN` | {"、".join(FULL_ADMIN_PAGES)} | 会暴露部署细节或"谁对谁做了什么" |')
+        lines.append(f'| `FULL_ADMIN` | {"、".join(FULL_ADMIN_PAGES)} | 会暴露部署细节、他人提问原文或"谁对谁做了什么" |')
 
         lines += [
             '',

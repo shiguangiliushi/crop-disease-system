@@ -77,6 +77,11 @@ class AssistantMessage(models.Model):
     )
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, verbose_name="角色")
     content = models.TextField(verbose_name="内容")
+    #: 第 229 批：这条用户消息带了一张图片时，"看图的结论"一句话快照。
+    #: 图片本身**不落盘**（见 `assistant/vision.py` 的说明：助手不是相册），但会话历史里
+    #: 只留一个问题会让人莫名其妙 —— "我问了句'这张图怎么了'，图呢？"
+    #: 存摘要而不是识别明细：明细（类名/置信度）进提示词与回答就够，重复存只会漂。
+    image_summary = models.CharField(max_length=200, blank=True, default='', verbose_name="图片识别摘要")
 
     # ── 生成侧元数据（用户消息全为空/0）────────────────────────────────────
     model = models.CharField(max_length=60, blank=True, default='', verbose_name="实际使用的模型")

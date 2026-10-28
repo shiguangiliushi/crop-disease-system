@@ -93,7 +93,7 @@ COMMON_PAGES = ['/admin/dashboard']
 #: （系统健康与操作日志两个页签、以及 `/api/admin/health/`、`/api/admin/audit-logs/`
 #: 两条接口）；反过来，BROADCAST 的人在这一页只画「版块管理」一个页签。
 #: 两条边界由 `RoleMatrixTests.test_broadcast_capability_unlocks_the_system_page` 钉住。
-FULL_ADMIN_PAGES = ['/admin/health']
+FULL_ADMIN_PAGES = ['/admin/health', '/admin/assistant']
 
 #: ★ 权限矩阵：`(method, path, allow, note)`
 #:
@@ -156,6 +156,8 @@ ENDPOINT_RULES = (
     # -- 仅全权管理员 --
     ('GET', '/api/admin/health/', ('FULL_ADMIN',), '系统健康（暴露服务器路径与部署细节）'),
     ('GET', '/api/admin/audit-logs/', ('FULL_ADMIN',), '操作日志（谁对谁做了什么）'),
+    # 第 228 批：看板里有别人的提问原文与模型成本，与上面两条同一档
+    ('GET', '/api/admin/assistant/stats/', ('FULL_ADMIN',), '助手质量看板（降级率 / 知识库缺口）'),
 )
 
 #: **任何登录用户**都能拿到 200 的路径 —— 它们不是门禁，只是"返回的数据范围"不同

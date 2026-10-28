@@ -81,7 +81,8 @@ class Command(BaseCommand):
         if not s.LLM_ENABLED:
             self._warn('LLM_ENABLED=False：助手会走降级（返回词条原文）。要真正问答请打开它')
         self._ok(f'限流 {s.ASSISTANT_RATE_PER_MINUTE} 次/分钟 · 检索 {s.ASSISTANT_TOP_K} 条 · '
-                 f'会话上限 {s.ASSISTANT_SESSION_MAX_MESSAGES} 条消息')
+                 f'会话上限 {s.ASSISTANT_SESSION_MAX_MESSAGES} 条消息 · '
+                 f'带 {s.ASSISTANT_HISTORY_TURNS} 轮历史')
         self._ok(f'闸门上限 {guard.MAX_QUESTION_CHARS} 字 · 提示词版本 {prompts.PROMPT_VERSION}')
 
         if probe:

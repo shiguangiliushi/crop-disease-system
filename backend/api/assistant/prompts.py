@@ -265,6 +265,8 @@ DEGRADE_TEXT = {
         'empty': '请先输入您的问题。',
         'too_long': '问题太长了（上限 {limit} 字），请精简后再问。',
         'rate_limited': '提问太频繁了（每分钟上限 {limit} 次），请稍等一下再问。',
+        'session_full': ('这次会话已经攒了 {limit} 条消息，请新开会话继续问'
+                         '（之前的问答还在「问答历史」里，随时能翻回去看）。'),
         'error': '（AI 助手暂时不可用：{reason}。以下为该病害的档案原文，仅供参考）\n\n{body}',
     },
     'en': {
@@ -277,6 +279,8 @@ DEGRADE_TEXT = {
         'empty': 'Please type your question first.',
         'too_long': 'The question is too long (limit {limit} characters). Please shorten it.',
         'rate_limited': 'Too many questions in a row (limit {limit} per minute). Please wait a moment.',
+        'session_full': ('This conversation already holds {limit} messages — please start a new '
+                         'conversation to keep asking (your earlier Q&A stays in “History”).'),
         'error': ('(The AI assistant is temporarily unavailable: {reason}. The archive text below '
                   'is shown for reference only.)\n\n{body}'),
     },
@@ -302,20 +306,79 @@ def degrade_text(key: str, lang: str = DEFAULT_LANG, **params) -> str:
 #: v7 那句"只在最后一句标一次"太含糊，实测密度不降反升（0.33 → 0.83 处/行）；
 #: 现在明确"单来源时全篇只标一次、列表标在最后一条、多来源必须逐段标"，
 #: 并在 `orchestrator._collapse_single_source()` 里做了兜底折叠。
-PROMPT_VERSION = 'v8-2026-10-16'
+#: **v9（第 228 批）messages 里开始带多轮历史**（措辞没改，但"模型看到什么"变了，
+#: 所以版本也要变 —— 否则同一版本号下两种输入产出的答案无法区分）。
+PROMPT_VERSION = 'v9-2026-10-28'
+
+
+#: 多轮历史：单条消息最多带多少字（第 228 批）
+HISTORY_MESSAGE_CHARS = 240
+#: 多轮历史：整段历史最多带多少字（粗口径的 token 预算，中文约 1 字 ≈ 1 token）
+HISTORY_TOTAL_CHARS = 1200
+
+
+def prepare_history(history: list[dict] | None, *,
+                    message_chars: int = HISTORY_MESSAGE_CHARS,
+                    total_chars: int = HISTORY_TOTAL_CHARS) -> list[dict]:
+    """把"原始历史"裁成能直接塞进 `messages` 的形状（第 228 批）。
+
+    做三件事，顺序有意义：
+      1. **只留 user / assistant**：system 由这里自己给，历史里混进 system 会让
+         规则随着聊天被改写（提示词注入最省事的一条路）；
+      2. 单条超长就截断（补 `…`）：上一轮的长回答没必要整段回灌给模型；
+      3. 整段超预算时**从最旧的丢** —— 越近的上下文越相关，"上一句指代"几乎
+         总是落在最后两三条上。
+
+    返回按时间正序（老的在前），直接 `messages.extend(...)` 即可。
+    """
+    cleaned: list[dict] = []
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get('role') or '').strip()
+        if role not in ('user', 'assistant'):
+            continue
+        content = str(item.get('content') or '').strip()
+        if not content:
+            continue
+        if message_chars and len(content) > message_chars:
+            content = content[:message_chars].rstrip() + '…'
+        cleaned.append({'role': role, 'content': content})
+
+    if not total_chars:
+        return cleaned
+
+    kept: list[dict] = []
+    used = 0
+    for item in reversed(cleaned):
+        used += len(item['content'])
+        if kept and used > total_chars:
+            break
+        kept.append(item)
+    kept.reverse()
+    return kept
 
 
 def build_messages(question: str, knowledge: str, intent: str = 'general',
-                   lang: str = DEFAULT_LANG) -> list[dict]:
-    """拼出 `messages`。`knowledge` 为空时要走降级（见 orchestrator），不在这里兜。"""
+                   lang: str = DEFAULT_LANG, history: list[dict] | None = None) -> list[dict]:
+    """拼出 `messages`。`knowledge` 为空时要走降级（见 orchestrator），不在这里兜。
+
+    第 228 批：`history` 是**最近几轮对话**（`[{'role','content'}, …]`，由
+    `orchestrator._history_of()` 按预算裁好）。它插在 system 与当前提问之间，
+    模型才能看懂"那它用什么药"指的是上一轮那个病。
+
+    ⚠️ 为什么历史**不放 system**：system 是规则（"只能用下面的资料回答"），
+       历史是对话内容。混在一起会让模型把"上一轮的回答"当成资料去引用，
+       而引用校验只认本轮检索到的【序号】，结果就是答案里出现无效序号。
+    """
     code = normalize_lang(lang)
     focus = (FOCUS_BY_INTENT.get(code) or FOCUS_BY_INTENT[DEFAULT_LANG]).get(
         intent, FOCUS_BY_INTENT[code]['general'])
-    return [
-        {'role': 'system', 'content': SYSTEM_PROMPTS[code]},
-        {'role': 'user', 'content': USER_TEMPLATES[code].format(
-            knowledge=knowledge, question=question.strip(), focus=focus)},
-    ]
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPTS[code]}]
+    messages.extend(history or [])
+    messages.append({'role': 'user', 'content': USER_TEMPLATES[code].format(
+        knowledge=knowledge, question=question.strip(), focus=focus)})
+    return messages
 
 
 # ============================================================================

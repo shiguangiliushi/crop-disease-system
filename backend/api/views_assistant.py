@@ -2,8 +2,8 @@
 
 | 接口 | 方法 | 鉴权 | 说明 |
 |---|---|---|---|
-| `/api/assistant/ask/` | POST | 需登录 | 问一个问题，一次返回完整答案 + 来源引用 |
-| `/api/assistant/ask/stream/` | POST | 需登录 | 同上，但用 SSE **逐字**返回 |
+| `/api/assistant/ask/` | POST | 需登录 | 问一个问题，一次返回完整答案 + 来源引用；可附 `image`（图片问答，第 229 批） |
+| `/api/assistant/ask/stream/` | POST | 需登录 | 同上，但用 SSE **逐字**返回（同样支持 `image`） |
 | `/api/assistant/messages/<id>/feedback/` | POST | 需登录 | 给某条助手回答打分（有用 / 没用 + 可选说明） |
 | `/api/assistant/sessions/<id>/escalate/` | POST | 需登录 | 把这次会话**转人工**（写进既有的专家咨询） |
 
@@ -34,8 +34,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models_assistant import AssistantMessage, AssistantSession
-from .assistant import orchestrator, prompts
+from .assistant import orchestrator, prompts, vision
 from .assistant.service import escalate
+from .image_validation import ImageValidationError, validate_image_upload
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,21 @@ def _parse_request(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # 第 229 批：**看图问答**。图片走 multipart 字段 `image`（JSON 请求里没有它，行为不变）。
+    #
+    # 校验复用 `image_validation`（识别页/头像/新闻图共用同一套：大小、格式、真实后缀），
+    # 所以这里**不要**再写一份"5MB + jpg/png"的判断 —— 两处口径必然会漂。
+    image = request.FILES.get('image') if request.FILES else None
+    if image is not None:
+        try:
+            validate_image_upload(image, prefix='assistant_')
+        except ImageValidationError as exc:
+            return None, Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    # 只传图、不打字：给一个默认问题。否则闸门按"空问题"拒掉，用户会觉得"这张图白传了"。
+    if image is not None and not question.strip():
+        question = vision.default_question(_request_lang(request))
+
     session = None
     session_id = request.data.get('session_id')
     if session_id not in (None, ''):
@@ -86,6 +102,7 @@ def _parse_request(request):
         'session': session,
         'pest_identifier': str(request.data.get('pest_identifier') or ''),
         'lang': _request_lang(request),
+        'image': image,
     }, None
 
 
@@ -105,6 +122,7 @@ class AssistantAskView(APIView):
             session=payload['session'],
             pest_identifier=payload['pest_identifier'],
             lang=payload['lang'],
+            image=payload['image'],
         )
         return Response(result)
 
@@ -129,6 +147,7 @@ class AssistantAskStreamView(APIView):
             session=payload['session'],
             pest_identifier=payload['pest_identifier'],
             lang=payload['lang'],
+            image=payload['image'],
         )
         response = StreamingHttpResponse(stream, content_type='text/event-stream; charset=utf-8')
         # ① 别让 GZipMiddleware 把流攒住（见模块 docstring 第 4 条）
