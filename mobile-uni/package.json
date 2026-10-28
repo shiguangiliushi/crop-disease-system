@@ -1,0 +1,27 @@
+{
+  "name": "crop-mobile-uni",
+  "version": "0.1.0",
+  "private": true,
+  "description": "农作物病害识别 · 移动端（uni-app 版：一套代码出 H5 / 微信小程序 / APP）",
+  "scripts": {
+    "dev:h5": "uni",
+    "build:h5": "uni build",
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "build:mp-weixin": "uni build -p mp-weixin",
+    "dev:app": "uni -p app",
+    "build:app": "uni build -p app"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "3.0.0-5030420261028001",
+    "@dcloudio/uni-components": "3.0.0-5030420261028001",
+    "@dcloudio/uni-h5": "3.0.0-5030420261028001",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@dcloudio/uni-cli-shared": "3.0.0-5030420261028001",
+    "@dcloudio/uni-stacktracey": "3.0.0-5030420261028001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-5030420261028001",
+    "vite": "5.2.8"
+  }
+}
