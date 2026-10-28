@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
+from django.conf import settings
 from django.db.models import Avg, Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
@@ -125,7 +126,14 @@ def _token_totals(answers) -> dict:
 
 
 def _trend(questions, answers, days: int, today) -> list[dict]:
-    """按天趋势（含没有数据的空白日 —— 前端要画连续折线，缺日会连成直线）。"""
+    """按天趋势（含没有数据的空白日 —— 前端要画连续折线，缺日会连成直线）。
+
+    ⚠️ `today` 必须是**本地日期**（`timezone.localdate()`），不是 `timezone.now().date()`。
+    第 233 批修过这个 bug：`TruncDate('created_at')` 按 `TIME_ZONE`（Asia/Shanghai）
+    切成**本地日期**，而窗口末端原来取的是 UTC 日期 —— 本地时间 00:30 时两者差一天，
+    刚问的问题落在"明天"那一桶里，`trend[-1]` 变成 0（`test_trend_fills_every_day` 在
+    跨零点的那次全量测试里就红了）。
+    """
     def _by_day(queryset):
         rows = (
             queryset.annotate(day=TruncDate('created_at'))
@@ -139,7 +147,7 @@ def _trend(questions, answers, days: int, today) -> list[dict]:
 
     trend = []
     for offset in range(days - 1, -1, -1):
-        day = (today - timedelta(days=offset)).date()
+        day = today - timedelta(days=offset)
         trend.append({
             'date': day.isoformat(),
             'questions': questions_by_day.get(day, 0),
@@ -247,7 +255,15 @@ class AdminAssistantStatsView(APIView):
 
         days = _days_from(request)
         now = timezone.now()
-        since = now - timedelta(days=days)
+        # 第 233 批：窗口按**本地日**对齐（与趋势桶同一把尺子）：
+        #   · 统计窗口从"最早展示那天的 00:00 本地时间"开始 —— 原来的 now-days
+        #     会在跨零点时让最早那天少算半天；
+        #   · trend 的末端日期用 localdate()，不要用 now.date()（那是 UTC 日期）。
+        today = timezone.localdate()
+        start_day = today - timedelta(days=days - 1)
+        since = datetime.combine(start_day, time.min)
+        if settings.USE_TZ:
+            since = timezone.make_aware(since)
 
         questions = AssistantMessage.objects.filter(role='user', created_at__gte=since)
         # 流式回答会先建空行再回填；统计里只算**有内容**的回答，
@@ -288,7 +304,7 @@ class AdminAssistantStatsView(APIView):
                 row['lang'] or 'zh': row['n']
                 for row in answers.values('lang').annotate(n=Count('id'))
             },
-            'trend': _trend(questions, answers, days, now),
+            'trend': _trend(questions, answers, days, today),
             'gaps': {
                 'no_source_questions': _gap_questions(answers.filter(degrade_reason='no_source')),
                 'useless': _useless_feedback(answers),

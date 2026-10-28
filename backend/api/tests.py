@@ -39,7 +39,8 @@ import os  # 第 102 批：备份测试要临时改写 DJANGO_BACKUP_DIR
 import time  # 第 106 批：prune_media 测试要造"N 天前的文件"
 import re
 import uuid  # 第 95 批：造"已登录会话"的 key
-from datetime import timedelta  # 第 46 批：预警测试要造"N 天前"的记录
+from datetime import datetime, time, timedelta  # 第 233 批补 datetime/time（时区边界用例）
+from datetime import timezone as dt_timezone  # 第 233 批：把"现在"固定在本地 00:30
 from pathlib import Path  # 第 91 批：净化白名单的契约测试要读前端源文件
 from unittest.mock import patch  # 第 85 批：翻译服务用桩替换，测试不联网
 
@@ -14485,6 +14486,25 @@ class AssistantAdminStatsTests(APITestCase):
         client = self._client(self.admin)
         self.assertEqual(client.get('/api/admin/assistant/stats/?days=999').data['range']['days'], 90)
         self.assertEqual(client.get('/api/admin/assistant/stats/?days=abc').data['range']['days'], 14)
+
+    @patch('django.utils.timezone.now')
+    def test_trend_uses_local_dates_not_utc(self, mock_now):
+        """本地 00:30 的问题算"今天"，不能因为 UTC 还在前一天就落到昨天。
+
+        第 233 批修：`TruncDate` 按 TIME_ZONE（Asia/Shanghai）切本地日期，
+        而窗口末端原来取 `now.date()`（UTC 日期）—— 本地 00:00~08:00 之间两者差一天，
+        刚问的问题落进"明天"那一桶，`trend[-1]` 变 0（跨零点跑全量测试时红过一次）。
+        这里把"现在"固定在本地 00:30（UTC 前一天 16:30），确定性地覆盖这段窗口。
+        """
+        fake_utc = datetime(2026, 1, 2, 16, 30, tzinfo=dt_timezone.utc)  # 本地 2026-01-03 00:30
+        mock_now.return_value = fake_utc
+
+        self._exchange(self.plain)
+        data = self._client(self.admin).get('/api/admin/assistant/stats/?days=5').data
+
+        self.assertEqual(data['trend'][-1]['date'], '2026-01-03', '末端应当是本地日期')
+        self.assertEqual(data['trend'][-1]['questions'], 1, '本地今天的问题要算在今天这一桶')
+        self.assertEqual(data['trend'][-2]['questions'], 0)
 
     def test_trend_fills_every_day(self):
         """趋势要补齐空白日 —— 前端画折线，缺日会被连成一条假直线"""
