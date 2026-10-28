@@ -453,7 +453,13 @@ export async function registerTempUser(suffix = Math.random().toString(36).slice
     },
   });
   if (status !== 201) {
-    throw new Error(`注册临时账号失败（HTTP ${status}）：${JSON.stringify(json)}`);
+    // 429 是**限额用完**，不是功能坏了：注册限流 20/hour（同一 IP），
+    // 而验证码填错也占额度（第 233 批）。反复跑 E2E 很容易撞到，所以给出可操作的提示。
+    const hint = status === 429
+      ? '\n→ 注册限额用完了（20 次/小时，同一 IP）。清一下限流计数再跑：\n'
+        + '  cd backend && python manage.py shell -c "from django.core.cache import cache; cache.clear()"'
+      : '';
+    throw new Error(`注册临时账号失败（HTTP ${status}）：${JSON.stringify(json)}${hint}`);
   }
   const data = json?.data ?? json;
   return { username, password, token: data?.token, user: data?.user };
