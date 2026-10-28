@@ -47,6 +47,8 @@ ADMIN_SHOTS = {
     'admin-audit-log.png': 'admin-audit-log',
     'admin-comment-restore.png': 'admin-comment-restore',
     'admin-health.png': 'admin-health',
+    # 第 229 批新增：**助手质量看板**（降级率 / 知识库缺口 / 没用反馈 / token 与延迟）
+    'admin-assistant-quality.png': 'admin-assistant-quality',
 }
 
 #: 农户端（由 capture-docs-shots.mjs 生成，这里只负责缩放与转码）
@@ -58,6 +60,8 @@ FARMER_SHOTS = (
     # 第 202 批新增：智能问答页（第 198 批做的独立问答页）。
     # 它此前**没有截图** —— README 的界面一览里因此看不出这个功能存在。
     'farmer-assistant',
+    # 第 229 批新增：问答页"选好图还没发"的状态（说明能传图）
+    'farmer-assistant-answer',
 )
 
 FORMAT_ARGS = {

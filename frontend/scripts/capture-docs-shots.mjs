@@ -152,7 +152,9 @@ const seedOutput = runDjango([
   "                 'degraded': m.degraded, 'degrade_reason': m.degrade_reason,",
   "                 'latency_ms': m.latency_ms, 'citations': m.citations, 'usage': m.usage,",
   "                 'prompt_version': m.prompt_version, 'lang': m.lang,",
-  "                 'truncated': m.truncated, 'created_at': m.created_at.isoformat()}",
+  // 第 229 批：`image_summary` 也要进快照 —— 少了它，还原后"这条提问带过一张图"的信息就丢了
+  "                 'truncated': m.truncated, 'image_summary': m.image_summary,",
+  "                 'created_at': m.created_at.isoformat()}",
   "                for m in AssistantMessage.objects.filter(session=s).order_by('id')]})",
   "    SNAP.write_text(json.dumps(rows, ensure_ascii=False), encoding='utf-8')",
   "    return len(rows)",
@@ -269,6 +271,11 @@ await shoot('farmer-wiki.png');
 // ⚠️ 演示会话必须**先种好**（见上面的 seed 段），否则截出来是空态。
 //    种的时候走的是"直接写库"，所以这张图**不产生任何模型调用费用**，
 //    也不受外网可用性影响 —— 截图脚本不该有这种外部依赖。
+//
+// 第 229 批：问答页支持**上传图片**了，这张图要把它拍出来：
+//    点开一条历史 → 在输入区选一张叶片图（**不发送**）→ 截图。
+//    刻意不发：发了就要真的调一次模型（费用 + 结果不确定 + 得等流式），
+//    而这张图要说明的是"能传图"，不是"某次回答长什么样"（回答那张由 `farmer-assistant-answer.png` 负责）。
 await goto('/assistant', '.assistant-page', 2500);
 // 点左侧第一条历史，让中间显示完整问答（新会话默认是空的欢迎态）
 const firstSession = page.locator('.assistant-side-item').first();
@@ -276,7 +283,20 @@ if (await firstSession.count()) {
   await firstSession.click();
   await page.waitForTimeout(1500);
 }
+await page.locator('.assistant-composer input[type="file"]').setInputFiles(LEAF_IMAGE);
+await page.waitForTimeout(600);
 await shoot('farmer-assistant.png');
+
+// 第 229 批：回答长什么样（带【序号】来源）—— 点开那条"打什么药"的演示会话再拍一张
+// （上面那张为了拍上传区，视线落在输入框；这张给 README 用来看回答与引用）。
+await goto('/assistant', '.assistant-page', 2000);
+const answerSession = page.locator('.assistant-side-item').first();
+if (await answerSession.count()) {
+  await answerSession.click();
+  await page.waitForTimeout(1500);
+}
+await page.locator('.assistant-thread').evaluate((el) => { el.scrollTop = 0; });
+await shoot('farmer-assistant-answer.png');
 
 // ---------------------------------------------------------------------------
 // ④ 管理端 4 张
@@ -311,6 +331,11 @@ await shoot('admin-health.png');
 
 await goto('/admin/health?tab=audit', '.admin-console', 3000);
 await shoot('admin-audit-log.png');
+
+// 第 229 批新增：**助手质量看板**（降级率 / 知识库缺口 / 没用反馈 / token 与延迟）。
+// 数据直接来自库里已有问答，不需要额外种数据；没有数据的空态也照样能拍。
+await goto('/admin/assistant', '.admin-console', 3000);
+await shoot('admin-assistant-quality.png');
 
 log(errors.length ? `⚠️ 页面报错 ${errors.length} 条：${errors.slice(0, 2).join(' | ')}` : '✅ 全程无 JS 报错');
 
@@ -392,7 +417,9 @@ runDjango([
   "                session=s, role=m['role'], content=m['content'], model=m['model'],",
   "                degraded=m['degraded'], degrade_reason=m['degrade_reason'],",
   "                latency_ms=m['latency_ms'], citations=m['citations'], usage=m['usage'],",
-  "                prompt_version=m['prompt_version'], lang=m['lang'], truncated=m['truncated'])",
+  "                prompt_version=m['prompt_version'], lang=m['lang'],",
+  // 第 229 批：老快照里没有 image_summary 字段，用 .get 兜住（否则还原直接 KeyError）
+  "                truncated=m['truncated'], image_summary=m.get('image_summary') or '')",
   '            AssistantMessage.objects.filter(pk=msg.pk).update(created_at=aware(m["created_at"]))',
   '        restored += 1',
   "    print('restored assistant history:', restored, '条')",
