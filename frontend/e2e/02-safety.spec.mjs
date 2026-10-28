@@ -60,7 +60,11 @@ test.describe('安全回归（历史事故）', () => {
       body: {
         board_id: boardId,
         title: `${TEMP_PREFIX} XSS 回归`,
-        content: `前文${PAYLOAD}后文`,
+        // ⚠️ 正文有**最短 10 字**的限制（`serializers_forum.BODY_MIN`）。
+        // 只写 `前文 + payload + 后文` 时纯文本只有 4 个字 → 后端 400，
+        // 于是"帖子创建成功"直接失败，看起来像 XSS 回归坏了（其实是文案太短）。
+        // 这里补一段说明性填充，前后文断言仍然成立。
+        content: `前文${PAYLOAD}后文 —— 这是存储型 XSS 回归用例的填充文本，用于满足正文最短长度限制`,
       },
     });
     expectThat('帖子创建成功', created.status === 201 || created.status === 200, true);
