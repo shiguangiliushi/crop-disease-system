@@ -101,6 +101,8 @@
 backend/    Django 5.2 + DRF（SQLite，YOLOv8 推理；112 个 .py + 59 个迁移，约 3.7 万行；含 gunicorn.conf.py / Dockerfile）
 frontend/   桌面端 Vue 3 + Element Plus + Vite（:5173；70 个 .vue，约 4.4 万行）
 mobile/     移动端 Vue 3 + Vant + Vite（:5174，独立应用，与桌面端零代码共享）
+mobile-uni/ 移动端 uni-app 版（:5175，第 232 批起步：H5 已跑通登录/识别/结果，
+            同一套代码后续出微信小程序与 Android/iOS APP；暂不动上面那个 Vant H5）
 docs/       设计与运维文档、README 配图、工具脚本
 tools/      开发辅助脚本（注释覆盖审计等）
 deploy/     deploy/nginx.conf（反代示例）；容器编排见根目录 docker-compose.yml
@@ -130,6 +132,9 @@ cd frontend && npm install && npm run dev      # http://127.0.0.1:5173
 
 # ── 移动端（可选，独立应用）───────────────────────────────────────────────
 cd mobile && npm install && npm run dev        # http://127.0.0.1:5174
+
+# ── 移动端 uni-app 版（可选，第 232 批：先跑 H5，后续出小程序/APP）────────
+cd mobile-uni && npm install && npm run dev:h5  # http://127.0.0.1:5175
 ```
 
 > 移动端上线前请按 [`docs/移动端真机自测清单.md`](docs/移动端真机自测清单.md) 在**真手机**上过一遍
