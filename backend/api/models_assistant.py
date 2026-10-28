@@ -21,8 +21,14 @@
 """
 from __future__ import annotations
 
+import logging
+
 from django.conf import settings as django_settings
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+logger = logging.getLogger(__name__)
 
 
 class AssistantSession(models.Model):
@@ -78,10 +84,19 @@ class AssistantMessage(models.Model):
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, verbose_name="角色")
     content = models.TextField(verbose_name="内容")
     #: 第 229 批：这条用户消息带了一张图片时，"看图的结论"一句话快照。
-    #: 图片本身**不落盘**（见 `assistant/vision.py` 的说明：助手不是相册），但会话历史里
-    #: 只留一个问题会让人莫名其妙 —— "我问了句'这张图怎么了'，图呢？"
-    #: 存摘要而不是识别明细：明细（类名/置信度）进提示词与回答就够，重复存只会漂。
+    #: 历史里只留一个问题会让人莫名其妙 —— "我问了句'这张图怎么了'，图呢？"，
+    #: 所以摘要与图片（第 230 批补，见下面的 `image`）一起存在用户消息上。
     image_summary = models.CharField(max_length=200, blank=True, default='', verbose_name="图片识别摘要")
+    #: 第 230 批：**图片要存下来了**（压缩后的副本）。
+    #:
+    #: 第 229 批刻意不落盘，结果被用户当场发现："上传图 → 回答完 → 点开别的会话再点回来，
+    #: 刚上传的图不显示了"。只剩一行摘要，看起来就像图丢了 —— 这是体验问题，不是洁癖问题。
+    #: 现在存一份 ≤1280px 的 JPEG（原图 5MB 存不起，也没必要）：
+    #: `vision.store_image()` 负责压缩，`post_delete` 负责在消息删除时把文件一起删掉，
+    #: `prune_media` 会把它纳入"被引用文件"（FileField/ImageField 自动收集）。
+    image = models.ImageField(
+        upload_to='assistant_uploads/%Y%m/', blank=True, null=True, verbose_name="提问图片",
+    )
 
     # ── 生成侧元数据（用户消息全为空/0）────────────────────────────────────
     model = models.CharField(max_length=60, blank=True, default='', verbose_name="实际使用的模型")
@@ -129,3 +144,20 @@ class AssistantMessage(models.Model):
 
     def __str__(self):
         return f'{self.session_id}-{self.role}-{self.content[:20]}'
+
+
+@receiver(post_delete, sender=AssistantMessage)
+def _delete_message_image(sender, instance, **kwargs):
+    """删消息时把图片文件一起删掉（第 230 批）。
+
+    Django **不会**因为删了带 `ImageField` 的行就去删磁盘文件 —— 不写这个接收器，
+    `AssistantSession` 一删（消息级联删），`media/assistant_uploads/` 里的图就全成了孤儿，
+    只能等 `prune_media` 兜底。这里顺手清掉，`prune_media` 仍保留作最后一道保险。
+    """
+    if not instance.image:
+        return
+    try:
+        instance.image.delete(save=False)
+    except Exception:  # noqa: BLE001 —— 删文件失败不该让"删会话"这个操作失败
+        logger.exception('删除助手消息图片失败：message=%s', instance.pk)
+

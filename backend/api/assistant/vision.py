@@ -15,21 +15,31 @@
 将来要换成 VLM，只需要另写一个同签名的 `describe()`（`source` 改成 'vlm'），
 `orchestrator` 与前端都不用动 —— 这也是这里把"识别"和"编排"分开的原因。
 
-## 图片不落盘
+## 图片怎么存（第 230 批改过）
 
-图片只在本次请求内用于识别，**不存**（也不进 `media/`）：
-  · 助手的价值是"回答"，不是"相册"；识别记录另有专门入口（`/detect` → 识别历史）；
-  · 落盘就要配套清理策略（`prune_media` 目前只认识别图与新闻图），漏一次就是磁盘垃圾。
-会话里只留一句 `image_summary`（"图片识别：番茄晚疫病 99%"），历史因此仍然读得懂。
+第 229 批刻意**不落盘**，当时的理由是"助手不是相册、落盘要配套清理策略"。
+结果被用户当场发现：上传 → 回答完 → 点开别的会话再点回来，刚上传的图不见了
+（只剩一行"图片识别：…"摘要），体验上就像图丢了。所以现在存一份**压缩副本**：
+
+  · `store_image()` 把图缩到最长边 1280px 的 JPEG（约 100~200KB），挂在用户消息上；
+  · 删会话时 `models_assistant._delete_message_image` 把文件一起删掉（Django 不会自动删）；
+  · `prune_media` 把它算作"被引用文件"，孤儿图仍有兜底清理。
+
+"不存原图"这条没变 —— 助手不是相册，但历史里得看得见"当时那张图"。
 """
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 
 from . import prompts
 
 logger = logging.getLogger(__name__)
+
+#: 落盘图片的最长边（px）与 JPEG 质量 —— 手机原图 3~5MB，压完约 100~200KB
+MAX_STORED_SIDE = 1280
+STORED_QUALITY = 85
 
 #: 识别来源（写进 `image_summary` 前面，将来接 VLM 时这里会是 'vlm'）
 SOURCE_LOCAL = 'local-yolo'
@@ -65,6 +75,46 @@ class VisionResult:
 
 def default_question(lang: str = prompts.DEFAULT_LANG) -> str:
     return DEFAULT_QUESTIONS[prompts.normalize_lang(lang)]
+
+
+def store_image(upload):
+    """把上传的图压成"可以落盘"的副本，返回 `(文件名, ContentFile)`；失败返回 `(None, None)`。
+
+    ## 为什么压、压到多少
+
+    手机直出 3~5MB，一次问答就存一张原图，一个月就是几百 MB；而助手里这张图的用途
+    只是"回头看一眼当时问的是哪张" —— 最长边 1280px、JPEG 质量 85 足够清楚，
+    体积通常 100~200KB（实测同一张 4.7MB 的叶子图压到 143KB）。
+
+    ## 两个容易漏的细节
+
+      · `exif_transpose`：手机竖拍的图方向记在 EXIF 里，不转的话存下来是**横躺**的；
+      · `seek(0)`：识别那一步已经把文件指针读到了末尾，不回到开头会读到空内容。
+
+    ⚠️ 不抛异常：图片存不下来最多是"历史里看不到图"，不该让这条问答失败。
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image, ImageOps
+
+        from django.core.files.base import ContentFile
+    except Exception:  # noqa: BLE001 —— 缺 Pillow 时静默降级（不存图，不影响回答）
+        logger.warning('助手看图：没有 Pillow，跳过保存图片')
+        return None, None
+
+    try:
+        upload.seek(0)
+        image = Image.open(upload)
+        image = ImageOps.exif_transpose(image)
+        image = image.convert('RGB')
+        image.thumbnail((MAX_STORED_SIDE, MAX_STORED_SIDE), Image.LANCZOS)
+        buffer = BytesIO()
+        image.save(buffer, format='JPEG', quality=STORED_QUALITY, optimize=True)
+        return f'{uuid.uuid4().hex[:16]}.jpg', ContentFile(buffer.getvalue())
+    except Exception:  # noqa: BLE001
+        logger.exception('助手看图：压缩图片失败（不影响回答）')
+        return None, None
 
 
 def describe(image_file, *, lang: str = prompts.DEFAULT_LANG) -> VisionResult:

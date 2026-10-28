@@ -483,8 +483,9 @@ const applySession = (data) => {
     role: item.role,
     content: item.content,
     citations: item.citations || [],
-    // 第 229 批：当时那张图的识别结论（图片本身不落盘，这里只有一行摘要）
+    // 第 229 批：当时那张图的识别结论（第 230 批起图片本身也存了，优先显示图）
     imageSummary: item.image_summary || '',
+    imageUrl: item.image_url || '',
     degradeHint: item.degraded ? degradeHintOf(item.degrade_reason) : '',
     // 历史里的回答也可能当初就被截断过 —— 要一直提示，不能只在刚生成时提示
     truncated: Boolean(item.truncated),

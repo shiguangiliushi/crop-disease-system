@@ -290,8 +290,11 @@ class Prepared:
     citations: list[dict] = field(default_factory=list)
     prompt_version: str = ''
     #: 第 229 批：这条问题带了图片时，"看图的结论"一行字（落进用户消息的
-    #: `image_summary`，图片本身不落盘 —— 见 `assistant/vision.py` 的说明）
+    #: `image_summary`）
     image_summary: str = ''
+    #: 第 230 批：要**落盘**的图片文件（压缩后存到用户消息的 `image` 字段）。
+    #: 只有看图成功时才有值 —— 认不出来的图存下来没有意义。
+    image_file: object = None
 
 
 def _prepare(*, user, question: str, session: AssistantSession | None,
@@ -360,6 +363,8 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
             pest_identifier = pest_identifier or (
                 getattr(vision_result.pest, 'english_identifier', '') or vision_result.identifier
             )
+        # 第 230 批：看图成功才把图存下来（认不出来的图留着没意义）
+        prepared.image_file = image
     query = _contextual_query(prepared.question, history)
 
     intent = detect_intent(query)
@@ -481,18 +486,36 @@ def _citations_from_hits(hits, lang: str = prompts.DEFAULT_LANG) -> list[dict]:
     return out
 
 
+def _attach_image(message, upload) -> None:
+    """把上传图压成副本挂到这条消息上（第 230 批）。
+
+    失败只记日志：**存不下图不该让这条问答失败** —— 用户要的是回答，
+    历史里少一张图顶多是"看着不方便"。
+    """
+    name, content = vision.store_image(upload)
+    if not content:
+        return
+    try:
+        message.image.save(name, content, save=True)
+    except Exception:  # noqa: BLE001
+        logger.exception('助手看图：保存图片失败 message=%s', message.pk)
+
+
 def _persist(session, question: str, *, answer: str, reason: str, model: str = '',
              latency_ms: int = 0, citations: list | None = None,
              usage: dict | None = None, prompt_version: str = '',
              lang: str = prompts.DEFAULT_LANG, truncated: bool = False,
-             image_summary: str = '') -> AssistantMessage:
+             image_summary: str = '', image_file=None) -> AssistantMessage:
     """落库：用户消息 + 助手消息（单事务，要么都写要么都不写）。"""
     with transaction.atomic():
-        AssistantMessage.objects.create(
+        message = AssistantMessage.objects.create(
             session=session, role='user', content=question,
-            # 第 229 批：这张图"看到了什么"记在**用户消息**上（图片本身不落盘）
+            # 第 229 批：这张图"看到了什么"记在**用户消息**上
             image_summary=image_summary or '',
         )
+        # 第 230 批：图片也存一份（压缩副本）—— 否则点开别的会话再点回来，图就没了
+        if image_file is not None:
+            _attach_image(message, image_file)
         message = AssistantMessage.objects.create(
             session=session,
             role='assistant',
@@ -614,6 +637,7 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         model=actual_model, latency_ms=latency_ms, citations=citations,
         usage=usage, prompt_version=prompt_version, lang=prepared.lang,
         truncated=truncated, image_summary=prepared.image_summary,
+        image_file=prepared.image_file,
     )
 
     return {
@@ -686,7 +710,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
         message = _persist(prepared.session, prepared.question,
                            answer=prepared.early_answer, reason=prepared.early_reason,
                            citations=[], prompt_version=prepared.prompt_version,
-                       lang=prepared.lang, image_summary=prepared.image_summary)
+                       lang=prepared.lang, image_summary=prepared.image_summary,
+                       image_file=prepared.image_file)
         yield _sse('meta', {'session_id': prepared.session.pk, 'message_id': message.pk,
                             'degraded': True, 'degrade_reason': prepared.early_reason,
                             'citations': []})
@@ -698,11 +723,13 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
 
     # ── 生产路径：先建消息行（内容待补），拿到 id 后再开始流 ─────────────
     with transaction.atomic():
-        AssistantMessage.objects.create(
+        user_message = AssistantMessage.objects.create(
             session=prepared.session, role='user', content=prepared.question,
-            # 第 229 批：看图的结论跟着用户消息走（图片不落盘，见 vision.py）
+            # 第 229 批：结论跟着用户消息走；第 230 批起图片也存一份（压缩副本）
             image_summary=prepared.image_summary or '',
         )
+        if prepared.image_file is not None:
+            _attach_image(user_message, prepared.image_file)
         message = AssistantMessage.objects.create(
             session=prepared.session, role='assistant', content='', degraded=False,
             prompt_version=prepared.prompt_version, lang=prepared.lang,

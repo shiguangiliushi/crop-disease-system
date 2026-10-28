@@ -13973,13 +13973,16 @@ class AssistantVisionModuleTests(TestCase):
         self.assertIn('词条未收录', vision.summary(result, 'zh'))
 
 
+@IN_MEMORY_STORAGE
 class AssistantVisionTests(APITestCase):
     """
-    第 229 批：**看图问答**（`POST /api/assistant/ask/` + `image`）
+    第 229 / 230 批：**看图问答**（`POST /api/assistant/ask/` + `image`）
 
     设计取舍见 `api/assistant/vision.py`：这一版用**本地 YOLO 当眼睛**（与识别页同一个模型），
     结论作为检索锚点 + 写进提示词，回答仍然只引用站内词条（守住"无来源不回答"）。
-    图片**不落盘**，只在用户消息上留一行 `image_summary`。
+
+    第 230 批补：图片**要存下来**（压缩副本）。第 229 批不落盘，用户点开别的会话再点回来，
+    图就没了 —— 只剩一行摘要，看起来像图丢了。
     """
 
     @classmethod
@@ -14045,6 +14048,45 @@ class AssistantVisionTests(APITestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertTrue(detail.data['messages'][0]['image_summary'])
         self.assertIsNotNone(session.pk)
+
+    # ── 第 230 批：图片落盘（否则切走会话再回来，图就没了）──────────────
+    def test_image_is_stored_and_returned_in_history(self):
+        with patch('api.assistant.orchestrator.vision.describe', return_value=self._vision_ok()):
+            self._post(question='这张图是什么病', image=_png_upload('leaf.png'))
+
+        message = AssistantMessage.objects.filter(session__user=self.user, role='user').first()
+        self.assertTrue(message.image, '用户消息上应当存一张图')
+        self.assertTrue(message.image.name.startswith('assistant_uploads/'))
+        self.assertTrue(message.image.name.endswith('.jpg'), '存的是压好的 JPEG，不是原图')
+
+        detail = self.client.get(f'/api/assistant/sessions/{message.session_id}/').data
+        # 绝对地址（APP/小程序里没有 vite 代理，相对路径会解析到页面自己的域名上）
+        self.assertIn('/media/assistant_uploads/', detail['messages'][0]['image_url'])
+        self.assertTrue(detail['messages'][0]['image_url'].startswith('http'))
+
+    def test_deleting_the_session_removes_the_image_file(self):
+        """删会话要连文件一起删 —— Django 不会因为删了行就删磁盘文件"""
+        from django.core.files.storage import default_storage
+
+        with patch('api.assistant.orchestrator.vision.describe', return_value=self._vision_ok()):
+            self._post(question='这张图是什么病', image=_png_upload('leaf.png'))
+        message = AssistantMessage.objects.filter(session__user=self.user, role='user').first()
+        file_name = message.image.name
+        self.assertTrue(default_storage.exists(file_name))
+
+        response = self.client.delete(f'/api/assistant/sessions/{message.session_id}/')
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(default_storage.exists(file_name), '会话删了，图片文件也得删')
+
+    def test_unreadable_image_is_not_stored(self):
+        """认不出来的图不存 —— 存下来只会占磁盘，历史里也帮不上忙"""
+        from api.assistant import vision
+
+        bad = vision.VisionResult(status='not_found', message='画面里没有找到叶片')
+        with patch('api.assistant.orchestrator.vision.describe', return_value=bad):
+            self._post(question='这张图怎么了', image=_png_upload('leaf.png'))
+        message = AssistantMessage.objects.filter(session__user=self.user, role='user').first()
+        self.assertFalse(bool(message.image))
 
     def test_image_only_question_gets_default_text(self):
         """只传图不打字：后端补一个默认问题（否则闸门按"空问题"拒掉）"""

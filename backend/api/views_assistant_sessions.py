@@ -24,6 +24,25 @@ from .models_assistant import AssistantMessage, AssistantSession
 
 logger = logging.getLogger(__name__)
 
+
+def _image_url(request, message) -> str:
+    """用户消息里那张图的 URL（第 230 批）；没有图返回空串。
+
+    ⚠️ 用 `build_absolute_uri`：手机/平板是通过 `http://<电脑IP>:5174` 访问的，
+       返回相对路径 `/media/...` 在前端（5173/5174）会被 vite 代理回后端看着没问题，
+       但 APP/小程序里没有代理，相对路径会解析到**页面自己的域名**上 —— 图就裂了。
+       绝对地址是这里唯一稳妥的形态（与识别记录的 `image` 字段口径一致）。
+    """
+    if not message.image:
+        return ''
+    try:
+        url = message.image.url
+    except ValueError:      # 文件字段为空但 truthy 的边界（Django 会抛 ValueError）
+        return ''
+    if not url.startswith('/'):
+        url = '/' + url
+    return request.build_absolute_uri(url) if request is not None else url
+
 #: 列表页每页条数上限（前端可以传更小，但不允许一次拉全库）
 MAX_PAGE_SIZE = 50
 DEFAULT_PAGE_SIZE = 20
@@ -145,9 +164,10 @@ class AssistantSessionDetailView(APIView):
                     'role': m.role,
                     'content': m.content,
                     # 第 229 批：这条提问带了一张图时，"看图看到了什么"的一行摘要。
-                    # 图片本身不落盘（助手不是相册），但没有这一行，历史里只会剩下
-                    # 一句"这张图怎么了"—— 用户根本想不起当时问的是哪张。
+                    # 第 230 批：图本身也存下来了 —— 给 URL，历史里才能把图显示出来
+                    # （只给摘要的话，点开别的会话再点回来会像"图丢了"）。
                     'image_summary': m.image_summary or '',
+                    'image_url': _image_url(request, m),
                     'degraded': bool(m.degraded),
                     'degrade_reason': m.degrade_reason,
                     # 第 204 批：当初是否被长度上限截断 —— 历史里的回答也要一直提示，
