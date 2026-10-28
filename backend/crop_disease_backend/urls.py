@@ -35,6 +35,7 @@ def import_view(module_path, class_name):
 
 # 导入视图
 RegisterView = import_view('api.views', 'RegisterView')
+CaptchaView = import_view('api.views', 'CaptchaView')  # 第 233 批：注册图片验证码
 LoginView = import_view('api.views', 'LoginView')
 CheckAuthView = import_view('api.views', 'CheckAuthView')
 LogoutView = import_view('api.views', 'LogoutView')
@@ -219,6 +220,9 @@ api_urlpatterns = [
          name='feedback-bulk-verify-samples'),
     
     # 认证相关
+    # 第 233 批：注册要过人机校验。先匿名拿一张验证码（独立限流），
+    # 注册时带上 captcha_id + captcha_code（一次性、5 分钟有效，见 api/captcha.py）
+    path('captcha/', CaptchaView.as_view(), name='captcha'),
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),

@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { useAuthStore } from '@/stores/auth.js';
 import AuthShell from '@/components/AuthShell.vue';
 import { checkUsernameAvailability } from '@/api/account';  // 第 35 批：用户名实时校验
+import { fetchCaptcha } from '@/api/captcha';  // 第 233 批：注册验证码
 import { useI18n } from '@/i18n';  // 第 61 批：多语言
 
 const { t } = useI18n();
@@ -19,6 +20,36 @@ const errorMessage = ref('');
 const isLoading = ref(false);
 const authStore = useAuthStore();
 const router = useRouter();
+
+// ============================================================================
+// 注册验证码（第 233 批）
+// ----------------------------------------------------------------------------
+// 后端注册接口强制校验验证码（一次性、5 分钟有效）。这里只负责：
+//   · 进页面先拿一张；点图片换一张；
+//   · 提交时带上 captcha_id + captcha_code；
+//   · **提交失败就换一张** —— 旧的那张已经被服务端消费/作废了，不换会一直失败。
+// ============================================================================
+const captcha = ref({ id: '', image: '' });
+const captchaCode = ref('');
+const captchaLoading = ref(false);
+
+async function loadCaptcha() {
+  if (captchaLoading.value) return;
+  captchaLoading.value = true;
+  try {
+    const data = await fetchCaptcha();
+    captcha.value = { id: data.id, image: data.image };
+    captchaCode.value = '';
+  } catch (error) {
+    console.warn('加载验证码失败:', error);
+    captcha.value = { id: '', image: '' };
+    errorMessage.value = t('auth.captchaLoadFailed');
+  } finally {
+    captchaLoading.value = false;
+  }
+}
+
+onMounted(loadCaptcha);
 
 // ============================================================================
 // 用户名实时可用性校验（第 35 批）
@@ -105,6 +136,11 @@ const handleRegister = async () => {
     errorMessage.value = t('auth.invalidEmail');
     return;
   }
+  // 第 233 批：验证码是最便宜的人机校验，前端先拦"没填"
+  if (!captchaCode.value.trim()) {
+    errorMessage.value = t('auth.captchaRequired');
+    return;
+  }
 
   errorMessage.value = '';
   isLoading.value = true;
@@ -114,6 +150,8 @@ const handleRegister = async () => {
       username: username.value,
       password: password.value,
       email: email.value,
+      captcha_id: captcha.value.id,
+      captcha_code: captchaCode.value.trim(),
     });
     // 后端现在会随注册响应一并签发 token → 已经自动登录
     if (result?.token) {
@@ -125,13 +163,18 @@ const handleRegister = async () => {
     }
   } catch (error) {
     console.error('Register error:', error);
-    if (error.response && error.response.data) {
-      if (error.response.data.detail) {
-        errorMessage.value = error.response.data.detail;
-      } else if (typeof error.response.data === 'object') {
-        errorMessage.value = Object.values(error.response.data).join(' ');
+    const data = error.response && error.response.data;
+    if (data && data.captcha_code) {
+      // 验证码错/过期：换一张再让用户填（旧的那张已经被服务端作废了）
+      errorMessage.value = t('auth.captchaWrong');
+      loadCaptcha();
+    } else if (data) {
+      if (data.detail) {
+        errorMessage.value = data.detail;
+      } else if (typeof data === 'object') {
+        errorMessage.value = Object.values(data).join(' ');
       } else {
-        errorMessage.value = error.response.data;
+        errorMessage.value = data;
       }
     } else if (error.message) {
       errorMessage.value = error.message;
@@ -284,6 +327,43 @@ const handleRegister = async () => {
         </div>
       </div>
 
+      <!-- 第 233 批：注册验证码（后端强制校验；点图片换一张） -->
+      <div class="auth-field">
+        <label class="auth-label" for="captchaCode">
+          <span>{{ t('auth.captchaLabel') }}</span>
+          <span class="auth-label-hint">{{ t('auth.captchaHint') }}</span>
+        </label>
+        <div class="auth-input-wrap">
+          <i class="fas fa-shield-halved auth-lead-icon"></i>
+          <input
+            type="text"
+            id="captchaCode"
+            class="auth-input has-trailing"
+            v-model="captchaCode"
+            :disabled="isLoading"
+            :placeholder="t('auth.captchaPlaceholder')"
+            autocomplete="off"
+            maxlength="4"
+            required
+          />
+          <button
+            type="button"
+            class="auth-captcha-btn"
+            :disabled="captchaLoading || isLoading"
+            :title="t('auth.captchaRefresh')"
+            :aria-label="t('auth.captchaRefresh')"
+            @click="loadCaptcha()"
+          >
+            <img v-if="captcha.image" :src="captcha.image" alt="" class="auth-captcha-image" />
+            <i v-else :class="captchaLoading ? 'fas fa-spinner fa-spin' : 'fas fa-rotate-right'"></i>
+          </button>
+        </div>
+        <p class="auth-field-feedback muted">
+          <i class="fas fa-rotate-right"></i>
+          {{ t('auth.captchaRefresh') }}
+        </p>
+      </div>
+
       <div v-if="errorMessage" class="auth-alert">
         <i class="fas fa-exclamation-circle"></i>
         <span>{{ errorMessage }}</span>
@@ -314,6 +394,42 @@ const handleRegister = async () => {
 </template>
 
 <style scoped>
+/* 第 233 批：验证码图片（点击换一张） */
+.auth-captcha-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(47, 133, 90, 0.18);
+  border-radius: 8px;
+  background: #f4f8f5;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.auth-captcha-btn:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.auth-captcha-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 第 233 批：验证码输入框要给右侧的图片留出宽度（默认 has-trailing 只有 44px） */
+#captchaCode.has-trailing {
+  padding-right: 112px;
+}
+
 .auth-form :deep(.auth-form-note i) {
   margin-right: 6px;
   color: #b3c4cc;

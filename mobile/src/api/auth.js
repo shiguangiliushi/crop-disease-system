@@ -36,8 +36,25 @@ export async function login({ username, password }) {
   return { user: payload.user, token: payload.token };
 }
 
+/**
+ * 注册验证码（第 233 批）
+ *
+ * 后端 `GET /api/captcha/` 直接回一张 `data:image/png;base64,...`，
+ * `<img>` 直接能用，不需要再发第二个请求。
+ */
+export async function fetchCaptcha() {
+  const response = await http.get('/captcha/');
+  const body = response.data || {};
+  return {
+    id: body.captcha_id || '',
+    image: body.image || '',
+    expiresIn: body.expires_in || 0,
+  };
+}
+
 /** 注册：后端可能直接签发 token（自动登录），也可能只返回成功 */
 export async function register(payload) {
+  // 第 233 批：注册要过验证码，payload 里必须带 captcha_id + captcha_code
   const response = await http.post('/register/', payload);
   return unwrapAuthPayload(response.data || {});
 }

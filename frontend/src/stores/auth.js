@@ -431,11 +431,20 @@ const CONTENT_MODULES = [
           }
           
           if (fieldErrors.length > 0) {
-            throw new Error(fieldErrors.join('\n'));
+            // 第 233 批：把原始响应挂回去 —— 调用方（注册页）要靠
+            // `error.response.data.captcha_code` 判断"是不是验证码错"，
+            // 只抛一句拼好的字符串会让这个判断失效（实测：验证码错了却不换图）。
+            const wrapped = new Error(fieldErrors.join('\n'));
+            wrapped.response = error.response;
+            wrapped.data = error.response.data;
+            throw wrapped;
           }
         }
-        
-        throw new Error(errorMessage);
+
+        const wrapped = new Error(errorMessage);
+        wrapped.response = error.response;
+        wrapped.data = error.response?.data;
+        throw wrapped;
       } else if (error.request) {
         throw new Error(t('msg.cannotConnect'));
       } else {

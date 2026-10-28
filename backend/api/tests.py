@@ -16,6 +16,24 @@ api 应用回归测试
   - 同标题重复建档被拒绝（从源头不再产生重复新闻）。
 """
 import hashlib
+
+CAPTCHA_CACHE_PREFIX = 'captcha:'  # 与 api/captcha.py 的 CACHE_PREFIX 保持一致
+
+
+def _captcha_fields(client=None, *, code=None):
+    """取一张**真**验证码，返回可直接塞进请求体的 `captcha_id` / `captcha_code`。
+
+    为什么不 mock 掉校验：这套用例要证明的正是"注册接口真的在验"，
+    把校验换成桩就等于什么都没测。所以走一遍 `/api/captcha/`，
+    再从缓存里读回明文（服务端内部状态，测试进程能拿到）。
+    """
+    client = client or APIClient()
+    payload = client.get('/api/captcha/').data
+    captcha_id = payload['captcha_id']
+    if code is None:
+        record = cache.get(CAPTCHA_CACHE_PREFIX + captcha_id) or {}
+        code = record.get('code', '')
+    return {'captcha_id': captcha_id, 'captcha_code': code}
 import json
 import os  # 第 102 批：备份测试要临时改写 DJANGO_BACKUP_DIR
 import time  # 第 106 批：prune_media 测试要造"N 天前的文件"
@@ -57,6 +75,8 @@ from .models_health import HealthSnapshot  # 第 158 批：系统健康快照
 from .models_assistant import AssistantMessage, AssistantSession
 # 第 231 批：每设备一张 token（手机与桌面同时在线）
 from .models_token import DeviceToken
+# 第 233 批：注册验证码（签发在缓存里，测试要直接读写它）
+from . import captcha
 from .assistant import context, guard, llm, prompts, retriever  # prompts：第 197 批语言归一用例要用
 from .assistant import orchestrator  # 第 212 批：单来源折叠用例要直接调它的纯函数
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
@@ -1222,7 +1242,9 @@ class UsernameAvailabilityTests(TestCase):
     def test_register_rejects_invalid_username_server_side(self):
         """前端能绕，服务端必须拦（此前 1 个字符的用户名也能注册成功）"""
         response = self.client.post(
-            '/api/register/', {'username': 'a', 'password': 'pw123456'}, format='json',
+            '/api/register/',
+            {'username': 'a', 'password': 'pw123456', **_captcha_fields(self.client)},
+            format='json',
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn('username', response.data)
@@ -1231,7 +1253,10 @@ class UsernameAvailabilityTests(TestCase):
         User.objects.create_user(username='email_owner', password='pw123456', email='dup@example.com')
         response = self.client.post(
             '/api/register/',
-            {'username': 'another_one', 'password': 'pw123456', 'email': 'DUP@example.com'},
+            {
+                'username': 'another_one', 'password': 'pw123456', 'email': 'DUP@example.com',
+                **_captcha_fields(self.client),
+            },
             format='json',
         )
         self.assertEqual(response.status_code, 400)
@@ -1414,6 +1439,127 @@ class DeviceTokenTests(APITestCase):
 
         legacy, _ = Token.objects.get_or_create(user=self.user)
         self.assertEqual(self._status_with(legacy.key), 200)
+
+
+class CaptchaTests(APITestCase):
+    """第 233 批：注册验证码的签发与校验（纯逻辑 + 匿名接口）"""
+
+    def setUp(self):
+        cache.clear()
+
+    def _issue(self):
+        response = self.client.get('/api/captcha/')
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.data
+
+    def _code_of(self, captcha_id):
+        return (cache.get(CAPTCHA_CACHE_PREFIX + captcha_id) or {}).get('code', '')
+
+    def test_issue_returns_png_data_uri_and_ttl(self):
+        data = self._issue()
+        self.assertTrue(data['captcha_id'])
+        self.assertTrue(
+            data['image'].startswith('data:image/png;base64,'),
+            '前端要能直接塞进 <img>/<image>，不走第二次请求',
+        )
+        self.assertEqual(data['expires_in'], settings.CAPTCHA_TTL_SECONDS)
+        self.assertEqual(len(self._code_of(data['captcha_id'])), captcha.CODE_LENGTH)
+
+    def test_issue_never_repeats_the_same_id(self):
+        ids = {self._issue()['captcha_id'] for _ in range(5)}
+        self.assertEqual(len(ids), 5)
+
+    def test_verify_consumes_the_code(self):
+        data = self._issue()
+        code = self._code_of(data['captcha_id'])
+        self.assertTrue(captcha.verify(data['captcha_id'], code))
+        self.assertFalse(
+            captcha.verify(data['captcha_id'], code),
+            '一次性：校验通过后这张码必须失效，否则能被反复拿去注册',
+        )
+
+    def test_verify_is_case_insensitive(self):
+        data = self._issue()
+        code = self._code_of(data['captcha_id'])
+        self.assertTrue(captcha.verify(data['captcha_id'], code.lower()))
+
+    def test_verify_invalidates_after_too_many_wrong_tries(self):
+        data = self._issue()
+        code = self._code_of(data['captcha_id'])
+        for _ in range(captcha.MAX_ATTEMPTS):
+            self.assertFalse(captcha.verify(data['captcha_id'], 'ZZZZZZ'))
+        self.assertFalse(
+            captcha.verify(data['captcha_id'], code),
+            '错太多次就作废 —— 否则 4 位码能被慢慢枚举出来',
+        )
+
+    def test_verify_rejects_unknown_expired_and_empty(self):
+        self.assertFalse(captcha.verify('', ''))
+        self.assertFalse(captcha.verify('不存在的id', 'ABCD'))
+
+        data = self._issue()
+        code = self._code_of(data['captcha_id'])
+        cache.delete(CAPTCHA_CACHE_PREFIX + data['captcha_id'])  # 模拟过期
+        self.assertFalse(captcha.verify(data['captcha_id'], code))
+
+
+class RegisterCaptchaTests(APITestCase):
+    """第 233 批：注册接口**真的**在验验证码，且校验发生在序列化之前"""
+
+    def setUp(self):
+        cache.clear()
+
+    def _post(self, payload):
+        return self.client.post('/api/register/', payload, format='json')
+
+    def _valid_payload(self, **extra):
+        payload = {
+            'username': 'cap_user',
+            'password': 'ZzStrong!2026',
+            'email': 'cap_user@example.invalid',
+            **_captcha_fields(self.client),
+        }
+        payload.update(extra)
+        return payload
+
+    def test_register_requires_captcha(self):
+        response = self._post({'username': 'cap_none', 'password': 'ZzStrong!2026'})
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('captcha_code', response.data)
+
+    def test_register_rejects_wrong_code(self):
+        payload = self._valid_payload(username='cap_wrong')
+        payload['captcha_code'] = 'XXXX'
+        response = self._post(payload)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('captcha_code', response.data)
+
+    def test_register_accepts_valid_captcha(self):
+        response = self._post(self._valid_payload())
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(User.objects.filter(username='cap_user').exists())
+
+    def test_captcha_cannot_be_reused(self):
+        payload = self._valid_payload(username='cap_reuse')
+        self.assertEqual(self._post(payload).status_code, 201)
+        replay = dict(payload, username='cap_reuse2')
+        response = self._post(replay)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('captcha_code', response.data)
+
+    def test_captcha_checked_before_username_uniqueness(self):
+        """没通过人机校验时，不该把"用户名已被占用"这种信息吐给脚本"""
+        User.objects.create_user(username='cap_taken', password='ZzStrong!2026')
+        response = self._post({'username': 'cap_taken', 'password': 'ZzStrong!2026'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('captcha_code', response.data)
+        self.assertNotIn('username', response.data)
+
+    @override_settings(REGISTER_CAPTCHA_REQUIRED=False)
+    def test_setting_can_disable_captcha(self):
+        """留一个开关：本地造数据/压测时可以用 DJANGO_REGISTER_CAPTCHA=false 关掉"""
+        response = self._post({'username': 'cap_off', 'password': 'ZzStrong!2026'})
+        self.assertEqual(response.status_code, 201, response.content)
 
 
 class LoginBackdoorRemovedTests(TestCase):
@@ -4304,6 +4450,7 @@ class PasswordPolicyTests(TestCase):
         response = self.client.post('/api/register/', {
             'username': 'pw_reg_short', 'password': '123456', 'password2': '123456',
             'email': 'pw_reg_short@example.invalid',
+            **_captcha_fields(self.client),  # 第 233 批：注册要过验证码
         }, format='json')
         self.assertEqual(response.status_code, 400, response.content)
 
@@ -4313,6 +4460,7 @@ class PasswordPolicyTests(TestCase):
         response = self.client.post('/api/register/', {
             'username': 'pw_reg_digit', 'password': '12345678', 'password2': '12345678',
             'email': 'pw_reg_digit@example.invalid',
+            **_captcha_fields(self.client),  # 第 233 批：注册要过验证码
         }, format='json')
         self.assertEqual(response.status_code, 400, response.content)
 
@@ -4321,6 +4469,7 @@ class PasswordPolicyTests(TestCase):
         response = self.client.post('/api/register/', {
             'username': 'pw_reg_ok', 'password': 'ZzStrong!2026', 'password2': 'ZzStrong!2026',
             'email': 'pw_reg_ok@example.invalid',
+            **_captcha_fields(self.client),  # 第 233 批：注册要过验证码
         }, format='json')
         self.assertEqual(response.status_code, 201, response.content)
         self.assertTrue(

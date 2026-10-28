@@ -406,13 +406,51 @@ export async function login(username = 'zz_i18n_audit', password = 'ZzI18nAudit!
   return { token: json.data.token, user: json.data.user };
 }
 
+/**
+ * 取一张注册验证码，并**从缓存里读回明文**（第 233 批）
+ *
+ * 为什么要这么绕：注册接口现在强制校验验证码，而 E2E 没法"看图识码"。
+ * 三条路里选这条：
+ *   · 把校验 mock 掉 → 测的就不是真实链路了；
+ *   · 给后端开后门 → 多一个只有测试用的洞，比不做还糟；
+ *   · 直接从 Django 缓存读明文 → 只读服务端内部状态，接口本身没有任何变化。
+ *
+ * 缓存用文件后端（DEBUG 下 `backend/cache`），所以另起一个 manage.py 进程也能读到。
+ */
+export async function fetchCaptchaForTest() {
+  const { status, json } = await api('/api/captcha/');
+  if (status !== 200 || !json?.captcha_id) {
+    throw new Error(`获取验证码失败（HTTP ${status}）：${JSON.stringify(json)}`);
+  }
+  const captchaId = json.captcha_id;
+  const output = runDjango([
+    'from django.core.cache import cache',
+    `record = cache.get('captcha:${captchaId}') or {}`,
+    "print('ZZ_CODE=' + str(record.get('code', '')))",
+  ]);
+  const code = /ZZ_CODE=(\S*)/.exec(output)?.[1]?.trim();
+  if (!code) {
+    throw new Error(`验证码已签发但缓存里读不到明文（id=${captchaId}）——是不是后端缓存换了后端？`);
+  }
+  return { id: captchaId, code };
+}
+
 /** 注册一个临时账号（返回 {username, password, token, user}） */
 export async function registerTempUser(suffix = Math.random().toString(36).slice(2, 8)) {
   const username = `${TEMP_PREFIX}_${suffix}`;
   const password = 'ZzE2e!2026pw';
+  // 第 233 批：注册要过验证码（一次性，所以每个账号都单独取一张）
+  const captcha = await fetchCaptchaForTest();
   const { status, json } = await api('/api/register/', {
     method: 'POST',
-    body: { username, password, password2: password, email: `${username}@example.invalid` },
+    body: {
+      username,
+      password,
+      password2: password,
+      email: `${username}@example.invalid`,
+      captcha_id: captcha.id,
+      captcha_code: captcha.code,
+    },
   });
   if (status !== 201) {
     throw new Error(`注册临时账号失败（HTTP ${status}）：${JSON.stringify(json)}`);

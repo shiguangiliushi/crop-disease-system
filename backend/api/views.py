@@ -115,6 +115,7 @@ from .capabilities import (
     has_capability, is_full_admin,
 )
 from .image_validation import ImageValidationError, validate_image_upload  # 第 91 批：图片上传校验
+from . import captcha  # 第 233 批：注册图片验证码（签发/校验）
 from .services_content_i18n import pest_en_maps  # 第 77 批：聚合接口的中英对照
 from . import serializers
 from .serializers import (
@@ -165,6 +166,24 @@ def register_fonts():
     return 'Helvetica'
 
 
+class CaptchaView(APIView):
+    """`GET /api/captcha/` —— 发一张注册验证码（第 233 批）。
+
+    返回 `{captcha_id, image, expires_in}`：`image` 是 `data:image/png;base64,...`，
+    前端直接塞进 `<img>`/`<image>` 即可，不用再拼一次请求。
+
+    为什么匿名可访问：注册本身就是匿名的，用户还没账号。限流用独立的
+    `captcha` 档（`20/min`）—— 不设限的话，这个接口会成为"刷图片"的放大器。
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'captcha'
+
+    def get(self, request):
+        return Response(captcha.issue())
+
+
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
     # 第 35 批：注册限流（防批量注册刷账号）
@@ -172,6 +191,18 @@ class RegisterView(APIView):
     throttle_scope = 'register'
 
     def post(self, request):
+        # 第 233 批：先过验证码，再进序列化器。
+        # 顺序很重要：序列化器的错误信息（"用户名已存在"等）不该在**没通过人机校验**时
+        # 就吐给脚本 —— 那等于免费提供"用户名是否占用"的探测接口。
+        if getattr(settings, 'REGISTER_CAPTCHA_REQUIRED', True):
+            captcha_id = request.data.get('captcha_id')
+            captcha_code = request.data.get('captcha_code')
+            if not captcha.verify(captcha_id, captcha_code):
+                return Response(
+                    {'captcha_code': ['验证码错误或已过期，请刷新后重试']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         serializer = CustomUserSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
