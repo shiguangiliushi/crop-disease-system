@@ -244,7 +244,7 @@ cd backend && python manage.py backup_drill --yes
 | 事项 | 说明 |
 |---|---|
 | **前端有两个登录态存储** | 桌面端用 `sessionStorage`（`auth_token`），移动端用 `localStorage`（`mobile_token`）。写错地方会表现成"看起来已登录、接口全 401"。 |
-| **登录会轮换 Token** | 同一次会话里重复登录会让**旧 token 立即失效**（第 94 批）—— 写端到端脚本时别用同一个浏览器上下文重新登录。 |
+| **登录会按设备轮换 Token** | 第 231 批起「**每设备一张**」：手机与桌面可以同时在线，登录只让**同设备**的旧 token 失效；改密码 / 被停用 / 注销会吊销**所有设备**。写端到端脚本时仍别用同一个浏览器上下文重新登录（旧 token 会失效）。 |
 | **`is_active=False` 的账号登不进来** | 因为 Django 的 `ModelBackend` 直接拒绝 —— 所以**注销冷静期/停用的判断必须放在 `authenticate()` 之前**（见 `views_user.LoginView`）。 |
 | **软删除未必可恢复** | 评论从第 152 批起可恢复（留 `original_content` + `deleted_by`）；**帖子刻意不留原文**（`Post.soft_delete` 的注释写了理由），但删帖会写一条审计日志。 |
 | **管理动作要写审计日志** | 新增管理端写操作时调用 `api/audit.py: log_admin_action(...)`（23 个动作已接入；`detail` 里**绝不放凭证**，重置链接的 token 只记"已签发"）。作者自删帖子也要留痕。 |
