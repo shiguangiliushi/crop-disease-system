@@ -162,6 +162,8 @@ export const zhCN = {
     register: '注册',
     // 第 116 批：管理端登录单独一页（key = 路由名 admin-login）
     'admin-login': '管理员登录',
+    // 第 228 批：助手质量看板
+    'admin-assistant': '助手质量',
     // 第 122 批：病害百科维护（管理后台）
     'admin-pests': '病害百科维护',
     'forgot-password': '找回密码',
@@ -227,6 +229,8 @@ export const zhCN = {
     detections: '识别记录',
     pests: '病害百科维护',
     notifications: '通知中心',
+    // 第 228 批：助手质量看板（仅全权管理员）
+    assistant: '助手质量',
     // 第 117 批：农户端顶栏那个下拉不再重复列 5 个管理页，
     // 只留"进入管理后台"这一个入口（其余都在后台的侧栏里）
     enterConsole: '进入管理后台',
@@ -536,6 +540,73 @@ export const zhCN = {
     forgotHint: '管理员账号若已绑定邮箱，可以自助重置；没绑邮箱的请联系超级管理员，他可以在「用户管理 → 重置密码」里签发一条一次性链接给你。',
     accountHint: '管理员账号由超级管理员在后台开通与授权，不支持自助注册。',
     footerNote: '管理员操作会被记录，请勿在公共设备上保持登录。',
+  },
+  // ==========================================================================
+  // 助手质量看板（管理后台 /admin/assistant，第 228 批）
+  // --------------------------------------------------------------------------
+  // 这批之前助手的 degraded / latency / usage / verdict / feedback_note 全落库了，
+  // 但没有任何界面在读 —— 所以文案口径跟着"能回答什么问题"走：
+  // 降级率多少、哪类问题答不上来、用户说没用时在说什么、成本与延迟水位。
+  // ==========================================================================
+  assistantAdmin: {
+    title: '助手质量',
+    subtitle: '降级率、答不上来的问题、用户说“没用”的反馈 —— 数据本来就在库里，这里只是把它们聚到一页。',
+    readonlyNote: '只读页：数据来自助手问答的落库记录（消息表），不会修改任何内容。',
+    range7: '近 7 天',
+    range14: '近 14 天',
+    range30: '近 30 天',
+    statQuestions: '提问',
+    statAnswers: '回答',
+    statDegraded: '降级率',
+    statNoSource: '无来源',
+    statUseful: '没用率',
+    statLatency: '平均延迟',
+    statTokens: 'token 用量',
+    statLimited: '限流 {rate} · 会话到顶 {full}',
+    degradedHint: '{count} 条降级',
+    usefulHint: '有用 {helpful} · 没用 {useless}',
+    latencyUnit: '毫秒（只统计真正调用模型的那部分）',
+    tokenHint: '输入 {prompt} · 输出 {completion}',
+    trendTitle: '每日提问与降级',
+    legendQuestions: '提问',
+    legendDegraded: '降级',
+    legendNoSource: '无来源',
+    gapTitle: '知识库缺口：答不上来的问题',
+    // 第 229 批补：标题里原来直接跟着 `no_source` 这种**代码里的降级原因**，
+    // 中文界面上突然冒出一串英文标识符，像是没翻译完。原因码只该出现在
+    // 开发者视角（这里用一句人话解释，不给用户看标识符）。
+    gapHint: '检索不到对应词条的提问 —— 系统只能回「词条未收录」。按次数排序；补完语料后这里会自然变空。',
+    langTitle: '回答语言分布',
+    langZh: '中文',
+    langEn: 'English',
+    // 降级原因的中文说明（原来表格里直接显示 `no_source` 这类代码）
+    reason: {
+      no_source: '词条未收录',
+      llm_disabled: '未配置模型',
+      llm_error: '模型调用失败',
+      llm_error_partial: '生成中途出错',
+      rate_limited: '触发限流',
+      session_full: '会话到顶',
+      vision_unreadable: '图片无法识别',
+      too_long: '问题过长',
+      sensitive: '命中敏感词',
+      empty: '空问题',
+    },
+    gapEmpty: '这段时间没有“答不上来”的问题。',
+    gapColQuestion: '问题',
+    gapColCount: '次数',
+    gapColLast: '最近一次',
+    uselessTitle: '用户说“没用”的回答',
+    uselessEmpty: '这段时间没有收到“没用”反馈。',
+    uselessColQuestion: '问题',
+    uselessColNote: '用户补充',
+    uselessColAnswer: '回答开头',
+    uselessColTime: '反馈时间',
+    noteEmpty: '（未填写）',
+    sourcesTitle: '被引用最多的词条',
+    sourcesEmpty: '这段时间没有引用记录。',
+    sourcesCount: '{count} 次',
+    loadFailed: '看板加载失败',
   },
   // ==========================================================================
   // 病害百科维护（管理后台 /admin/pests，第 122 批）
@@ -2404,6 +2475,14 @@ export const zhCN = {
     citations: '来源',
     loadFailed: '加载失败，请稍后重试',
     inputPlaceholder: '输入你的问题，例如：番茄晚疫病怎么打药？',
+    // 第 229 批：图片问答（上传图片 → 本地识别 → 只依据词条回答）
+    pickImage: '上传图片',
+    removeImage: '移除图片',
+    imageAlt: '你上传的叶片照片',
+    imageOnly: '只支持图片文件（jpg / png / webp）',
+    imageTooLarge: '图片不能超过 {mb}MB，请压缩后再传',
+    imageOnlyQuestion: '这张图片里的作物怎么了？',
+    imageHint: '图片只用于本次识别，不会保存；结论只作参考。',
     degraded: '降级',
     hintTruncated: '回答生成到一半中断了，以上为已生成的部分。',
     presetLateBlight: '番茄晚疫病怎么打药？稀释倍数和安全间隔期是多少？',
@@ -3319,6 +3398,8 @@ export const en = {
     'admin-login': 'Admin sign-in',
     // 第 122 批：病害百科维护（管理后台）
     'admin-pests': 'Disease wiki admin',
+    // 第 228 批：助手质量看板
+    'admin-assistant': 'Assistant quality',
     'forgot-password': 'Reset password',
     'reset-password': 'Set a new password',
     assistant: 'Smart Q&A',
@@ -3391,6 +3472,8 @@ export const en = {
     // 农户端导航里的「病害百科」是另一条，写作 'Disease wiki'）。
     pests: 'Disease wiki admin',
     notifications: 'Notifications',
+    // Batch 228: assistant quality board (full admins only)
+    assistant: 'Assistant quality',
     enterConsole: 'Open admin console',
   },
   // Batch 183: the content hub — one page, three tabs (see the Chinese side for why)
@@ -3647,6 +3730,64 @@ export const en = {
     forgotHint: 'If your administrator account has an email bound, you can reset it yourself; if not, ask a super administrator — they can issue a one-time link from “User Admin → Reset password”.',
     accountHint: 'Administrator accounts are created and authorised by a super administrator; self sign-up is not available.',
     footerNote: 'Administrator actions are logged. Do not stay signed in on shared devices.',
+  },
+  // Assistant quality board (admin console /admin/assistant, batch 228) — see the Chinese
+  // side for why these keys follow "the four questions the page answers".
+  assistantAdmin: {
+    title: 'Assistant quality',
+    subtitle: 'Degrade rate, questions it cannot answer, and the “not useful” notes users left — the data was always in the database; this page just gathers it.',
+    readonlyNote: 'Read-only: everything here comes from stored assistant messages; nothing is modified.',
+    range7: 'Last 7 days',
+    range14: 'Last 14 days',
+    range30: 'Last 30 days',
+    statQuestions: 'Questions',
+    statAnswers: 'Answers',
+    statDegraded: 'Degrade rate',
+    statNoSource: 'No source',
+    statUseful: 'Unhelpful rate',
+    statLatency: 'Avg. latency',
+    statTokens: 'Token usage',
+    statLimited: 'Throttled {rate} · Session cap {full}',
+    degradedHint: '{count} degraded',
+    usefulHint: '{helpful} helpful · {useless} useless',
+    latencyUnit: 'ms (only answers that actually called the model)',
+    tokenHint: 'prompt {prompt} · completion {completion}',
+    trendTitle: 'Questions and degraded answers per day',
+    legendQuestions: 'Questions',
+    legendDegraded: 'Degraded',
+    legendNoSource: 'No source',
+    gapTitle: 'Knowledge-base gaps: questions with no source',
+    gapHint: 'Questions whose retrieval found no wiki entry — the assistant can only say "not covered". Sorted by frequency; filling the corpus makes this list empty.',
+    langTitle: 'Answer languages',
+    langZh: 'Chinese',
+    langEn: 'English',
+    reason: {
+      no_source: 'No wiki entry',
+      llm_disabled: 'No model configured',
+      llm_error: 'Model call failed',
+      llm_error_partial: 'Interrupted mid-answer',
+      rate_limited: 'Rate limited',
+      session_full: 'Conversation full',
+      vision_unreadable: 'Photo unreadable',
+      too_long: 'Question too long',
+      sensitive: 'Blocked words',
+      empty: 'Empty question',
+    },
+    gapEmpty: 'No “no source” questions in this window.',
+    gapColQuestion: 'Question',
+    gapColCount: 'Times',
+    gapColLast: 'Last seen',
+    uselessTitle: 'Answers rated “not useful”',
+    uselessEmpty: 'No “not useful” feedback in this window.',
+    uselessColQuestion: 'Question',
+    uselessColNote: 'User note',
+    uselessColAnswer: 'Answer preview',
+    uselessColTime: 'Rated at',
+    noteEmpty: '(empty)',
+    sourcesTitle: 'Most cited entries',
+    sourcesEmpty: 'No citations in this window.',
+    sourcesCount: '{count}×',
+    loadFailed: 'Could not load the board',
   },
   // Disease-wiki maintenance (admin console /admin/pests, batch 122)
   // Batch 166: my drafts (autosaved server-side drafts had no entry point before)
@@ -5480,6 +5621,14 @@ export const en = {
     citations: 'Sources',
     loadFailed: 'Failed to load, please try again later',
     inputPlaceholder: 'Type your question, e.g. How do I treat tomato late blight?',
+    // Batch 229: photo Q&A (upload → local detector → answer cites wiki entries only)
+    pickImage: 'Upload a photo',
+    removeImage: 'Remove photo',
+    imageAlt: 'Your uploaded leaf photo',
+    imageOnly: 'Images only (jpg / png / webp)',
+    imageTooLarge: 'The photo must be under {mb}MB — please compress it first',
+    imageOnlyQuestion: 'What is wrong with the crop in this photo?',
+    imageHint: 'The photo is used for this recognition only and is not stored; results are for reference.',
     degraded: 'Fallback',
     hintTruncated: 'The answer was cut off mid-generation; the text above is what was produced.',
     presetLateBlight: 'How do I treat tomato late blight? What dilution and pre-harvest interval?',

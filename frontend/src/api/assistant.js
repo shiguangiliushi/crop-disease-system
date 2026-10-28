@@ -34,7 +34,18 @@ export function formatAssistantError(error) {
  * @param {string} [payload.pest_identifier] 识别结果直连的病害标识（如 tomato___late_blight）
  * @returns {Promise<{session_id, message_id, answer, degraded, degrade_reason, citations, usage}>}
  */
-export async function askAssistant({ question, session_id, pest_identifier } = {}) {
+export async function askAssistant({ question, session_id, pest_identifier, image } = {}) {
+  if (image) {
+    // 第 229 批：图片走 multipart（同上：不要手动设 Content-Type）
+    const form = new FormData();
+    form.append('question', question || '');
+    if (session_id) form.append('session_id', String(session_id));
+    if (pest_identifier) form.append('pest_identifier', pest_identifier);
+    form.append('image', image);
+    const multipart = await http.post('/assistant/ask/', form);
+    return multipart.data;
+  }
+
   const body = { question };
   if (session_id) body.session_id = session_id;
   if (pest_identifier) body.pest_identifier = pest_identifier;
@@ -77,19 +88,32 @@ function authToken() {
  * @param {(text: string) => void} onDelta 每收到一段正文就回调（用于逐字渲染）
  * @returns {Promise<{session_id, message_id, answer, degraded, degrade_reason, citations, usage}>}
  */
-export async function askAssistantStream({ question, session_id, pest_identifier } = {}, { onDelta } = {}) {
-  const body = { question };
-  if (session_id) body.session_id = session_id;
-  if (pest_identifier) body.pest_identifier = pest_identifier;
+export async function askAssistantStream(
+  { question, session_id, pest_identifier, image } = {}, { onDelta } = {},
+) {
+  // 第 229 批：带图片时走 multipart（后端用 `request.FILES['image']` 取），
+  // 不带图片仍然是 JSON —— 两条路径的参数名完全一致，只是编码不同。
+  let body;
+  if (image) {
+    body = new FormData();
+    body.append('question', question || '');
+    if (session_id) body.append('session_id', String(session_id));
+    if (pest_identifier) body.append('pest_identifier', pest_identifier);
+    body.append('image', image);
+  } else {
+    body = JSON.stringify({ question, session_id, pest_identifier });
+  }
 
   const response = await fetch(`${BASE_URL}/assistant/ask/stream/`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      // ⚠️ multipart 时**不能**手动设 Content-Type：boundary 由浏览器生成，
+      //    自己写死就成了 `multipart/form-data`（没有 boundary）→ 后端解析失败。
+      ...(image ? {} : { 'Content-Type': 'application/json' }),
       Accept: 'text/event-stream',
       ...(authToken() ? { Authorization: `Token ${authToken()}` } : {}),
     },
-    body: JSON.stringify(body),
+    body,
   });
 
   if (!response.ok) {

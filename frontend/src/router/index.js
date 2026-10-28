@@ -556,6 +556,29 @@ const router = createRouter({
     },
 
     {
+      // 第 228 批：管理端「助手质量」看板
+      // ------------------------------------------------------------------
+      // 助手从第 193 批起就把 degraded / degrade_reason / latency / usage /
+      // verdict / feedback_note 全落库了，但**没有任何界面在读** —— 回答变差时
+      // 只能进 Django admin 一条条翻。这页把四个问题一次答掉：降级率、哪类问题
+      // 答不上来（= 知识库缺口清单）、用户说"没用"时在说什么、成本与延迟水位。
+      //
+      // `fullAdminOnly`：看板里有别人的提问原文与模型成本，与系统健康 / 操作日志
+      // 同一档（后端也是 `is_full_admin` 门禁，这里只是别让他白开一个空页面）。
+      path: '/admin/assistant',
+      name: 'admin-assistant',
+      component: () => import('@/views/AdminAssistantView.vue'),
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+        fullAdminOnly: true,
+        adminArea: true,   // 走管理后台外壳（左侧栏 + 顶部条）
+        title: '助手质量',
+        breadcrumb: ['管理', '助手质量']
+      }
+    },
+
+    {
       // 第 149 批：管理端「评论管理」
       // 帖子有「论坛管理」页，评论却一直没有控制台入口 —— 一波广告刷在十几条帖子的
       // 评论区里，只能一条条帖子点进去删。农户端的评论列表还挂在帖子下，没法跨帖子看。

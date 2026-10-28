@@ -71,6 +71,11 @@ const navItems = [
   // 系统健康 / 操作日志两个页签不画给他，见 AdminSystemHubView 的 tabs）。
   { to: '/admin/health', icon: 'fas fa-heart-pulse', labelKey: 'manage.system',
     capability: authStore.CAP_BROADCAST },
+  // 第 228 批：「助手质量」看板 —— 与系统 / 操作日志同一档（仅全权管理员）。
+  // 为什么单列成一项而不是塞进「系统」的页签：它回答的是**产品问题**（哪类问题答不上来、
+  // 用户说没用时在说什么），和"服务器健不健康"不是同一类事，混在一页里两边都看不清。
+  { to: '/admin/assistant', icon: 'fas fa-robot', labelKey: 'manage.assistant',
+    capability: authStore.CAP_BROADCAST, fullAdminOnly: true },
   { to: '/admin/news', icon: 'fas fa-newspaper', labelKey: 'manage.news',
     capability: authStore.CAP_CONTENT, module: authStore.MODULE_NEWS },
   // 第 122 批：病害百科维护（原来长在农户端百科页上，现在归这里）

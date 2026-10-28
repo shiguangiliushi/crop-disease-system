@@ -125,6 +125,17 @@
           :class="msg.role === 'user' ? 'is-user' : 'is-assistant'"
         >
           <div class="assistant-bubble">
+            <!-- 第 229 批：图片问答。刚上传的图有本地预览；翻历史时图片没存，
+                 只留一行"当时看到了什么"的摘要（后端 image_summary）。 -->
+            <img
+              v-if="msg.imageUrl"
+              :src="msg.imageUrl"
+              :alt="t('assistant.imageAlt')"
+              class="assistant-msg-image"
+            />
+            <p v-else-if="msg.imageSummary" class="assistant-msg-image-note">
+              <i class="fas fa-image"></i> {{ msg.imageSummary }}
+            </p>
             <!-- ⚠️ 仍然是**纯文本渲染，绝不用 `v-html`**：模型输出是不可信输入。
                  但模型习惯写 `**加粗**`，纯文本渲染会把星号原样显示（用户反馈过
                  "回答为什么会出现 `**` 和【数字】"）。所以**只解析加粗一种标记**：
@@ -233,6 +244,21 @@
 
       <!-- 输入区 -->
       <footer class="assistant-composer">
+        <!-- 第 229 批：待发送的图片预览（本地 objectURL，不落盘） -->
+        <div v-if="pendingImageUrl" class="assistant-image-preview">
+          <img :src="pendingImageUrl" :alt="t('assistant.imageAlt')" />
+          <button
+            type="button"
+            class="assistant-image-remove"
+            :title="t('assistant.removeImage')"
+            :aria-label="t('assistant.removeImage')"
+            @click="clearPendingImage"
+          >
+            <i class="fas fa-xmark"></i>
+          </button>
+          <span class="assistant-image-hint">{{ t('assistant.imageHint') }}</span>
+        </div>
+
         <el-input
           v-model="draft"
           type="textarea"
@@ -243,11 +269,27 @@
           :placeholder="t('assistant.inputPlaceholder')"
           @keydown.enter.exact.prevent="submit()"
         />
+        <input
+          ref="fileInput"
+          type="file"
+          accept="image/*"
+          class="assistant-file-input"
+          @change="onPickImage"
+        />
+        <el-button
+          class="assistant-pick"
+          plain
+          :disabled="loading"
+          :title="t('assistant.pickImage')"
+          @click="fileInput?.click()"
+        >
+          <i class="fas fa-image"></i>
+        </el-button>
         <el-button
           type="primary"
           class="assistant-send"
           :loading="loading"
-          :disabled="!draft.trim()"
+          :disabled="!canSubmit"
           @click="submit()"
         >
           {{ t('assistant.send') }}
@@ -285,6 +327,42 @@ const keyword = ref('');
 
 const currentSessionId = ref(null);
 const currentPestName = ref('');
+
+// ── 第 229 批：图片问答 ────────────────────────────────────────────────────
+// 只在前端保留"待发送的那一张"；发出去之后**不存后端图**（见 backend 的 vision.py），
+// 所以刷新后只能看到 image_summary 那一行摘要。
+const fileInput = ref(null);
+const pendingImage = ref(null);
+const pendingImageUrl = ref('');
+const MAX_IMAGE_MB = 5;
+const canSubmit = computed(() => Boolean(draft.value.trim() || pendingImage.value));
+
+/** 选图：只做**前端能做的**三项检查（类型/大小/重复），格式真伪交给后端 */
+const onPickImage = (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = '';   // 允许再次选同一张
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error(t('assistant.imageOnly'));
+    return;
+  }
+  if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+    ElMessage.error(t('assistant.imageTooLarge', { mb: MAX_IMAGE_MB }));
+    return;
+  }
+  clearPendingImage();
+  pendingImage.value = file;
+  pendingImageUrl.value = URL.createObjectURL(file);
+};
+
+const clearPendingImage = () => {
+  if (pendingImageUrl.value) URL.revokeObjectURL(pendingImageUrl.value);
+  pendingImageUrl.value = '';
+  pendingImage.value = null;
+  if (fileInput.value) fileInput.value.value = '';
+};
+
+
 const messages = ref([]);
 const draft = ref('');
 const loading = ref(false);
@@ -384,8 +462,11 @@ const resetThread = () => {
   currentSessionId.value = null;
   currentPestName.value = '';
   escalatedQuestionId.value = null;
+  // 第 229 批：顺手回收本地预览的 objectURL（否则每聊一次就漏一个 blob）
+  messages.value.forEach((msg) => { if (msg.imageUrl) URL.revokeObjectURL(msg.imageUrl); });
   messages.value = [];
   draft.value = '';
+  clearPendingImage();
 };
 
 const startNewChat = () => {
@@ -402,6 +483,8 @@ const applySession = (data) => {
     role: item.role,
     content: item.content,
     citations: item.citations || [],
+    // 第 229 批：当时那张图的识别结论（图片本身不落盘，这里只有一行摘要）
+    imageSummary: item.image_summary || '',
     degradeHint: item.degraded ? degradeHintOf(item.degrade_reason) : '',
     // 历史里的回答也可能当初就被截断过 —— 要一直提示，不能只在刚生成时提示
     truncated: Boolean(item.truncated),
@@ -451,10 +534,17 @@ const removeSession = async (item) => {
 
 const submit = async (presetText) => {
   const question = String(presetText ?? draft.value).trim();
-  if (!question || loading.value) return;
+  const image = pendingImage.value;
+  if ((!question && !image) || loading.value) return;
 
-  messages.value.push({ key: ++messageKey, role: 'user', content: question, citations: [] });
+  // 图片的本地预览要跟着这条气泡走：对象 URL 移交给消息，不再在输入区显示
+  const imageUrl = pendingImageUrl.value;
+  const bubbleText = question || t('assistant.imageOnlyQuestion');
+
+  messages.value.push({ key: ++messageKey, role: 'user', content: bubbleText, citations: [], imageUrl });
   draft.value = '';
+  pendingImage.value = null;
+  pendingImageUrl.value = '';
   loading.value = true;
   streamingStarted.value = false;
   scrollToBottom();
@@ -474,7 +564,9 @@ const submit = async (presetText) => {
       {
         question,
         session_id: currentSessionId.value || undefined,
-        // 独立页面没有识别上下文：由**问题文本自己**去检索（后端按词条名匹配）
+        // 独立页面没有识别上下文：由**问题文本自己**去检索（后端按词条名匹配）；
+        // 第 229 批：带了图片时后端会先跑本地识别，用结论当锚点
+        image: image || undefined,
       },
       {
         onDelta: (text, finalText) => {
@@ -794,6 +886,59 @@ onMounted(async () => {
   border-top: 1px solid #f1f3f5;
 }
 .assistant-send { flex: 0 0 auto; }
+
+/* ── 第 229 批：图片问答 ─────────────────────────────────────────────
+   预览独占一行（它比输入框高，挤在按钮之间会把输入区压扁）；
+   气泡里的图限宽 220px，避免手机上一张竖图占满整屏。 */
+.assistant-composer { flex-wrap: wrap; }
+
+.assistant-image-preview {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.assistant-image-preview img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e5e9ec;
+}
+
+.assistant-image-remove {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: #f1f3f5;
+  color: #7a7a7a;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.assistant-image-hint { font-size: 12px; color: #8d9a92; }
+
+.assistant-file-input { display: none; }
+
+.assistant-pick { flex: 0 0 auto; }
+
+.assistant-msg-image {
+  display: block;
+  max-width: 220px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  border: 1px solid #eee;
+}
+
+.assistant-msg-image-note {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #6c7a71;
+}
+
 
 /* ── 窄屏：列表与对话二选一（不是并排）─────────────── */
 @media (max-width: 768px) {
