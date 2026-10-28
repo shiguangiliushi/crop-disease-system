@@ -22,7 +22,8 @@ function unwrapAuthPayload(responseData) {
 
 /** 登录：成功返回 {user, token}，失败抛出带可读文案的 Error */
 export async function login({ username, password }) {
-  const response = await http.post('/login/', { username, password });
+  // 第 231 批：`device: 'mobile'` —— 后端"每设备一张 token"，手机登录不再把桌面挤下线
+  const response = await http.post('/login/', { username, password, device: 'mobile' });
   const body = response.data || {};
   const payload = unwrapAuthPayload(body);
 

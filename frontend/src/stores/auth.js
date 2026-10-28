@@ -286,7 +286,9 @@ const CONTENT_MODULES = [
       clearAuth();
       
       // 发起登录请求
-      const response = await api.post('login/', credentials, {
+      // 第 231 批：`device: 'web'` —— 后端"每设备一张 token"，
+      // 桌面登录不再把手机端那张凭证删掉（两端可以同时在线）
+      const response = await api.post('login/', { ...credentials, device: 'web' }, {
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
           'X-CSRFToken': getCookie('csrftoken'),
