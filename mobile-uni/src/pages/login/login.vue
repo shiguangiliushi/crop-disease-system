@@ -2,48 +2,53 @@
   <view class="page">
     <view class="brand">
       <view class="logo">叶</view>
-      <text class="title">农作物病害识别</text>
+      <text class="title">{{ t('common.appName') }}</text>
     </view>
-    <text class="subtitle">登录后即可拍照识别病虫害</text>
+    <text class="subtitle">{{ t('auth.loginSubtitle') }}</text>
 
     <view class="card">
       <view class="field">
-        <text class="label">用户名</text>
+        <text class="label">{{ t('auth.username') }}</text>
         <input
           v-model="form.username"
           class="input"
-          placeholder="请输入用户名"
+          :placeholder="t('auth.usernamePlaceholder')"
           placeholder-class="ph"
           :disabled="loading"
         />
       </view>
       <view class="field">
-        <text class="label">密码</text>
+        <text class="label">{{ t('auth.password') }}</text>
         <input
           v-model="form.password"
           class="input"
           password
-          placeholder="请输入密码"
+          :placeholder="t('auth.passwordPlaceholder')"
           placeholder-class="ph"
           :disabled="loading"
           @confirm="onSubmit"
         />
       </view>
 
+      <text class="forgot" @click="goForgot">{{ t('auth.forgot') }}</text>
+
       <button class="btn-primary" :disabled="loading" @click="onSubmit">
-        {{ loading ? '登录中…' : '登录' }}
+        {{ loading ? t('auth.loggingIn') : t('auth.login') }}
       </button>
     </view>
 
-    <text class="tip">识别结果仅供参考，实际防治请以当地植保部门意见为准。</text>
+    <view class="switch">
+      <text class="muted">{{ t('auth.noAccount') }}</text>
+      <text class="link" @click="goRegister">{{ t('auth.registerNow') }}</text>
+    </view>
+
+    <text class="tip">{{ t('result.disclaimer') }}</text>
 
     <!-- #ifdef APP-PLUS -->
-    <!-- 第 232 批：APK 里没有 vite 代理，必须连局域网 IP；把地址做成可改的，
-         换 Wi-Fi 时不必重新打包（H5 走代理，不显示这一行） -->
     <view class="server-row" @click="editServer">
-      <text class="server-label">服务器</text>
+      <text class="server-label">{{ t('auth.server') }}</text>
       <text class="server-value">{{ serverShown }}</text>
-      <text class="server-edit">修改</text>
+      <text class="server-edit">{{ t('auth.serverEdit') }}</text>
     </view>
     <!-- #endif -->
   </view>
@@ -51,13 +56,14 @@
 
 <script setup>
 /**
- * 登录页（第 232 批）
+ * 登录页（第 232 批初版 / 第 237 批补多语言与入口）
  *
  * 与现有 H5 的差异只在**存储与请求 API**（`uni.*` 替代 `localStorage`/`axios`），
- * 业务逻辑（校验 → 调登录 → 存 token → 进识别页）保持一模一样。
+ * 业务逻辑（校验 → 调登录 → 存 token → 进识别页）保持一致。
  */
 import { computed, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { t, locale } from '@/i18n'
 // #ifdef APP-PLUS
 import { apiBase, saveApiBase } from '@/utils/config'
 // #endif
@@ -70,50 +76,55 @@ const loading = ref(false)
 const serverShown = computed(() => apiBase())
 // #endif
 
-/**
- * 改服务器地址（仅 APP）。没有域名时 APK 只能连 `http://<电脑IP>:8000/api`，
- * 而电脑 IP 会随网络变化 —— 所以做成运行时可改，而不是写死在包里。
- */
-async function editServer() {
-  // #ifdef APP-PLUS
-  const result = await uni.showModal({
-    title: '服务器地址',
-    editable: true,
-    placeholderText: 'http://192.168.1.20:8000/api',
-    content: apiBase(),
-    confirmText: '保存',
-    cancelText: '取消',
-  })
-  if (!result.confirm) return
-  const value = String(result.content || '').trim()
-  if (!/^https?:\/\//i.test(value)) {
-    uni.showToast({ title: '请填写 http(s):// 开头的地址', icon: 'none' })
-    return
-  }
-  saveApiBase(value)
-  uni.showToast({ title: '已保存', icon: 'success' })
-  // #endif
-}
-
 async function onSubmit() {
   if (loading.value) return
   const username = form.username.trim()
   if (!username || !form.password) {
-    uni.showToast({ title: '请填写用户名和密码', icon: 'none' })
+    uni.showToast({ title: t('auth.usernameRequired'), icon: 'none' })
     return
   }
   loading.value = true
   try {
     await auth.login({ username, password: form.password })
-    uni.showToast({ title: '登录成功', icon: 'success' })
+    uni.showToast({ title: t('auth.loginSuccess'), icon: 'success' })
     setTimeout(() => {
       uni.reLaunch({ url: '/pages/detect/detect' })
     }, 300)
   } catch (error) {
-    uni.showToast({ title: error.message || '登录失败', icon: 'none' })
+    uni.showToast({ title: error.message || t('common.requestFailed'), icon: 'none' })
   } finally {
     loading.value = false
   }
+}
+
+function goRegister() {
+  uni.navigateTo({ url: '/pages/register/register' })
+}
+
+function goForgot() {
+  uni.navigateTo({ url: '/pages/forgot/forgot' })
+}
+
+/** 改服务器地址（仅 APP）：没有域名时只能连局域网 IP，且 IP 会变 */
+async function editServer() {
+  // #ifdef APP-PLUS
+  const result = await uni.showModal({
+    title: t('auth.serverEdit'),
+    editable: true,
+    placeholderText: t('auth.serverPlaceholder'),
+    content: apiBase(),
+    confirmText: t('common.confirm'),
+    cancelText: t('common.cancel'),
+  })
+  if (!result.confirm) return
+  const value = String(result.content || '').trim()
+  if (!/^https?:\/\//i.test(value)) {
+    uni.showToast({ title: t('auth.serverInvalid'), icon: 'none' })
+    return
+  }
+  saveApiBase(value)
+  uni.showToast({ title: t('auth.serverSaved'), icon: 'success' })
+  // #endif
 }
 </script>
 
@@ -181,8 +192,32 @@ async function onSubmit() {
   color: #b7c2bb;
 }
 
+.forgot {
+  display: block;
+  margin-top: 20rpx;
+  text-align: right;
+  color: #2f855a;
+  font-size: 24rpx;
+}
+
 .btn-primary {
-  margin-top: 56rpx;
+  margin-top: 40rpx;
+}
+
+.switch {
+  margin-top: 32rpx;
+  text-align: center;
+  font-size: 26rpx;
+}
+
+.muted {
+  color: #8b9a91;
+}
+
+.link {
+  margin-left: 8rpx;
+  color: #2f855a;
+  font-weight: 600;
 }
 
 .tip {

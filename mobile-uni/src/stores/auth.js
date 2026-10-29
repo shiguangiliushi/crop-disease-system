@@ -36,6 +36,20 @@ export const useAuthStore = defineStore('auth', () => {
     return data.user
   }
 
+  /**
+   * 直接写入凭证（注册即登录用，第 237 批）
+   *
+   * 注册接口本身返回 `{user, token}`，没必要再让用户输一次密码；
+   * 但必须走同一个 `persist()`，否则刷新后 token 丢了。
+   */
+  async function adopt({ user: account, token: key }) {
+    if (!account || !key) return null
+    user.value = account
+    token.value = key
+    persist()
+    return account
+  }
+
   async function logout() {
     await authApi.logout()
     token.value = ''
@@ -48,5 +62,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { token, user, isAuthenticated, username, login, logout }
+  return { token, user, isAuthenticated, username, login, adopt, logout }
 })

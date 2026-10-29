@@ -44,6 +44,60 @@ export async function logout() {
 }
 
 /**
+ * 注册（第 237 批）
+ *
+ * 后端注册接口**强制校验验证码**（第 233 批），所以必须带 `captcha_id` +
+ * `captcha_code`；`device: 'app'` 与登录一致，注册即登录后这张凭证不会被别的端挤掉。
+ */
+export async function register({ username, password, email, captchaId, captchaCode }) {
+  const body = await request({
+    url: '/register/',
+    method: 'POST',
+    data: {
+      username,
+      password,
+      email,
+      captcha_id: captchaId,
+      captcha_code: captchaCode,
+      device: 'app',
+    },
+  })
+  const data = unwrapAuth(body)
+  return { user: data.user || null, token: data.token || '' }
+}
+
+/**
+ * 忘记密码：`POST /api/password-reset/`，`{ username_or_email }`
+ *
+ * ⚠️ 安全设计：**无论账号是否存在，后端话术一致**（防账号枚举）——
+ * 前端不要根据响应判断"这个账号在不在"，一律按"已发送"提示。
+ */
+export async function requestPasswordReset(account) {
+  return request({
+    url: '/password-reset/',
+    method: 'POST',
+    data: { username_or_email: account },
+  })
+}
+
+/** 注销账号（冷静期）：需要密码确认，与 H5 的 `/users/me/delete/` 一致 */
+export async function requestAccountDeletion(password) {
+  return request({
+    url: '/users/me/delete/',
+    method: 'POST',
+    data: { password },
+  })
+}
+
+/** 候选病害列表（反馈"识别错了"时给用户选正确答案） */
+export async function fetchPests() {
+  const body = await request({ url: '/pests/', data: { page_size: 100 } })
+  const inner = body.data || body || {}
+  const items = Array.isArray(inner) ? inner : inner.results || inner.items || []
+  return items.map((item) => ({ id: item.id, name: item.name || item.name_en || '' }))
+}
+
+/**
  * 识别一张图
  *
  * @param {string} filePath `uni.chooseImage` 给的临时路径

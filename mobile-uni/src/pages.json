@@ -8,6 +8,20 @@
       }
     },
     {
+      "path": "pages/register/register",
+      "style": {
+        "navigationBarTitleText": "注册",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/forgot/forgot",
+      "style": {
+        "navigationBarTitleText": "找回密码",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/detect/detect",
       "style": {
         "navigationBarTitleText": "病害识别",
