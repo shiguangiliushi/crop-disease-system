@@ -21,11 +21,17 @@ function unwrapAuth(payload) {
 }
 
 /** 登录：`device: 'app'` 让后端单独记一张凭证（不会顶掉手机 H5 / 桌面） */
-export async function login({ username, password }) {
+export async function login({ username, password, captchaId, captchaCode }) {
+  const requestBody = { username, password, device: 'app' }
+  // 第 247 批：服务端开关打开时带上验证码（关着时多传两个字段无害）
+  if (captchaId || captchaCode) {
+    requestBody.captcha_id = captchaId || ''
+    requestBody.captcha_code = captchaCode || ''
+  }
   const body = await request({
     url: '/login/',
     method: 'POST',
-    data: { username, password, device: 'app' },
+    data: requestBody,
   })
   const data = unwrapAuth(body)
   if (!data.user || !data.token) {

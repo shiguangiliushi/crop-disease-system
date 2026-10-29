@@ -47,6 +47,24 @@
           :rules="[{ required: true, message: t('auth.passwordRequired') }]"
           clearable
         />
+        <!-- 第 247 批：登录验证码（仅在服务端开关打开时出现） -->
+        <van-field
+          v-if="captchaRequired"
+          v-model="captchaCode"
+          name="captchaCode"
+          :label="t('auth.captcha')"
+          :placeholder="t('auth.captchaPlaceholder')"
+          maxlength="4"
+          autocomplete="off"
+          clearable
+        >
+          <template #button>
+            <div class="captcha-box" @click="loadCaptcha">
+              <img v-if="captchaImage" :src="captchaImage" alt="" class="captcha-image" />
+              <van-loading v-else size="18" />
+            </div>
+          </template>
+        </van-field>
       </van-cell-group>
 
       <div class="auth-actions">
@@ -96,12 +114,13 @@
  * 表单校验交给 van-form 的 rules（回车即提交、错误提示贴近输入框），
  * 错误文案统一走统一 API 客户端抛出的可读消息。
  */
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showFailToast, showSuccessToast } from 'vant';
 import { useAuthStore } from '@/stores/auth';
 import { useI18n } from '@/i18n';
 import { consumeAuthExpiredFlag, formatApiError } from '@/api/http';
+import { fetchCaptcha, loginCaptchaRequired } from '@/api/auth';  // 第 247 批：登录验证码
 
 const router = useRouter();
 const route = useRoute();
@@ -109,6 +128,28 @@ const auth = useAuthStore();
 const { t, locale, setLocale } = useI18n();
 
 const form = reactive({ username: '', password: '' });
+
+// 第 247 批：登录验证码（默认关闭，后端开关打开时才显示）
+const captchaRequired = ref(false);
+const captchaId = ref('');
+const captchaImage = ref('');
+const captchaCode = ref('');
+
+async function loadCaptcha() {
+  try {
+    captchaRequired.value = await loginCaptchaRequired();
+    if (!captchaRequired.value) return;
+    const data = await fetchCaptcha();
+    captchaId.value = data.id;
+    captchaImage.value = data.image;
+    captchaCode.value = '';
+  } catch (error) {
+    console.warn('[login] 加载验证码失败，按"不需要验证码"处理', error);
+    captchaRequired.value = false;
+  }
+}
+
+onMounted(loadCaptcha);
 const loading = ref(false);
 
 // 第 91 批：两个入口条件
@@ -126,12 +167,23 @@ const toggleLocale = () => setLocale(locale.value === 'en' ? 'zh-CN' : 'en');
 const onSubmit = async () => {
   loading.value = true;
   try {
-    await auth.login({ username: form.username.trim(), password: form.password });
+    await auth.login({
+      username: form.username.trim(),
+      password: form.password,
+      captchaId: captchaRequired.value ? captchaId.value : '',
+      captchaCode: captchaRequired.value ? captchaCode.value.trim() : '',
+    });
     showSuccessToast(t('auth.loginSuccess'));
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/detect';
     router.replace(redirect);
   } catch (error) {
-    showFailToast(formatApiError(error, error?.message || t('common.requestFailed')));
+    if (error?.response?.data?.captcha_required) {
+      // 第 247 批：验证码错/过期 —— 换一张再填
+      await loadCaptcha();
+      showFailToast(t('auth.captchaWrong'));
+    } else {
+      showFailToast(formatApiError(error, error?.message || t('common.requestFailed')));
+    }
   } finally {
     loading.value = false;
   }
@@ -139,6 +191,28 @@ const onSubmit = async () => {
 </script>
 
 <style scoped>
+/* 第 247 批：登录验证码图片（与注册页同一套观感） */
+.captcha-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 34px;
+  margin-left: 8px;
+  border: 1px solid rgba(47, 133, 90, 0.18);
+  border-radius: 6px;
+  background: #f4f8f5;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.captcha-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .auth-page {
   min-height: 100vh;
   background: #fff;

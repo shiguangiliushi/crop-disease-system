@@ -14,3 +14,9 @@ export async function fetchCaptcha() {
     expiresIn: body.expires_in || 0,
   }
 }
+
+/** 第 247 批：登录页要不要验证码（`GET /api/login/`，开关在服务端） */
+export async function loginCaptchaRequired() {
+  const body = await request({ url: '/login/' })
+  return Boolean(body.captcha_required)
+}

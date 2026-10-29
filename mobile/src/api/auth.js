@@ -20,10 +20,28 @@ function unwrapAuthPayload(responseData) {
   return cur && typeof cur === 'object' ? cur : {};
 }
 
+/**
+ * 第 247 批：登录页要不要显示验证码？
+ *
+ * 后端 `GET /api/login/` 回 `{captcha_required}`（开关是环境变量 `DJANGO_LOGIN_CAPTCHA`）。
+ * 写死会让"本地不验证码 / 生产要验证码"变成两套页面，所以每次进登录页问一次。
+ */
+export async function loginCaptchaRequired() {
+  const response = await http.get('/login/');
+  const body = response.data || {};
+  return Boolean(body.captcha_required);
+}
+
 /** 登录：成功返回 {user, token}，失败抛出带可读文案的 Error */
-export async function login({ username, password }) {
+export async function login({ username, password, captchaId, captchaCode }) {
   // 第 231 批：`device: 'mobile'` —— 后端"每设备一张 token"，手机登录不再把桌面挤下线
-  const response = await http.post('/login/', { username, password, device: 'mobile' });
+  // 第 247 批：后端开关打开时带上验证码（关着时多传两个字段无害）
+  const requestBody = { username, password, device: 'mobile' };
+  if (captchaId || captchaCode) {
+    requestBody.captcha_id = captchaId || '';
+    requestBody.captcha_code = captchaCode || '';
+  }
+  const response = await http.post('/login/', requestBody);
   const body = response.data || {};
   const payload = unwrapAuthPayload(body);
 

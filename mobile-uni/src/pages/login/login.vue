@@ -32,6 +32,23 @@
 
       <text class="forgot" @click="goForgot">{{ t('auth.forgot') }}</text>
 
+      <!-- 第 247 批：登录验证码（仅服务端开关打开时渲染） -->
+      <view v-if="captchaRequired" class="field">
+        <text class="label">{{ t('auth.captcha') }}</text>
+        <input
+          v-model="captchaCode"
+          class="input"
+          maxlength="4"
+          :placeholder="t('auth.captchaPlaceholder')"
+          placeholder-class="ph"
+          :disabled="loading"
+        />
+        <view class="captcha-box" @click="loadCaptcha">
+          <image v-if="captcha.image" :src="captcha.image" class="captcha-image" mode="aspectFill" />
+          <text v-else class="captcha-loading">…</text>
+        </view>
+      </view>
+
       <button class="btn-primary" :disabled="loading" @click="onSubmit">
         {{ loading ? t('auth.loggingIn') : t('auth.login') }}
       </button>
@@ -61,16 +78,37 @@
  * 与现有 H5 的差异只在**存储与请求 API**（`uni.*` 替代 `localStorage`/`axios`），
  * 业务逻辑（校验 → 调登录 → 存 token → 进识别页）保持一致。
  */
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { fetchCaptcha, loginCaptchaRequired } from '@/api/auth'
 import { t, locale } from '@/i18n'
 // #ifdef APP-PLUS
 import { apiBase, saveApiBase } from '@/utils/config'
 // #endif
 
 const auth = useAuthStore()
+onMounted(loadCaptcha)
 const form = reactive({ username: '', password: '' })
 const loading = ref(false)
+
+// 第 247 批：登录验证码（默认关闭，服务端开关打开时才显示）
+const captchaRequired = ref(false)
+const captcha = reactive({ id: '', image: '' })
+const captchaCode = ref('')
+
+async function loadCaptcha() {
+  try {
+    captchaRequired.value = await loginCaptchaRequired()
+    if (!captchaRequired.value) return
+    const data = await fetchCaptcha()
+    captcha.value = { id: data.id, image: data.image }
+    captchaCode.value = ''
+  } catch (error) {
+    console.warn('[login] 加载验证码失败，按"不需要验证码"处理', error)
+    captchaRequired.value = false
+  }
+}
+
 
 // #ifdef APP-PLUS
 const serverShown = computed(() => apiBase())
@@ -85,7 +123,7 @@ async function onSubmit() {
   }
   loading.value = true
   try {
-    await auth.login({ username, password: form.password })
+    await auth.login({ username, password: form.password, captchaId: captcha.value.id, captchaCode: captchaCode.value.trim() })
     uni.showToast({ title: t('auth.loginSuccess'), icon: 'success' })
     setTimeout(() => {
       uni.reLaunch({ url: '/pages/detect/detect' })
@@ -129,6 +167,29 @@ async function editServer() {
 </script>
 
 <style scoped>
+/* 第 247 批：登录验证码图片 */
+.captcha-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 150rpx;
+  height: 60rpx;
+  border: 1rpx solid rgba(47, 133, 90, 0.18);
+  border-radius: 8rpx;
+  background: #f4f8f5;
+  overflow: hidden;
+}
+
+.captcha-image {
+  width: 100%;
+  height: 100%;
+}
+
+.captcha-loading {
+  color: #8b9a91;
+  font-size: 24rpx;
+}
+
 .page {
   min-height: 100vh;
   padding: 120rpx 40rpx 40rpx;
