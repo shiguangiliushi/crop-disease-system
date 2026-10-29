@@ -499,6 +499,24 @@ onMounted(async () => {
 }
 
 .result-page {
+  /* 第 241 批：结果页入场淡入（纯 CSS；降低动效偏好时关闭） */
+  animation: result-fade-up 0.32s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+@keyframes result-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-page { animation: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-page { animation: none; }
+}
+
+.result-page {
   min-height: 100vh;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
 }

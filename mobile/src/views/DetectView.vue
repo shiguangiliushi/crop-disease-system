@@ -38,7 +38,24 @@
       <!-- 已选图：预览 + 开始识别 -->
       <div v-else class="card">
         <p class="card-title">{{ t('detect.preview') }}</p>
-        <img :src="previewUrl" class="preview-img" :alt="t('detect.preview')" />
+        <!-- 第 241 批：识别中扫描线（纯 CSS；只在 detecting 渲染，不改识别逻辑） -->
+        <div class="scan-stage">
+          <img :src="previewUrl" class="preview-img" :alt="t('detect.preview')" />
+          <template v-if="detecting">
+            <div class="scan-tint" aria-hidden="true"></div>
+            <div class="scan-line" aria-hidden="true"></div>
+            <div class="scan-caption">
+              <span class="scan-dot" aria-hidden="true"></span>{{ progressText }}
+            </div>
+          </template>
+        </div>
+
+        <!-- 第 241 批：进度条放在照片下方，遮罩只负责挡误触 -->
+        <div v-if="detecting" class="scan-progress">
+          <van-progress :percentage="progress" color="var(--brand)" :show-pivot="false" />
+          <p class="progress-detail">{{ progressDetail }}</p>
+        </div>
+
         <div class="preview-actions">
           <van-button
             block
@@ -66,13 +83,7 @@
     </div>
 
     <!-- 上传/识别进度：两段式（真实上传进度 → 服务端分析） -->
-    <van-overlay :show="detecting" z-index="2500" :lock-scroll="true">
-      <div class="progress-wrap">
-        <van-loading color="var(--brand)" size="30" vertical>{{ progressText }}</van-loading>
-        <van-progress :percentage="progress" color="var(--brand)" :show-pivot="false" track-color="#3d4a3d" />
-        <p class="progress-detail">{{ progressDetail }}</p>
-      </div>
-    </van-overlay>
+    <van-overlay :show="detecting" z-index="2500" :lock-scroll="true" class="detect-overlay" />
 
     <!-- 第 75 批：页面内拍照（不支持时自动退回系统相机，见 openCamera） -->
     <CameraCapture
@@ -128,6 +139,9 @@ const previewUrl = ref('');
 const selectedFile = ref(null);
 const detecting = ref(false);
 const progress = ref(0);
+// 第 241 批：让扫描线至少扫一遍（本地识别 0.3~0.8s，否则动效一闪而过）
+let detectStartedAt = 0;
+const MIN_SCAN_VISIBLE_MS = 1100;
 const progressText = ref('');
 const progressDetail = ref('');
 
@@ -227,6 +241,7 @@ const startDetect = async () => {
   }
 
   detecting.value = true;
+  detectStartedAt = Date.now();
   progress.value = 0;
   progressText.value = t('detect.uploading');
   progressDetail.value = '';
@@ -248,6 +263,11 @@ const startDetect = async () => {
     progress.value = 100;
     detectStore.setResult(result);
     detectStore.setChosenFile(selectedFile.value);
+    // 第 241 批：扫描线至少可见 1.1 秒（只影响等待动效，不影响结果）
+    const elapsed = Date.now() - detectStartedAt;
+    if (elapsed < MIN_SCAN_VISIBLE_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_SCAN_VISIBLE_MS - elapsed));
+    }
     router.push('/result');
   } catch (error) {
     stopProgressTimer();
@@ -374,6 +394,96 @@ onBeforeUnmount(stopProgressTimer);
   color: #4a5a4a;
   font-size: 0.87rem;
   line-height: 1.9;
+}
+
+/* ============================================================================
+   第 241 批：识别中动效（纯 CSS，零功能改动）
+   · 手机屏小：线 2px、1.8s；标题胶囊字号 12px；
+   · 只动 transform/opacity；系统开了"减少动态效果"就全部关掉。
+   ========================================================================== */
+.scan-stage {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0f1f17;
+}
+
+.scan-tint {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 31, 23, 0.32), rgba(15, 31, 23, 0.08));
+  animation: scan-breathe 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #7ee2b8 20%, #b9f4d8 50%, #7ee2b8 80%, transparent);
+  box-shadow: 0 0 12px rgba(126, 226, 184, 0.85);
+  animation: scan-sweep 1.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  pointer-events: none;
+}
+
+.scan-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(15, 31, 23, 0.72);
+  color: #e9f7ef;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.scan-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7ee2b8;
+  animation: scan-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes scan-sweep {
+  0% { top: 0; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes scan-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes scan-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.5); opacity: 1; }
+}
+
+/* 整屏遮罩只做"挡住误触"：调成半透明，露出下面的照片和扫描线 */
+.detect-overlay {
+  background: rgba(15, 31, 23, 0.22) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-tint,
+  .scan-line,
+  .scan-dot {
+    animation: none !important;
+  }
+}
+
+.scan-progress {
+  padding: 14px 2px 0;
 }
 
 .progress-wrap {

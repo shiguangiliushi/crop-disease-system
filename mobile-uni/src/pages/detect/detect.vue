@@ -19,7 +19,18 @@
         <text class="empty-title">{{ t('detect.takePhoto') }}</text>
         <text class="empty-sub">{{ t('detect.galleryHint') }}</text>
       </view>
-      <image v-else :src="imagePath" mode="aspectFit" class="preview" />
+      <view v-else class="scan-stage">
+        <image :src="imagePath" mode="aspectFit" class="preview" />
+        <!-- 第 241 批：识别中扫描线（纯 CSS，只在 loading 时渲染） -->
+        <block v-if="loading">
+          <view class="scan-tint"></view>
+          <view class="scan-line"></view>
+          <view class="scan-caption">
+            <view class="scan-dot"></view>
+            <text class="scan-text">{{ t('detect.analyzing') }}</text>
+          </view>
+        </block>
+      </view>
     </view>
 
     <view class="actions">
@@ -104,11 +115,18 @@ function choose(sourceType) {
 
 async function onDetect() {
   if (!imagePath.value || loading.value) return
+  const startedAt = Date.now()
+  const MIN_SCAN_MS = 1100
   loading.value = true
   uni.showLoading({ title: t('detect.analyzing'), mask: true })
   try {
     const data = await detectImage(imagePath.value)
     uni.setStorageSync('last_result', data)
+    // 第 241 批：扫描线至少扫一遍（本地识别很快，否则动效一闪而过）
+    const elapsed = Date.now() - startedAt
+    if (elapsed < MIN_SCAN_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_SCAN_MS - elapsed))
+    }
     uni.navigateTo({ url: '/pages/result/result' })
   } catch (error) {
     // 第 239 批：网络/服务异常时把图记进补传队列，恢复网络后自动补传
@@ -206,6 +224,79 @@ async function onLogout() {
   color: #2f855a;
   font-size: 24rpx;
   font-weight: 600;
+}
+
+.scan-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 20rpx;
+  background: #0f1f17;
+}
+
+.scan-tint {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(180deg, rgba(15, 31, 23, 0.32), rgba(15, 31, 23, 0.08));
+  animation: scan-breathe 2.4s ease-in-out infinite;
+}
+
+.scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #7ee2b8 20%, #b9f4d8 50%, #7ee2b8 80%, transparent);
+  box-shadow: 0 0 12px rgba(126, 226, 184, 0.85);
+  animation: scan-sweep 1.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.scan-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 20rpx;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  padding: 10rpx 20rpx;
+  border-radius: 999rpx;
+  background: rgba(15, 31, 23, 0.72);
+}
+
+.scan-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #7ee2b8;
+  animation: scan-pulse 1.2s ease-in-out infinite;
+}
+
+.scan-text {
+  color: #e9f7ef;
+  font-size: 22rpx;
+}
+
+@keyframes scan-sweep {
+  0% { top: 0; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes scan-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes scan-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.5); opacity: 1; }
 }
 
 .picker {
