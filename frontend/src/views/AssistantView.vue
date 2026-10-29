@@ -301,6 +301,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';  // 第 242 批：支持 ?q= 深链（结果页推荐问题）
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Search } from '@element-plus/icons-vue';
 import { useI18n } from '@/i18n';
@@ -365,6 +366,7 @@ const clearPendingImage = () => {
 
 const messages = ref([]);
 const draft = ref('');
+const route = useRoute();  // 第 242 批：结果页推荐问题跳过来时自动提问
 const loading = ref(false);
 const streamingStarted = ref(false);
 const scrollBox = ref(null);
@@ -645,6 +647,15 @@ const escalate = async (msg) => {
 
 onMounted(async () => {
   await loadSessions(true);
+
+  // 第 242 批：结果页「你可能还想问」带 ?q= 跳过来 → 直接提问
+  const preset = String(route.query.q || '').trim();
+  if (preset) {
+    mobileView.value = 'chat';
+    await submit(preset);
+    return;
+  }
+
   // 窄屏默认停在列表；宽屏直接进对话（`mobileView` 只在窄屏生效，见 CSS）
   if (window.matchMedia('(max-width: 768px)').matches) mobileView.value = 'list';
   else mobileView.value = 'chat';

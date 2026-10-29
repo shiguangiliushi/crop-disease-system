@@ -2430,6 +2430,10 @@ export const zhCN = {
     feedbackCorrectHint: '选了它，这条纠错就能用来改进识别模型；不选也能提交。',
   },
   assistant: {
+    suggestTitle: '你可能还想问',
+    askSymptoms: '{name}有哪些症状？',
+    askPrevent: '怎么预防{name}？',
+    askChemical: '{name}该用什么药？',
     // 智能回答助手（第 194 批）—— 识别结果页的追问抽屉
     title: '问一下助手',
     open: '问一下助手',
@@ -5590,6 +5594,10 @@ export const en = {
     feedbackCorrectHint: 'Picking one turns this correction into a sample we can train on. Optional.',
   },
   assistant: {
+    suggestTitle: 'You may also want to ask',
+    askSymptoms: 'What are the symptoms of {name}?',
+    askPrevent: 'How do I prevent {name}?',
+    askChemical: 'Which pesticide treats {name}?',
     // Smart Q&A assistant (batch 194) — follow-up drawer on the detection result page
     title: 'Ask the assistant',
     open: 'Ask the assistant',

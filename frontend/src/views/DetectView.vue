@@ -284,6 +284,17 @@
                     <strong>{{ t('assistant.emptyTitle') }}</strong>
                     <span>{{ t('assistant.emptyDesc') }}</span>
                   </div>
+          <!-- 第 242 批：你可能还想问（带上病害名，点一下直接去助手提问） -->
+          <div class="ask-suggestions">
+            <span class="ask-suggestions-title">{{ t('assistant.suggestTitle') }}</span>
+            <button
+              v-for="item in assistantSuggestions"
+              :key="item.key"
+              type="button"
+              class="ask-suggestion-chip"
+              @click="askAssistantQuestion(item.text)"
+            >{{ item.label }}</button>
+          </div>
                   <el-button type="primary" plain @click="openAssistant(disease)">
                     <i class="bi bi-chat-dots me-1"></i>{{ t('assistant.open') }}
                   </el-button>
@@ -421,7 +432,7 @@ import PageExtras from '@/components/PageExtras.vue';
 import { compressImage } from '@/utils/imageCompress';  // 第 165 批：与论坛/新闻共用同一份压缩
 import { enqueueOfflineImage, isBrowserOnline } from '@/utils/offlineSync';
 import { getOfflineQueue } from '@/utils/offlineStorage';
-import { useI18n } from '@/i18n';  // 第 58 批：多语言
+import { locale, useI18n } from '@/i18n';  // 第 58 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 72 批：内容数据多语言（病害名/症状/防治）
 import { downloadDetectionReportPdf } from '@/utils/pdfReport';  // 第 73 批：#13 报告统一为 PDF
 // 第 75 批：应用内拍照（实时取景 + 快门 + 前后摄像头切换）
@@ -491,6 +502,25 @@ const assistantPestIdentifier = computed(() => {
 });
 
 /** 打开追问抽屉。`disease` 就是结果卡片里那一条。 */
+/** 第 242 批：基于当前病害名生成三个"你可能还想问"，点了直接去问答页提问 */
+const assistantSuggestions = computed(() => {
+  // ⚠️ 不能用 `assistantDiseaseName`：它只有在**打开助手抽屉后**才有值（由 openAssistant 设置），
+  // 而推荐问题要在结果页刚渲染时就出现 —— 所以直接取当前结果的第一条病害。
+  const primary = filteredDiseases.value[0] || {};
+  const name = (locale.value === 'en' ? primary.name_en || primary.name : primary.name) || '';
+  if (!name) return [];
+  return [
+    { key: 'symptoms', label: t('assistant.askSymptoms', { name }), text: t('assistant.askSymptoms', { name }) },
+    { key: 'prevent', label: t('assistant.askPrevent', { name }), text: t('assistant.askPrevent', { name }) },
+    { key: 'chemical', label: t('assistant.askChemical', { name }), text: t('assistant.askChemical', { name }) },
+  ];
+});
+
+const askAssistantQuestion = (question) => {
+  if (!question) return;
+  router.push({ path: '/assistant', query: { q: question } });
+};
+
 const openAssistant = (disease) => {
   assistantDisease.value = disease || null;
   assistantVisible.value = true;
@@ -2219,6 +2249,35 @@ textarea.form-control {
   background: var(--brand-50, #eef7f1);
   border: 1px solid var(--brand-200, #cfe6d8);
   border-radius: 8px;
+}
+
+.ask-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ask-suggestions-title {
+  color: #8b9a91;
+  font-size: 13px;
+}
+
+.ask-suggestion-chip {
+  border: 1px solid rgba(47, 133, 90, 0.28);
+  border-radius: 999px;
+  background: #f4f8f5;
+  color: #2f855a;
+  font-size: 13px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.ask-suggestion-chip:hover {
+  background: #e8f5ee;
+  transform: translateY(-1px);
 }
 
 .ask-assistant-text {
