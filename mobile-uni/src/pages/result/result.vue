@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <view class="card" v-if="loading">
-      <text class="empty">加载中…</text>
+      <text class="empty">{{ t('common.loading') }}</text>
     </view>
 
     <view class="card" v-else-if="detection.disease">
@@ -11,20 +11,37 @@
           <text class="disease">{{ detection.disease }}</text>
           <text v-if="detection.disease_en" class="disease-en">{{ detection.disease_en }}</text>
           <view class="confidence">
-            <text class="conf-label">置信度</text>
+            <text class="conf-label">{{ t('result.confidence') }}</text>
             <text class="conf-value">{{ percent }}</text>
           </view>
         </view>
       </view>
 
       <view v-if="detection.description" class="block">
-        <text class="block-title">典型症状</text>
+        <text class="block-title">{{ t('result.symptoms') }}</text>
         <text class="block-text">{{ detection.description }}</text>
       </view>
 
       <view v-if="detection.prevention" class="block">
-        <text class="block-title">防治建议</text>
+        <text class="block-title">{{ t('result.prevention') }}</text>
         <text class="block-text">{{ detection.prevention }}</text>
+      </view>
+
+      <view class="block">
+        <text class="block-title">{{ t('result.feedbackAsk') }}</text>
+        <view class="feedback-row">
+          <button
+            class="chip"
+            :disabled="feedbackBusy || feedbackDone"
+            @click="sendFeedback(true)"
+          >{{ t('result.feedbackAccurate') }}</button>
+          <button
+            class="chip"
+            :disabled="feedbackBusy || feedbackDone"
+            @click="sendFeedback(false)"
+          >{{ t('result.feedbackInaccurate') }}</button>
+        </view>
+        <text v-if="feedbackMsg" class="feedback-msg">{{ feedbackMsg }}</text>
       </view>
 
       <view v-if="detection.crop_mismatch" class="notice">
@@ -36,12 +53,12 @@
     </view>
 
     <view class="card" v-else>
-      <text class="empty">没有可显示的结果，请重新识别。</text>
+      <text class="empty">{{ t('result.retry') }}</text>
     </view>
 
     <view class="actions">
-      <button class="btn-ghost" @click="again">再识别一次</button>
-      <button class="btn-primary small" @click="backHome">返回主页</button>
+      <button class="btn-ghost" @click="again">{{ t('result.retry') }}</button>
+      <button class="btn-primary small" @click="backHome">{{ t('common.back') }}</button>
     </view>
   </view>
 </template>
@@ -54,6 +71,9 @@
  * 不在页面间传大对象（小程序 URL 有长度限制，传 JSON 会截断）。
  */
 import { computed, ref } from 'vue'
+import { t } from '@/i18n'
+import { submitRecognitionFeedback } from '@/api/feedback'
+import { fetchPests } from '@/utils/api'
 import { onLoad } from '@dcloudio/uni-app'
 import { mediaUrl } from '@/utils/request'
 import { fetchHistoryDetail } from '@/api/history'
@@ -87,10 +107,11 @@ onLoad(async (options = {}) => {
   if (options.id) {
     loading.value = true
     try {
+      historyId.value = options.id
       const raw = await fetchHistoryDetail(options.id)
       detection.value = fromHistoryDetail(raw)
     } catch (error) {
-      uni.showToast({ title: error.message || '加载失败', icon: 'none' })
+      uni.showToast({ title: error.message || t('common.requestFailed'), icon: 'none' })
       detection.value = {}
     } finally {
       loading.value = false
@@ -100,11 +121,66 @@ onLoad(async (options = {}) => {
   try {
     const cached = uni.getStorageSync('last_result') || {}
     detection.value = cached.detection || {}
+    historyId.value = cached.history_id || null
   } catch (error) {
     console.warn('[result] 读取结果失败', error)
     detection.value = {}
   }
 })
+
+// 第 237 批：识别纠错反馈（与 H5 同一套 /api/feedback/）
+const feedbackBusy = ref(false)
+const feedbackDone = ref(false)
+const feedbackMsg = ref('')
+const historyId = ref(null)
+
+/**
+ * @param {boolean} isCorrect 用户说"准确"就只记一条；说"不准确"再让用户从病害表里挑正确答案
+ *   （`corrected_pest_id` 是这条反馈能变成训练样本的关键，不能省）
+ */
+async function sendFeedback(isCorrect) {
+  if (feedbackBusy.value || feedbackDone.value) return
+  let correctedPestId = null
+  let correctedName = ''
+
+  if (!isCorrect) {
+    feedbackBusy.value = true
+    try {
+      const pests = await fetchPests()
+      if (!pests.length) {
+        uni.showToast({ title: t('detect.serviceUnavailable'), icon: 'none' })
+        return
+      }
+      const result = await uni.showActionSheet({ itemList: pests.map((item) => item.name) })
+      const picked = pests[result.tapIndex]
+      correctedPestId = picked.id
+      correctedName = picked.name
+    } catch (error) {
+      return // 用户取消选择
+    } finally {
+      feedbackBusy.value = false
+    }
+  }
+
+  feedbackBusy.value = true
+  try {
+    await submitRecognitionFeedback({
+      diseaseName: detection.value.disease,
+      isCorrect,
+      confidence: detection.value.confidence,
+      historyId: historyId.value,
+      correctedPestId,
+    })
+    feedbackDone.value = true
+    feedbackMsg.value = isCorrect
+      ? t('result.feedbackThanks')
+      : `${t('result.correctedTo')} ${correctedName}`
+  } catch (error) {
+    uni.showToast({ title: error.message || t('result.feedbackFailed'), icon: 'none' })
+  } finally {
+    feedbackBusy.value = false
+  }
+}
 
 const imageSrc = computed(() =>
   mediaUrl(detection.value.annotated_image || detection.value.original_image || '')
@@ -212,6 +288,34 @@ function backHome() {
   text-align: center;
   color: #8b9a91;
   padding: 60rpx 0;
+}
+
+.feedback-row {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 8rpx;
+}
+
+.chip {
+  flex: 1;
+  margin: 0;
+  background: #f2f6f3;
+  color: #2f855a;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+}
+
+.chip[disabled] {
+  opacity: 0.6;
+}
+
+.feedback-msg {
+  display: block;
+  margin-top: 14rpx;
+  color: #2f855a;
+  font-size: 24rpx;
 }
 
 .actions {

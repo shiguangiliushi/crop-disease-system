@@ -2,31 +2,31 @@
   <view class="page">
     <view class="header">
       <view>
-        <text class="hello">你好，{{ auth.username || '种植户' }}</text>
-        <text class="hint">拍一张叶片照片，几秒内给出病害与防治建议</text>
+        <text class="hello">{{ auth.username || t('mine.guest') }}</text>
+        <text class="hint">{{ t('detect.tip3') }}</text>
       </view>
-      <text class="logout" @click="onLogout">退出</text>
+      <text class="logout" @click="onLogout">{{ t('mine.logout') }}</text>
     </view>
 
     <view class="card picker" @click="choose('camera')">
       <view v-if="!imagePath" class="empty">
         <text class="empty-icon">📷</text>
-        <text class="empty-title">点击拍照</text>
-        <text class="empty-sub">也可以从相册选一张</text>
+        <text class="empty-title">{{ t('detect.takePhoto') }}</text>
+        <text class="empty-sub">{{ t('detect.galleryHint') }}</text>
       </view>
       <image v-else :src="imagePath" mode="aspectFit" class="preview" />
     </view>
 
     <view class="actions">
-      <button class="btn-ghost" :disabled="loading" @click="choose('camera')">拍照</button>
-      <button class="btn-ghost" :disabled="loading" @click="choose('album')">从相册选</button>
+      <button class="btn-ghost" :disabled="loading" @click="choose('camera')">{{ t('detect.takePhoto') }}</button>
+      <button class="btn-ghost" :disabled="loading" @click="choose('album')">{{ t('detect.fromGallery') }}</button>
     </view>
 
     <button class="btn-primary" :disabled="!imagePath || loading" @click="onDetect">
-      {{ loading ? '识别中…' : '开始识别' }}
+      {{ loading ? t('detect.analyzing') : t('detect.start') }}
     </button>
 
-    <text class="tip">支持 JPG / PNG，单张不超过 5MB；结果仅供参考。</text>
+    <text class="tip">{{ t('result.disclaimer') }}</text>
 
     <!-- 第 236 批：三个主页（识别 / 历史 / 我的）用同一个底部导航 -->
     <BottomNav current="detect" />
@@ -42,6 +42,7 @@
  * "UI 层要重写"的一部分。uni-app 这里一次调用三端都能用。
  */
 import { ref } from 'vue'
+import { t } from '@/i18n'
 import { onShow } from '@dcloudio/uni-app'
 import BottomNav from '@/components/BottomNav.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -73,7 +74,7 @@ function choose(sourceType) {
     fail: (error) => {
       // 用户点"取消"也会走 fail —— 不弹提示，别烦人
       if ((error.errMsg || '').includes('cancel')) return
-      uni.showToast({ title: '打开相机/相册失败', icon: 'none' })
+      uni.showToast({ title: t('detect.failed'), icon: 'none' })
     },
   })
 }
@@ -81,13 +82,13 @@ function choose(sourceType) {
 async function onDetect() {
   if (!imagePath.value || loading.value) return
   loading.value = true
-  uni.showLoading({ title: '识别中…', mask: true })
+  uni.showLoading({ title: t('detect.analyzing'), mask: true })
   try {
     const data = await detectImage(imagePath.value)
     uni.setStorageSync('last_result', data)
     uni.navigateTo({ url: '/pages/result/result' })
   } catch (error) {
-    uni.showToast({ title: error.message || '识别失败', icon: 'none' })
+    uni.showToast({ title: error.message || t('detect.failed'), icon: 'none' })
   } finally {
     uni.hideLoading()
     loading.value = false
@@ -96,8 +97,8 @@ async function onDetect() {
 
 async function onLogout() {
   const { confirm } = await uni.showModal({
-    title: '退出登录',
-    content: '退出后需要重新输入账号密码',
+    title: t('mine.logout'),
+    content: t('mine.logoutConfirm'),
   })
   if (!confirm) return
   await auth.logout()

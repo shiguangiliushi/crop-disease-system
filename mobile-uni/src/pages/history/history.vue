@@ -2,20 +2,20 @@
   <view class="page">
     <view class="header">
       <view>
-        <text class="title">识别记录</text>
-        <text class="hint">共 {{ total }} 条 · 下拉刷新</text>
+        <text class="title">{{ t('history.title') }}</text>
+        <text class="hint">{{ t('history.total', { count: total }) }}</text>
       </view>
-      <text class="add" @click="goDetect">去识别</text>
+      <text class="add" @click="goDetect">{{ t('history.emptyAction') }}</text>
     </view>
 
     <view v-if="loading && !items.length" class="state">
-      <text class="state-text">加载中…</text>
+      <text class="state-text">{{ t('common.loading') }}</text>
     </view>
 
     <view v-else-if="!items.length" class="state">
       <text class="state-icon">🗂</text>
-      <text class="state-title">还没有识别记录</text>
-      <text class="state-sub">拍一张叶片照片，结果会自动存到这里</text>
+      <text class="state-title">{{ t('history.empty') }}</text>
+      <text class="state-sub">{{ t('history.emptyAction') }}</text>
     </view>
 
     <view v-else class="list">
@@ -35,8 +35,8 @@
       </view>
 
       <view class="more">
-        <text v-if="hasNext" class="more-text" @click="loadMore">加载更多</text>
-        <text v-else class="more-text muted">没有更多了</text>
+        <text v-if="hasNext" class="more-text" @click="loadMore">{{ t('history.loadMore') }}</text>
+        <text v-else class="more-text muted">{{ t('history.noMore') }}</text>
       </view>
     </view>
 
@@ -52,6 +52,7 @@
  * 数据侧直接复用后端 `/api/detection-history/`（见 `api/history.js`）。
  */
 import { ref } from 'vue'
+import { t } from '@/i18n'
 import { onPullDownRefresh, onReachBottom, onShow } from '@dcloudio/uni-app'
 import BottomNav from '@/components/BottomNav.vue'
 import { fetchHistory, deleteHistory } from '@/api/history'
@@ -81,7 +82,7 @@ async function load({ reset = false } = {}) {
     page.value = next + 1
     hasNext.value = data.hasNext
   } catch (error) {
-    uni.showToast({ title: error.message || '加载失败', icon: 'none' })
+    uni.showToast({ title: error.message || t('common.requestFailed'), icon: 'none' })
   } finally {
     loading.value = false
     uni.stopPullDownRefresh()
@@ -100,9 +101,9 @@ function openDetail(item) {
 
 async function confirmDelete(item) {
   const result = await uni.showModal({
-    title: '删除这条记录？',
-    content: '删除后无法恢复（图片也会一起删掉）。',
-    confirmText: '删除',
+    title: t('history.delete'),
+    content: t('history.deleteConfirm'),
+    confirmText: t('history.delete'),
     confirmColor: '#c0392b',
   })
   if (!result.confirm) return
@@ -110,9 +111,9 @@ async function confirmDelete(item) {
     await deleteHistory(item.id)
     items.value = items.value.filter((row) => row.id !== item.id)
     total.value = Math.max(0, total.value - 1)
-    uni.showToast({ title: '已删除', icon: 'success' })
+    uni.showToast({ title: t('history.deleted'), icon: 'success' })
   } catch (error) {
-    uni.showToast({ title: error.message || '删除失败', icon: 'none' })
+    uni.showToast({ title: error.message || t('history.deleteFailed'), icon: 'none' })
   }
 }
 
