@@ -45,6 +45,15 @@
           <div class="stat-tile-label">{{ t('pestAdmin.statFiltered') }}</div>
         </div>
       </div>
+
+      <!-- 第 250 批：知识时效性（表格里加列会被吞，做成概览卡最稳） -->
+      <div class="stat-tile stat-tile--warn">
+        <span class="stat-tile-icon"><i class="fas fa-clock-rotate-left"></i></span>
+        <div>
+          <div class="stat-tile-value">{{ reviewPending }}</div>
+          <div class="stat-tile-label">{{ t('pestAdmin.statReview') }}</div>
+        </div>
+      </div>
     </div>
 
     <!-- 筛选：搜索 / 作物 -->
@@ -237,6 +246,17 @@ export default {
 
     const filters = reactive({ search: '', crop_type: '' });
 
+    /** 第 250 批：知识复核阈值（18 个月，与后端 review_pests 对齐） */
+    const REVIEW_STALE_DAYS = 18 * 30;
+    const reviewStatus = (reviewedAt) => {
+      if (!reviewedAt) return 'never';
+      const date = new Date(reviewedAt);
+      if (Number.isNaN(date.getTime())) return 'never';
+      return (Date.now() - date.getTime()) / 86400000 > REVIEW_STALE_DAYS ? 'stale' : 'ok';
+    };
+    /** 本页需要复核的词条数（从未复核 + 已超期） */
+    const reviewPending = computed(() => items.value.filter((row) => reviewStatus(row.reviewed_at) !== 'ok').length);
+
     const buildParams = () => {
       const params = { page: page.value, page_size: pageSize.value };
       if (filters.search.trim()) params.search = filters.search.trim();
@@ -415,6 +435,7 @@ export default {
       localizedField,
       toAbsoluteMediaUrl,
       loading, items, total, page, pageSize, stats, cropOptions, filters,
+      reviewPending,
       loadList, handleFilter, handleSizeChange, resetFilters,
       editVisible, editingId, importVisible,
       openCreate, openEdit, handleSaved, openOnSite, confirmDelete,
