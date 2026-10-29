@@ -9,7 +9,8 @@ import NotificationBell from '@/components/NotificationBell.vue';  // 第 37 批
 import MessageEntry from '@/components/MessageEntry.vue';  // 第 42 批：私信入口
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue';  // 第 48 批：语言切换
 import OfflineIndicator from '@/components/OfflineIndicator.vue';  // 第 50 批：离线状态
-import AdminLayout from '@/components/AdminLayout.vue';  // 第 117 批：管理后台外壳（/admin/**）
+import AdminLayout from '@/components/AdminLayout.vue';
+import PwaUpdateBanner from '@/components/PwaUpdateBanner.vue';  // 第 242 批：SW 新版本提示  // 第 117 批：管理后台外壳（/admin/**）
 import { isNavActive as navIsActive } from '@/utils/navActive';  // 第 74 批：导航高亮判定
 import { locale, useI18n } from '@/i18n';  // 第 77 批：Element Plus 语言包；第 81 批：导航文案
 
@@ -715,6 +716,9 @@ onUnmounted(() => {
         </div>
       </div>
     </footer>
+
+    <!-- 第 242 批：Service Worker 新版本提示（只读事件，不影响任何业务流程） -->
+    <PwaUpdateBanner />
     </div>
   </el-config-provider>
 </template>

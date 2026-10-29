@@ -38,6 +38,11 @@ export const zhCN = {
     },
   },
 
+  // 第 242 批：Service Worker 新版本提示
+  pwa: {
+    updateReady: '有新版本可用，刷新后生效',
+    reload: '立即刷新',
+  },
   common: {
     refresh: '刷新',
     loading: '加载中...',
@@ -3299,6 +3304,11 @@ export const en = {
     },
   },
 
+  // 第 242 批：Service Worker 新版本提示
+  pwa: {
+    updateReady: 'A new version is ready — refresh to apply',
+    reload: 'Refresh now',
+  },
   common: {
     refresh: 'Refresh',
     loading: 'Loading...',

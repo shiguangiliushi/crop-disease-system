@@ -311,8 +311,20 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')
-      .then((registration) => {
+              .then((registration) => {
         console.log('[pwa] Service Worker 已注册:', registration.scope);
+        // 第 242 批：新版本提示（见 components/PwaUpdateBanner.vue）
+        window.__pwaRegistration = registration;
+        const notify = () => window.dispatchEvent(new Event('pwa-update-ready'));
+        if (registration.waiting) notify();
+        registration.addEventListener('updatefound', () => {
+          const installing = registration.installing;
+          if (!installing) return;
+          installing.addEventListener('statechange', () => {
+            // 有旧的 controller 才说明是"更新"，首次安装不需要弹横幅
+            if (installing.state === 'installed' && navigator.serviceWorker.controller) notify();
+          });
+        });
       })
       .catch((error) => {
         // 注册失败不影响正常使用，只记日志

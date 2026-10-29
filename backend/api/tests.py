@@ -15682,3 +15682,40 @@ class PostMinLengthTests(TestCase):
         resp = self.client_auth.patch(f'/api/forums/posts/{post_id}/',
                                       {'title': '苹果黑星病求助标题（已补充）'}, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
+
+
+class ExportPestsCommandTests(TestCase):
+    """第 242 批：百科导出（`manage.py export_pests`）"""
+
+    def test_csv_contains_header_and_all_pests(self):
+        import csv
+        import tempfile
+
+        from django.core.management import call_command
+
+        # 造两条词条：不然"导出 0 条"也能通过，等于没测
+        PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='Tomato___Late_blight')
+        PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='Apple___Apple_scab')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'pests.csv'
+            call_command('export_pests', '--out', str(out))
+            with out.open(encoding='utf-8-sig', newline='') as handle:
+                rows = list(csv.reader(handle))
+
+        self.assertEqual(rows[0][:3], ['id', 'name', 'name_en'])
+        self.assertEqual(len(rows) - 1, PestInfo.objects.count())
+
+    def test_xlsx_is_real_workbook(self):
+        import tempfile
+
+        from django.core.management import call_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'pests.xlsx'
+            call_command('export_pests', '--format', 'xlsx', '--out', str(out))
+            head = out.read_bytes()[:2]
+
+        self.assertEqual(head, b'PK', 'XLSX 本质是 zip，前两个字节必须是 PK')

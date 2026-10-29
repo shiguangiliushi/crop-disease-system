@@ -75,3 +75,6 @@ media/assistant_uploads/
 # 之所以要真写文件（而不是只存路径字符串）：页面加载它们时若 404，
 # `05-mobile.spec.mjs` 那条"没有 JS 报错"的断言就会红，而那看起来像"移动端坏了"。
 media/detection_history/i18n-audit_placeholder_*.jpg
+
+# 第 242 批：`manage.py export_pests` 的输出目录（导出物是数据快照，不入库）
+exports/
