@@ -42,6 +42,19 @@ npm run dev:h5        # http://127.0.0.1:5175
 后端要先起来（`backend/` 里 `python manage.py runserver`，默认 8000），
 H5 通过 vite 代理访问 `/api`、`/media`。
 
+## 出 App 资源 / 打包 APK
+
+```powershell
+npm run build:app     # 产出 dist/build/app（HBuilderX 导入它再云打包）
+```
+
+**这台机器上没有 HBuilderX / JDK / Android SDK**（实测过），所以"出 APK"这一步
+要到装好工具的机器上做。完整步骤与坑（HTTP 明文、包名、相机权限、服务器地址）见
+[`docs/打包APK.md`](docs/打包APK.md)。
+
+> APK 里没有 vite 代理：登录页底部「服务器」可填 `http://<电脑IP>:8000/api`
+> （仅 APP 显示，存本地，换 Wi-Fi 不用重新打包）。
+
 ## 已经和现有 H5 对齐的约定
 
 | 约定 | 说明 |
@@ -67,7 +80,8 @@ H5 通过 vite 代理访问 `/api`、`/media`。
 
 1. ✅ **骨架 + 登录 + 识别 + 结果（H5）** ← 现在这里
 2. ⏳ 历史记录 / 我的（补齐页面）
-3. ⏳ Android APK（`npx uni build -p app` 后用 HBuilderX 云打包，无需上架）
+3. 🟡 **Android APK**：`npm run build:app` 已能出资源包、配置与"服务器地址可改"已就绪；
+   真正出 APK 需要在装了 HBuilderX 的机器上云打包（本机没有），见 `docs/打包APK.md`
 4. ⏳ 微信小程序（需要 AppID + **HTTPS 备案域名**，真机预览就卡在这一步）
 5. ⏳ iOS（需要 Apple 开发者账号）
 

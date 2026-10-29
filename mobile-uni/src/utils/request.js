@@ -10,7 +10,9 @@
  *      一个页面同时发三四个请求时，每份 401 都跳一次会互相打架；
  *   3. 失败统一抛 `{ message, status, data }`，页面只管展示 `message`。
  */
-const BASE_URL = (import.meta.env.VITE_API_BASE || '/api').replace(/\/+$/, '')
+// 第 232 批：不再在模块加载时定死 —— APK 里要能**运行时**改服务器地址
+// （没有域名时只能连局域网 IP，换了 Wi-Fi 就得改，不能每改一次都重新打包）
+import { apiBase } from './config'
 
 export const TOKEN_KEY = 'uni_token'
 export const USER_KEY = 'uni_user'
@@ -56,7 +58,7 @@ function normalizeError(statusCode, body) {
 export function request({ url, method = 'GET', data, header = {} } = {}) {
   return new Promise((resolve, reject) => {
     uni.request({
-      url: `${BASE_URL}${url}`,
+      url: `${apiBase()}${url}`,
       method,
       data,
       timeout: 30000,
@@ -91,7 +93,7 @@ export function request({ url, method = 'GET', data, header = {} } = {}) {
 export function uploadFile({ url, filePath, name = 'image', formData = {} } = {}) {
   return new Promise((resolve, reject) => {
     uni.uploadFile({
-      url: `${BASE_URL}${url}`,
+      url: `${apiBase()}${url}`,
       filePath,
       name,
       formData,
