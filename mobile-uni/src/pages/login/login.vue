@@ -126,7 +126,7 @@ async function onSubmit() {
   }
   loading.value = true
   try {
-    await auth.login({ username, password: form.password, captchaId: captcha.value.id, captchaCode: captchaCode.value.trim() })
+    await auth.login({ username, password: form.password, captchaId: captcha.id, captchaCode: captchaCode.value.trim() })
     uni.showToast({ title: t('auth.loginSuccess'), icon: 'success' })
     setTimeout(() => {
       uni.reLaunch({ url: '/pages/detect/detect' })
