@@ -31,6 +31,7 @@ import { ElMessage } from 'element-plus';
 import { useAuthStore } from '@/stores/auth.js';
 import { useI18n } from '@/i18n';
 import { cancelMyDeletion } from '@/api/account';
+import { fetchCaptcha, loginCaptchaRequired } from '@/api/captcha';  // 第 246 批：登录验证码
 import { formatApiError } from '@/api/http';
 
 // ============================================================================
@@ -54,6 +55,26 @@ export function useLoginForm({ adminEntry = false } = {}) {
   const route = useRoute();
   const authStore = useAuthStore();
   const { t } = useI18n();
+
+  // 第 246 批：登录验证码（开关由后端 GET /api/login/ 决定，默认关闭）
+  const captchaRequired = ref(false);
+  const captchaId = ref('');
+  const captchaImage = ref('');
+  const captchaCode = ref('');
+
+  async function loadCaptcha() {
+    try {
+      captchaRequired.value = await loginCaptchaRequired();
+      if (!captchaRequired.value) return;
+      const data = await fetchCaptcha();
+      captchaId.value = data.id;
+      captchaImage.value = data.image;
+      captchaCode.value = '';
+    } catch (error) {
+      console.warn('[login] 加载验证码失败，按"不需要验证码"处理', error);
+      captchaRequired.value = false;
+    }
+  }
 
   const username = ref('');
   const password = ref('');
@@ -144,6 +165,9 @@ export function useLoginForm({ adminEntry = false } = {}) {
   onMounted(() => {
     purgeLegacySavedPasswords();
 
+    // 第 246 批：问一次"要不要验证码"（开关打开时才显示）
+    loadCaptcha();
+
     const reasonKey = LOGIN_REASON_KEYS[route.query.reason];
     if (reasonKey) errorMessage.value = t(reasonKey);
 
@@ -168,6 +192,9 @@ export function useLoginForm({ adminEntry = false } = {}) {
         username: username.value,
         password: password.value,
         remember: rememberMe.value,
+        // 第 246 批：后端开关打开时才需要；关着时多传两个字段无害
+        captcha_id: captchaRequired.value ? captchaId.value : '',
+        captcha_code: captchaRequired.value ? captchaCode.value.trim() : '',
       });
 
       // 只保存**账号名**（用于下次快速选择），密码交给浏览器密码管理器
@@ -254,6 +281,15 @@ export function useLoginForm({ adminEntry = false } = {}) {
       ElMessage.success(t('auth.cancelOk'));
       router.replace(destination.value);
     } catch (error) {
+    const data = error?.response?.data || error?.data || {};
+    if (data.captcha_required) {
+      // 第 246 批：验证码错/过期 —— 换一张再让用户填
+      await loadCaptcha();
+      errorMessage.value = t('auth.captchaWrong');
+      isLoading.value = false;
+      return;
+    }
+
       cancelError.value = formatApiError(error, t('auth.cancelFailed'));
     } finally {
       cancelLoading.value = false;
@@ -268,6 +304,11 @@ export function useLoginForm({ adminEntry = false } = {}) {
     showPassword,
     errorMessage,
     isLoading,
+    // 第 246 批：登录验证码
+    captchaRequired,
+    captchaImage,
+    captchaCode,
+    loadCaptcha,
     usernameSuggestions,
     showSuggestions,
     pendingDeletion,

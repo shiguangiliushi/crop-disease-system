@@ -117,6 +117,35 @@ const form = useLoginForm({ adminEntry: false });
         </button>
       </div>
 
+      <!-- 第 246 批：登录验证码（仅后端开关打开时出现） -->
+      <div v-if="form.captchaRequired" class="auth-field">
+        <label class="auth-label" for="captchaCode">
+          <span>{{ t('auth.captchaLabel') }}</span>
+          <span class="auth-label-hint">{{ t('auth.captchaHint') }}</span>
+        </label>
+        <div class="auth-input-wrap">
+          <i class="fas fa-shield-halved auth-lead-icon"></i>
+          <input
+            type="text"
+            id="captchaCode"
+            class="auth-input has-trailing"
+            v-model="form.captchaCode"
+            :disabled="form.isLoading"
+            :placeholder="t('auth.captchaPlaceholder')"
+            autocomplete="off"
+            maxlength="4"
+          />
+          <button type="button" class="auth-captcha-btn" @click="form.loadCaptcha()">
+            <img v-if="form.captchaImage" :src="form.captchaImage" alt="" class="auth-captcha-image" />
+            <i v-else class="fas fa-rotate-right"></i>
+          </button>
+        </div>
+        <p class="auth-field-feedback muted">
+          <i class="fas fa-rotate-right"></i>
+          {{ t('auth.captchaRefresh') }}
+        </p>
+      </div>
+
       <button type="submit" :disabled="form.isLoading" class="auth-submit">
         <span v-if="form.isLoading" class="auth-spinner"></span>
         <i v-else class="fas fa-right-to-bracket"></i>
@@ -163,6 +192,36 @@ const form = useLoginForm({ adminEntry: false });
 </template>
 
 <style scoped>
+/* 第 246 批：登录验证码（与注册页同一套观感） */
+.auth-captcha-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(47, 133, 90, 0.18);
+  border-radius: 8px;
+  background: #f4f8f5;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.auth-captcha-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+#captchaCode.has-trailing {
+  padding-right: 112px;
+}
+
 /* 页面结构样式统一定义在 AuthShell.vue 中（auth- 前缀），此处仅保留页面级微调 */
 
 /* ============================================================================

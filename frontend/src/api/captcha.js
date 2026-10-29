@@ -15,3 +15,15 @@ export async function fetchCaptcha() {
     expiresIn: body.expires_in || 0,
   };
 }
+
+/**
+ * 第 246 批：登录页要不要显示验证码？
+ *
+ * 后端 `GET /api/login/` 回 `{captcha_required}`（开关是环境变量 `DJANGO_LOGIN_CAPTCHA`）。
+ * 写死在前端会让"本地不验证码 / 生产要验证码"变成两套页面，所以每次都问一次。
+ */
+export async function loginCaptchaRequired() {
+  const response = await api.get('login/')
+  const body = response?.data ?? response ?? {}
+  return Boolean(body.captcha_required)
+}
