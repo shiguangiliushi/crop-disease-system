@@ -15719,3 +15719,28 @@ class ExportPestsCommandTests(TestCase):
             head = out.read_bytes()[:2]
 
         self.assertEqual(head, b'PK', 'XLSX 本质是 zip，前两个字节必须是 PK')
+
+
+class PestReviewTrackingTests(APITestCase):
+    """第 243 批：知识时效性（reviewed_at + `review_pests` 命令）"""
+
+    def setUp(self):
+        self.admin = get_user_model().objects.create_user(
+            username='review_admin', password='ZzStrong!2026', role='ADMIN')
+        self.pest = PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='Tomato___Late_blight')
+
+    def test_list_exposes_reviewed_at(self):
+        client = APIClient()
+        client.force_authenticate(user=self.admin)
+        response = client.get('/api/pests/')
+        self.assertEqual(response.status_code, 200)
+        rows = response.data.get('results') or response.data
+        self.assertIn('reviewed_at', rows[0])
+
+    def test_command_marks_reviewed(self):
+        from django.core.management import call_command
+
+        call_command('review_pests', '--ids', str(self.pest.id))
+        self.pest.refresh_from_db()
+        self.assertIsNotNone(self.pest.reviewed_at, '标记后 reviewed_at 应当有值')

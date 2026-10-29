@@ -466,6 +466,12 @@ class PestInfo(models.Model):  # 定义病害信息模型
     # 所以用 JSONField 存数组而不是拼接成一个 TextField：拼接后前端无法逐条渲染成可点链接。
     sources = models.JSONField(default=list, blank=True, verbose_name="数据来源（URL 列表）")
 
+    # 第 243 批：**知识时效性**。化学防治里带农药登记信息，文档自己定了"每 1~2 年复核"，
+    # 但此前没有任何字段能回答"这条多久没复核了" —— 管理端无法发现过期知识。
+    # 语义是"最近一次人工复核（确认仍然有效）"的时间，不是"最后编辑时间"：
+    # 只改了错别字不算复核，所以不用 auto_now 自动刷新。
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name="最近复核时间")
+
     def __str__(self):  # 定义对象字符串表示
         return f"{self.crop_type} - {self.name}"  # 返回作物类型和病害名称
 

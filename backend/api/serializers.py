@@ -423,7 +423,7 @@ class PestInfoListSerializer(serializers.ModelSerializer):  # 定义病害信息
     class Meta:  # 定义元数据
         model = PestInfo  # 关联病害信息模型
         fields = ('id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'symptoms', 'symptoms_en',
-                  'english_identifier', 'image', 'scientific_name')  # 包含的字段
+                  'english_identifier', 'image', 'scientific_name', 'reviewed_at')  # 包含的字段
         # 第 192 批补 `scientific_name`：列表页展示学名是常见需求，且它很短（最长 60 字），
         # 不会让这个"轻量"序列化器变重。**不加 `sources`** —— 那是详情才需要的。
 
@@ -474,7 +474,7 @@ class PestInfoDetailSerializer(serializers.ModelSerializer):  # 定义病害信�
         fields = [
             'id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier', 'image', 
             'symptoms', 'symptoms_en', 'description', 'description_en', 'trigger', 'trigger_en',
-            'prevention_methods', 'scientific_name', 'sources', 'health_profile'
+            'prevention_methods', 'scientific_name', 'sources', 'health_profile', 'reviewed_at'
         ]  # 包含的字段
         # 第 192 批新增 `scientific_name` / `sources` / `health_profile`：
         # 前两个来自校准版知识库（学名 + 权威来源 URL），助手回答要引用 sources；
@@ -548,7 +548,7 @@ class PestInfoWriteSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'symptoms', 'symptoms_en',
             'english_identifier', 'description', 'description_en', 'image', 'clear_image',
-            'prevention_methods',
+            'prevention_methods', 'reviewed_at',
         ]
         read_only_fields = ['id']
 
