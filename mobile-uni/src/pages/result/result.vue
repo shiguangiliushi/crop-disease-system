@@ -56,6 +56,13 @@
       <text class="empty">{{ t('result.retry') }}</text>
     </view>
 
+    <button class="share-btn" :disabled="shareBusy || !detection.disease" @click="onShareCard">
+      {{ shareBusy ? t('common.loading') : t('shareCard.make') }}
+    </button>
+
+    <!-- 第 239 批：分享卡画布（离屏放置，只用于导出图片） -->
+    <canvas canvas-id="share-card" class="share-canvas" />
+
     <view class="actions">
       <button class="btn-ghost" @click="again">{{ t('result.retry') }}</button>
       <button class="btn-primary small" @click="backHome">{{ t('common.back') }}</button>
@@ -73,6 +80,7 @@
 import { computed, ref } from 'vue'
 import { t } from '@/i18n'
 import { submitRecognitionFeedback } from '@/api/feedback'
+import { makeShareCard } from '@/utils/shareCard'
 import { fetchPests } from '@/utils/api'
 import { onLoad } from '@dcloudio/uni-app'
 import { mediaUrl } from '@/utils/request'
@@ -133,6 +141,8 @@ const feedbackBusy = ref(false)
 const feedbackDone = ref(false)
 const feedbackMsg = ref('')
 const historyId = ref(null)
+const shareBusy = ref(false)
+const shareImage = ref('')
 
 /**
  * @param {boolean} isCorrect 用户说"准确"就只记一条；说"不准确"再让用户从病害表里挑正确答案
@@ -193,6 +203,33 @@ const percent = computed(() => {
   const ratio = value > 1 ? value / 100 : value
   return `${Math.round(ratio * 100)}%`
 })
+
+/**
+ * 生成分享卡并预览（第 239 批）
+ *
+ * 用 `<canvas canvas-id>` 而不是 DOM canvas —— 三端通用（小程序/App 没有 DOM）。
+ * 预览用 `uni.previewImage`：H5 可以长按保存，App 里预览页自带"保存到相册"。
+ */
+async function onShareCard() {
+  if (shareBusy.value || !detection.value.disease) return
+  shareBusy.value = true
+  try {
+    const path = await makeShareCard({
+      canvasId: 'share-card',
+      disease: detection.value.disease,
+      diseaseEn: detection.value.disease_en,
+      confidence: detection.value.confidence,
+      footer: t('result.disclaimer'),
+      labels: { confidence: t('result.confidence') },
+    })
+    shareImage.value = path
+    uni.previewImage({ urls: [path], current: path })
+  } catch (error) {
+    uni.showToast({ title: error.message || t('shareCard.failed'), icon: 'none' })
+  } finally {
+    shareBusy.value = false
+  }
+}
 
 function again() {
   uni.reLaunch({ url: '/pages/detect/detect' })
@@ -316,6 +353,26 @@ function backHome() {
   margin-top: 14rpx;
   color: #2f855a;
   font-size: 24rpx;
+}
+
+.share-btn {
+  margin: 0 40rpx 24rpx;
+  background: #fff;
+  color: #2f855a;
+  border: 1rpx solid rgba(47, 133, 90, 0.25);
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+}
+
+/* 离屏画布：不占布局，只用于导出 */
+.share-canvas {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 375px;
+  height: 500px;
 }
 
 .actions {
