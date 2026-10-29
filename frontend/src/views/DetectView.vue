@@ -465,6 +465,9 @@ const cameraInput = ref(null);
 const previewUrl = ref('');
 const isDragging = ref(false);
 const isDetecting = ref(false);
+// 第 240 批：动效至少可见一次的计时（见 finally 里的说明）
+let detectStartedAt = 0;
+const MIN_SCAN_VISIBLE_MS = 1100;
 const detectionResult = ref(null);
 
 // 第 194 批：追问抽屉的状态。三样都跟着"当前这条识别结果"走 ——
@@ -880,6 +883,7 @@ const detectDisease = async () => {
   }
 
   isDetecting.value = true;
+  detectStartedAt = Date.now();
   progress.value = 0;
   statusMessage.value = t('detect.uploading');
   statusDetail.value = t('detect.uploadingDetail');
@@ -1099,6 +1103,13 @@ const detectDisease = async () => {
       await router.push('/login');
     }
   } finally {
+    // 第 240 批：**让扫描线至少完整扫过一遍**。
+    // 本地 YOLO 只要 0.3~0.8 秒，detecting 一帧就结束 → 扫描线等于没做（用户实测"看不到"）。
+    // 代价是结果最多晚 1.1 秒出现；只影响"看见动效"，不影响识别结果本身。
+    const elapsed = Date.now() - detectStartedAt;
+    if (elapsed < MIN_SCAN_VISIBLE_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_SCAN_VISIBLE_MS - elapsed));
+    }
     isDetecting.value = false;
     stopProgressTimer();
     progress.value = 0;
@@ -1769,7 +1780,7 @@ textarea.form-control {
   height: 3px;
   background: linear-gradient(90deg, transparent, #7ee2b8 20%, #b9f4d8 50%, #7ee2b8 80%, transparent);
   box-shadow: 0 0 14px rgba(126, 226, 184, 0.85);
-  animation: scan-sweep 1.9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  animation: scan-sweep 1.4s cubic-bezier(0.5, 0, 0.5, 1) infinite;
   pointer-events: none;
 }
 
@@ -1845,7 +1856,7 @@ textarea.form-control {
 
 /* 移动端：线更细、更慢 */
 @media (max-width: 768px) {
-  .scan-line { height: 2px; animation-duration: 2.3s; }
+  .scan-line { height: 2px; animation-duration: 1.8s; }
   .scan-caption { font-size: 12px; padding: 6px 12px; }
 }
 
