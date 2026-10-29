@@ -15,20 +15,29 @@
 mobile-uni/
 ├── index.html          H5 入口（uni-app 官方模板的 viewport 适配）
 ├── vite.config.js      端口 5175 + /api、/media 代理（只给 H5 开发用）
-├── package.json        只装了 H5 端依赖
+├── package.json        只装了 H5 / App 端依赖
+├── docs/打包APK.md     出 APK 的两条路线与坑（HBuilderX 云打包 / 离线打包）
 └── src/
     ├── App.vue         全局样式 + 启动时按登录态跳转
     ├── main.js         uni-app 约定的 createApp()（必须返回 Pinia）
-    ├── pages.json      页面路由（登录 / 识别 / 结果）
-    ├── manifest.json   应用信息（APP/小程序配置先留空，用到再填）
+    ├── pages.json      页面路由（登录 / 识别 / 历史 / 我的 / 结果）
+    ├── manifest.json   应用信息（小程序配置先留空，用到再填）
+    ├── components/
+    │   └── BottomNav.vue  底部导航（自定义，不用 tabBar：省图标资源 + 返回栈可控）
+    ├── api/
+    │   ├── api.js      登录、退出、识别
+    │   ├── history.js  识别记录（分页 / 详情 / 删除）
+    │   └── profile.js  我的页三个统计（失败兜底 0）
     ├── utils/
     │   ├── request.js  uni.request / uni.uploadFile 封装 + 401 统一处理
-    │   └── api.js      登录、退出、识别三个接口
+    │   └── config.js   运行时 API 地址（APP 里可改，见 docs/打包APK.md）
     ├── stores/auth.js  Pinia 登录态（uni.storage 版）
     └── pages/
-        ├── login/      账号密码登录
+        ├── login/      账号密码登录（APP 里多一行"服务器地址"）
         ├── detect/     拍照/相册 → 上传 → 识别
-        └── result/     病害名/置信度/症状/防治建议
+        ├── history/    识别记录列表（下拉刷新 / 上拉加载 / 长按删除）
+        ├── mine/       我的（头像/角色/统计/关于/退出）
+        └── result/     病害名/置信度/症状/防治（支持 `?id=` 从历史进入）
 ```
 
 ## 跑起来
@@ -78,8 +87,8 @@ npm run build:app     # 产出 dist/build/app（HBuilderX 导入它再云打包�
 
 ## 后续步骤
 
-1. ✅ **骨架 + 登录 + 识别 + 结果（H5）** ← 现在这里
-2. ⏳ 历史记录 / 我的（补齐页面）
+1. ✅ **骨架 + 登录 + 识别 + 结果（H5）**
+2. ✅ **历史记录 / 我的**（下拉刷新、上拉加载、长按删除、从历史进详情、统计卡片）
 3. 🟡 **Android APK**：`npm run build:app` 已能出资源包、配置与"服务器地址可改"已就绪；
    真正出 APK 需要在装了 HBuilderX 的机器上云打包（本机没有），见 `docs/打包APK.md`
 4. ⏳ 微信小程序（需要 AppID + **HTTPS 备案域名**，真机预览就卡在这一步）

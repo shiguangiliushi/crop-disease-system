@@ -15,6 +15,22 @@
       }
     },
     {
+      "path": "pages/history/history",
+      "style": {
+        "navigationBarTitleText": "识别记录",
+        "navigationStyle": "custom",
+        "enablePullDownRefresh": true,
+        "onReachBottomDistance": 80
+      }
+    },
+    {
+      "path": "pages/mine/mine",
+      "style": {
+        "navigationBarTitleText": "我的",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/result/result",
       "style": {
         "navigationBarTitleText": "识别结果",

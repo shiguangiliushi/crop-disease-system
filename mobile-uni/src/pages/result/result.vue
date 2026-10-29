@@ -1,6 +1,10 @@
 <template>
   <view class="page">
-    <view class="card" v-if="detection.disease">
+    <view class="card" v-if="loading">
+      <text class="empty">加载中…</text>
+    </view>
+
+    <view class="card" v-else-if="detection.disease">
       <view class="head">
         <image v-if="imageSrc" :src="imageSrc" mode="widthFix" class="shot" />
         <view class="meta">
@@ -52,10 +56,47 @@
 import { computed, ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { mediaUrl } from '@/utils/request'
+import { fetchHistoryDetail } from '@/api/history'
 
 const detection = ref({})
+const loading = ref(false)
 
-onLoad(() => {
+/** 历史详情 → 结果页模板要的形状（字段名不一样，别硬套） */
+function fromHistoryDetail(raw = {}) {
+  const info = raw.pest_info || {}
+  const methods = Array.isArray(info.prevention_methods) ? info.prevention_methods : []
+  // 后端的字段叫 `measure`（不是 method/name）—— 写错就只剩一片空白，
+  // 实测就是这么发现"防治建议"整块不显示（接口里明明有 5 条）。
+  const prevention = methods
+    .map((item) => (typeof item === 'string' ? item : item && (item.measure || item.method || item.name || '')))
+    .filter(Boolean)
+    .join('\n')
+  return {
+    disease: raw.disease_name || info.name || '',
+    disease_en: info.name_en || '',
+    confidence: raw.confidence ?? 0,
+    description: raw.symptoms || info.symptoms || '',
+    prevention: prevention || raw.suggestion || '',
+    annotated_image: mediaUrl(raw.annotated_image_url || raw.image || ''),
+    original_image: mediaUrl(raw.image || ''),
+  }
+}
+
+onLoad(async (options = {}) => {
+  // 从"历史"点进来时带 `?id=`，走接口取详情；从识别页进来则用本地缓存
+  if (options.id) {
+    loading.value = true
+    try {
+      const raw = await fetchHistoryDetail(options.id)
+      detection.value = fromHistoryDetail(raw)
+    } catch (error) {
+      uni.showToast({ title: error.message || '加载失败', icon: 'none' })
+      detection.value = {}
+    } finally {
+      loading.value = false
+    }
+    return
+  }
   try {
     const cached = uni.getStorageSync('last_result') || {}
     detection.value = cached.detection || {}

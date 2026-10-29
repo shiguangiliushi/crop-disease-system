@@ -27,6 +27,9 @@
     </button>
 
     <text class="tip">支持 JPG / PNG，单张不超过 5MB；结果仅供参考。</text>
+
+    <!-- 第 236 批：三个主页（识别 / 历史 / 我的）用同一个底部导航 -->
+    <BottomNav current="detect" />
   </view>
 </template>
 
@@ -40,6 +43,7 @@
  */
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
+import BottomNav from '@/components/BottomNav.vue'
 import { useAuthStore } from '@/stores/auth'
 import { detectImage } from '@/utils/api'
 import { TOKEN_KEY } from '@/utils/request'
@@ -104,7 +108,8 @@ async function onLogout() {
 <style scoped>
 .page {
   min-height: 100vh;
-  padding: 24rpx 0 48rpx;
+  /* 第 236 批：底部导航是 fixed，留出它的高度（+ 安全区） */
+  padding: 24rpx 0 calc(150rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 
