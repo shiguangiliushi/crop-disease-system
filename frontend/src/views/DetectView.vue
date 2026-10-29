@@ -3,7 +3,7 @@
 
     <!-- 1. 初始上传界面 -->
     <div v-if="!isDetecting && !detectionResult">
-      <div class="upload-card">
+      <div class="upload-card" :class="{ 'is-shaking': shaking }">
         <header class="upload-head">
           <h2>{{ t('detect.uploadTitle') }}</h2>
           <p>{{ t('detect.uploadHint') }}</p>
@@ -109,6 +109,19 @@
 
     <!-- 2. 正在识别 -->
     <div v-else-if="isDetecting" class="detecting">
+      <!-- 第 240 批：扫描线 + 遮罩（纯 CSS，只在 detecting 渲染；不改变识别逻辑） -->
+      <div v-if="previewUrl" class="scan-wrap">
+      <div class="scan-stage">
+        <img :src="previewUrl" class="scan-photo" :alt="t('detect.previewAlt')" />
+        <div class="scan-tint" aria-hidden="true"></div>
+        <div class="scan-line" aria-hidden="true"></div>
+        <div class="scan-caption">
+          <span class="scan-dot" aria-hidden="true"></span>
+          {{ statusMessage || t('detect.analyzing') }}
+        </div>
+      </div>
+      </div>
+
       <div class="detect-progress">
         <div
           class="detect-progress-bar"
@@ -118,7 +131,7 @@
           aria-valuemin="0"
           aria-valuemax="100"
         >
-          <span>{{ Math.min(progress, 99) }}%</span>
+          <span>{{ Math.floor(Math.min(progress, 99)) }}%</span>
         </div>
       </div>
 
@@ -240,7 +253,12 @@
           <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>{{ t('detect.diseaseDetail') }}</h5>
         </div>
         <div class="card-body">
-          <div v-for="disease in filteredDiseases" :key="disease.id">
+          <div
+            v-for="(disease, index) in filteredDiseases"
+            :key="disease.id"
+            class="result-enter"
+            :style="{ animationDelay: Math.min(index, 6) * 70 + 'ms' }"
+          >
             <div class="row">
               <div class="col-md-12">
                 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -486,6 +504,14 @@ watch(detectionResult, (value) => {
 const selectedFile = ref(null);
 const progress = ref(0);
 const statusMessage = ref('');
+// 第 240 批：失败抖动（纯视觉，520ms 自动复位；不改错误处理）
+const shaking = ref(false);
+let shakeTimer = null;
+function pulseShake() {
+  shaking.value = true;
+  clearTimeout(shakeTimer);
+  shakeTimer = setTimeout(() => { shaking.value = false; }, 520);
+}
 const statusDetail = ref('');
 
 /* ----------------------------------------------------------------------------
@@ -1237,6 +1263,7 @@ const submitFeedback = async (disease, isCorrect = false) => {
     }
     
     $toast.error(errorMessage);
+    pulseShake(); // 第 240 批：卡片轻微抖动
     
     // 如果是"不准确"的反馈，重新显示输入框
     if (!isCorrect) {
@@ -1693,6 +1720,145 @@ textarea.form-control {
   border-radius: var(--radius-xl);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+}
+
+/* ============================================================================
+   第 240 批：识别等待动效（纯 CSS，零功能改动）
+   ----------------------------------------------------------------------------
+   原则：
+     · 只用 transform / opacity（走合成层，不触发重排）；
+     · 扫描线只在 isDetecting 期间渲染，识别结束即移除（不改结果展示时机）；
+     · 尊重 prefers-reduced-motion（系统开了"减少动态效果"就降级为静态）。
+   ========================================================================== */
+.scan-wrap {
+  text-align: center;
+}
+
+/* 宽度跟着图片走：容器用 inline-block + img 定高，就不会出现 object-fit 的黑边 */
+.scan-stage {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  border-radius: 16px;
+  margin-bottom: 20px;
+  background: #0f1f17;
+  box-shadow: 0 10px 28px rgba(15, 31, 23, 0.18);
+}
+
+.scan-photo {
+  display: block;
+  max-height: 380px;
+  width: auto;
+  max-width: 100%;
+  opacity: 0.92;
+}
+
+.scan-tint {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 31, 23, 0.35), rgba(15, 31, 23, 0.1));
+  animation: scan-breathe 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #7ee2b8 20%, #b9f4d8 50%, #7ee2b8 80%, transparent);
+  box-shadow: 0 0 14px rgba(126, 226, 184, 0.85);
+  animation: scan-sweep 1.9s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  pointer-events: none;
+}
+
+.scan-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(15, 31, 23, 0.72);
+  color: #e9f7ef;
+  font-size: 13px;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+
+.scan-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7ee2b8;
+  animation: scan-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes scan-sweep {
+  0% { top: 0; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes scan-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes scan-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.5); opacity: 1; }
+}
+
+/* 结果出现：整体上移淡入（v-if 重新挂载即自动播放） */
+.results-container {
+  animation: result-fade-up 0.32s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+/* 病害卡片依次出现（延迟由模板的 animation-delay 控制） */
+.result-enter {
+  animation: result-fade-up 0.3s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+@keyframes result-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 失败：上传卡片轻微左右抖动 */
+@keyframes shake-x {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+.upload-card.is-shaking {
+  animation: shake-x 0.5s ease-in-out;
+}
+
+/* 移动端：线更细、更慢 */
+@media (max-width: 768px) {
+  .scan-line { height: 2px; animation-duration: 2.3s; }
+  .scan-caption { font-size: 12px; padding: 6px 12px; }
+}
+
+/* 系统开启"减少动态效果"：全部降级 */
+@media (prefers-reduced-motion: reduce) {
+  .scan-tint,
+  .scan-line,
+  .scan-dot,
+  .results-container,
+  .result-enter,
+  .upload-card.is-shaking {
+    animation: none !important;
+  }
 }
 
 .detect-progress {
