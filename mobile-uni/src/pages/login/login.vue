@@ -101,7 +101,10 @@ async function loadCaptcha() {
     captchaRequired.value = await loginCaptchaRequired()
     if (!captchaRequired.value) return
     const data = await fetchCaptcha()
-    captcha.value = { id: data.id, image: data.image }
+    // ⚠️ `captcha` 是 reactive 对象，赋 `.value` 只会多出一个没用字段，
+    //    模板里 `captcha.image` 永远是空字符串 —— 第 247 批的图片拿不到就是这个原因。
+    captcha.id = data.id
+    captcha.image = data.image
     captchaCode.value = ''
   } catch (error) {
     console.warn('[login] 加载验证码失败，按"不需要验证码"处理', error)
