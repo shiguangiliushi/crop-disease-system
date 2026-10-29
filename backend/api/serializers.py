@@ -505,7 +505,9 @@ class PestInfoForHistorySerializer(serializers.ModelSerializer):  # 定义历史
     class Meta:  # 定义元数据
         model = PestInfo  # 关联病害信息模型
         fields = ['name', 'name_en', 'crop_type', 'crop_type_en', 'symptoms', 'symptoms_en',
-                  'description_en', 'prevention_methods']  # 包含的字段
+                  'description_en', 'prevention_methods',
+                  # 第 244 批：带上模型类名，识别历史页的"追问助手"靠它把回答锚定到这条病害
+                  'english_identifier']  # 包含的字段
 
 
 class FlexibleJSONField(serializers.Field):

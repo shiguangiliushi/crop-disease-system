@@ -44,6 +44,23 @@
         <text v-if="feedbackMsg" class="feedback-msg">{{ feedbackMsg }}</text>
       </view>
 
+      <!-- 第 244 批：识别后追问助手（非流式，带 pest_identifier 让回答聚焦该病害） -->
+      <view class="block ask-block">
+        <text class="block-title">{{ t('auth.askTitle') }}</text>
+        <textarea
+          v-model="askDraft"
+          class="ask-input"
+          :placeholder="t('auth.askPlaceholder')"
+          :disabled="askLoading"
+          auto-height
+          maxlength="200"
+        />
+        <button class="ask-send" :disabled="askLoading" @click="onAsk">
+          {{ askLoading ? t('auth.asking') : t('auth.askSend') }}
+        </button>
+        <text v-if="askAnswer" class="ask-answer">{{ askAnswer }}</text>
+      </view>
+
       <view v-if="detection.crop_mismatch" class="notice">
         <text class="notice-text">
           你选的作物和模型判断不一致（模型更像
@@ -81,6 +98,7 @@ import { computed, ref } from 'vue'
 import { t } from '@/i18n'
 import { submitRecognitionFeedback } from '@/api/feedback'
 import { makeShareCard } from '@/utils/shareCard'
+import { askAssistant } from '@/api/assistant'
 import { fetchPests } from '@/utils/api'
 import { onLoad } from '@dcloudio/uni-app'
 import { mediaUrl } from '@/utils/request'
@@ -106,6 +124,7 @@ function fromHistoryDetail(raw = {}) {
     description: raw.symptoms || info.symptoms || '',
     prevention: prevention || raw.suggestion || '',
     annotated_image: mediaUrl(raw.annotated_image_url || raw.image || ''),
+    identifier: raw.english_identifier || info.english_identifier || raw.identifier || '',
     original_image: mediaUrl(raw.image || ''),
   }
 }
@@ -141,6 +160,32 @@ const feedbackBusy = ref(false)
 const feedbackDone = ref(false)
 const feedbackMsg = ref('')
 const historyId = ref(null)
+// 第 244 批：识别后追问（复用 /api/assistant/ask/）
+const askDraft = ref('')
+const askAnswer = ref('')
+const askLoading = ref(false)
+
+async function onAsk() {
+  const question = askDraft.value.trim()
+  if (!question) {
+    uni.showToast({ title: t('auth.askEmpty'), icon: 'none' })
+    return
+  }
+  askLoading.value = true
+  try {
+    const result = await askAssistant({
+      question,
+      // 识别结果里的 model 类名（有就带上，让回答聚焦到这条病害）
+      pestIdentifier: detection.value.identifier || '',
+    })
+    askAnswer.value = result.answer || t('auth.askFailed')
+  } catch (error) {
+    uni.showToast({ title: error.message || t('auth.askFailed'), icon: 'none' })
+  } finally {
+    askLoading.value = false
+  }
+}
+
 const shareBusy = ref(false)
 const shareImage = ref('')
 
@@ -325,6 +370,47 @@ function backHome() {
   text-align: center;
   color: #8b9a91;
   padding: 60rpx 0;
+}
+
+.ask-block {
+  margin-top: 36rpx;
+}
+
+.ask-input {
+  width: 100%;
+  min-height: 92rpx;
+  padding: 18rpx 20rpx;
+  box-sizing: border-box;
+  border: 1rpx solid #e3ebe6;
+  border-radius: 16rpx;
+  background: #f7faf8;
+  font-size: 26rpx;
+}
+
+.ask-send {
+  margin-top: 16rpx;
+  background: #2f855a;
+  color: #fff;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  height: 76rpx;
+  line-height: 76rpx;
+}
+
+.ask-send[disabled] {
+  opacity: 0.6;
+}
+
+.ask-answer {
+  display: block;
+  margin-top: 20rpx;
+  padding: 20rpx;
+  border-radius: 16rpx;
+  background: #f2f8f4;
+  color: #3d4a3d;
+  font-size: 26rpx;
+  line-height: 1.7;
+  white-space: pre-wrap;
 }
 
 .feedback-row {

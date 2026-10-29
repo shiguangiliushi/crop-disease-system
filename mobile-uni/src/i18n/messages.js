@@ -76,6 +76,13 @@ export const messages = {
       sendFailed: '发送失败，请稍后重试',
       // 第 91 批：401 自愈后回到登录页时的说明（原来是"请求失败"，用户不知道该干什么）
       sessionExpired: '登录已过期，请重新登录',
+      // 第 244 批：识别后追问助手
+      askTitle: '还有问题？直接问助手',
+      askPlaceholder: '例如：这个病该用什么药？',
+      askSend: '问一下',
+      asking: '正在查证…',
+      askEmpty: '先写一个问题吧',
+      askFailed: '没问到答案，请稍后再试',
       // 第 237 批：APK 专属的服务器地址设置（H5 走代理，用不到）
       server: '服务器',
       serverEdit: '修改服务器地址',
@@ -319,6 +326,13 @@ export const messages = {
       sendFailed: 'Could not send, please retry later',
       // 第 91 批：401 自愈后回到登录页时的说明（原来是"请求失败"，用户不知道该干什么）
       sessionExpired: 'Your session expired. Please sign in again.',
+      // 第 244 批：识别后追问助手
+      askTitle: 'Still have questions? Ask the assistant',
+      askPlaceholder: 'e.g. Which pesticide should I use?',
+      askSend: 'Ask',
+      asking: 'Looking it up…',
+      askEmpty: 'Type a question first',
+      askFailed: 'No answer right now — please try again later',
       // 第 237 批：APK 专属的服务器地址设置
       server: 'Server',
       serverEdit: 'Change server address',
