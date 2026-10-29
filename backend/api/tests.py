@@ -15744,3 +15744,37 @@ class PestReviewTrackingTests(APITestCase):
         call_command('review_pests', '--ids', str(self.pest.id))
         self.pest.refresh_from_db()
         self.assertIsNotNone(self.pest.reviewed_at, '标记后 reviewed_at 应当有值')
+
+
+class LoginCaptchaTests(APITestCase):
+    """第 245 批：登录验证码（开关打开时，密码校验之前先过人机校验）"""
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(username='captcha_login', password='ZzStrong!2026')
+
+    def test_get_exposes_switch(self):
+        response = self.client.get('/api/login/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('captcha_required', response.data)
+        self.assertFalse(response.data['captcha_required'], '默认关闭，本地开发不被打扰')
+
+    @override_settings(LOGIN_CAPTCHA_REQUIRED=True)
+    def test_login_requires_captcha_when_enabled(self):
+        response = self.client.post(
+            '/api/login/', {'username': 'captcha_login', 'password': 'ZzStrong!2026'}, format='json')
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertTrue(response.data['captcha_required'])
+
+    @override_settings(LOGIN_CAPTCHA_REQUIRED=True)
+    def test_login_with_valid_captcha_succeeds(self):
+        payload = {'username': 'captcha_login', 'password': 'ZzStrong!2026', **_captcha_fields(self.client)}
+        response = self.client.post('/api/login/', payload, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue((response.data.get('data') or {}).get('token'))
+
+    @override_settings(LOGIN_CAPTCHA_REQUIRED=True)
+    def test_wrong_password_with_valid_captcha_is_still_rejected(self):
+        payload = {'username': 'captcha_login', 'password': 'wrong-pass', **_captcha_fields(self.client)}
+        response = self.client.post('/api/login/', payload, format='json')
+        self.assertEqual(response.status_code, 401, response.content)

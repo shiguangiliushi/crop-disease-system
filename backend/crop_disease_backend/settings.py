@@ -510,6 +510,15 @@ TOKEN_EXPIRED_AFTER_SECONDS = int(
 #     `DJANGO_REGISTER_CAPTCHA=false` 可临时关掉（本地造数据/压测时用），
 #     关掉之后注册接口回到"只看限流"的旧状态 —— 别在生产上关。
 CAPTCHA_TTL_SECONDS = int(os.environ.get('DJANGO_CAPTCHA_TTL_SECONDS') or 300)
+# 登录验证码（第 245 批）：
+#   · 默认 **关闭**（`DJANGO_LOGIN_CAPTCHA=true` 打开）—— 因为登录已经有"5 次失败锁定 15 分钟"
+#     + `10/min` 限流；验证码是给"面向公网、怕撞库"的部署再加一道，不是本地开发的默认负担。
+#   · 与现有限制的关系见 `LoginView.post` 的说明（验证码在密码校验**之前**，失败不累加锁定次数）。
+LOGIN_CAPTCHA_REQUIRED = (
+    os.environ.get('DJANGO_LOGIN_CAPTCHA', 'false').strip().lower()
+    in ('1', 'true', 'yes', 'on')
+)
+
 REGISTER_CAPTCHA_REQUIRED = (
     os.environ.get('DJANGO_REGISTER_CAPTCHA', 'true').strip().lower()
     not in ('0', 'false', 'no', 'off')

@@ -572,6 +572,14 @@ class LoginView(APIView):
     #: 锁定时长（分钟）
     LOCK_MINUTES = 15
 
+    def get(self, request):
+        """第 245 批：让前端知道"当前要不要显示验证码"。
+
+        为什么不给登录页写死：开关是环境变量（`DJANGO_LOGIN_CAPTCHA`），
+        写死会让"开发不验证码 / 生产要验证码"变成两套前端。
+        """
+        return Response({'captcha_required': bool(getattr(settings, 'LOGIN_CAPTCHA_REQUIRED', False))})
+
     def post(self, request):
         # 先单独解析请求体。
         # 请求体不是合法 JSON 时 DRF 会抛 ParseError，这属于**客户端错误**。
@@ -594,6 +602,19 @@ class LoginView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            # 第 245 批：验证码在**密码校验之前**。
+            # 理由：验证码没过就不该去比对密码（否则撞库照样能打），
+            # 同时失败次数不会被"验证码填错"白白吃掉（用户会更早被锁）。
+            if getattr(settings, 'LOGIN_CAPTCHA_REQUIRED', False):
+                if not captcha.verify(data.get('captcha_id'), data.get('captcha_code')):
+                    return Response({
+                        'status': 'error',
+                        'message': '验证码错误或已过期，请刷新后重试',
+                        'code': 'captcha_required',
+                        'captcha_required': True,
+                        'captcha_code': ['验证码错误或已过期，请刷新后重试'],
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
             # 手动获取用户名和密码
             username = data.get('username')
             password = data.get('password')
