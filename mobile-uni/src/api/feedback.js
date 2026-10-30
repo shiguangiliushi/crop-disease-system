@@ -33,3 +33,13 @@ export async function submitRecognitionFeedback({
     header: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
 }
+
+
+/** 意见反馈提交（第 269 批）—— 建议/问题/其他 + 联系方式 */
+export async function submitFeedback({ category, suggestion, contact = '' }) {
+  return request({
+    url: '/feedback/',
+    method: 'POST',
+    data: { category, suggestion, ...(contact ? { contact } : {}) },
+  })
+}
