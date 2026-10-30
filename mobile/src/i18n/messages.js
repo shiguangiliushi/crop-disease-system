@@ -241,6 +241,17 @@ export const messages = {
       deleteAccountOk: '账号已注销',
       deleteAccountFailed: '注销失败，请稍后重试',
     },
+    assistantAsk: {
+      title: '还有问题？问一下助手',
+      hint: '基于识别到的这条病害回答，并给出出处',
+      open: '问一下助手',
+      sheetTitle: '智能助手',
+      placeholder: '例如：这个病该用什么药？',
+      send: '发送',
+      asking: '正在查证…',
+      sources: '来源',
+      failed: '没问到答案，请稍后再试',
+    },
   },
 
   en: {
@@ -477,6 +488,17 @@ export const messages = {
       deleteAccountPasswordRequired: 'Please enter your password',
       deleteAccountOk: 'Account deleted',
       deleteAccountFailed: 'Could not delete the account, please try again later',
+    },
+    assistantAsk: {
+      title: 'Still have questions? Ask the assistant',
+      hint: 'Answers are grounded in this disease entry, with sources',
+      open: 'Ask the assistant',
+      sheetTitle: 'Assistant',
+      placeholder: 'e.g. Which pesticide should I use?',
+      send: 'Send',
+      asking: 'Looking it up…',
+      sources: 'Sources',
+      failed: 'No answer right now — please try again later',
     },
   },
 };

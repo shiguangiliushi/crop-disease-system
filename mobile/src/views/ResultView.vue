@@ -170,6 +170,64 @@
 
       <p class="disclaimer muted">{{ t('result.disclaimer') }}</p>
 
+      <!-- 第 253 批：识别后追问助手（Vant 弹层，非流式） -->
+      <div class="card ask-card">
+        <p class="card-title">{{ t('assistantAsk.title') }}</p>
+        <p class="muted ask-hint">{{ t('assistantAsk.hint') }}</p>
+        <van-button block round type="primary" size="large" @click="openAsk">
+          {{ t('assistantAsk.open') }}
+        </van-button>
+      </div>
+
+      <van-popup
+        v-model:show="askVisible"
+        position="bottom"
+        round
+        :style="{ maxHeight: '80vh' }"
+        teleport="body"
+      >
+        <div class="ask-sheet">
+          <div class="ask-sheet-head">
+            <span>{{ t('assistantAsk.sheetTitle') }}</span>
+            <van-icon name="cross" @click="askVisible = false" />
+          </div>
+
+          <div class="ask-sheet-body">
+            <div v-if="askedQuestion" class="ask-bubble ask-bubble--user">{{ askedQuestion }}</div>
+            <div v-if="askLoading" class="ask-loading">
+              <van-loading size="18" /> {{ t('assistantAsk.asking') }}
+            </div>
+            <div v-else-if="askAnswer" class="ask-bubble ask-bubble--bot">
+              <p class="pre-wrap">{{ askAnswer }}</p>
+              <p v-if="askCitations.length" class="ask-sources">
+                {{ t('assistantAsk.sources') }}：{{ askCitations.map((c) => c.pest_name || c.name || '词条').join('、') }}
+              </p>
+            </div>
+          </div>
+
+          <div class="ask-sheet-input">
+            <van-field
+              v-model="askDraft"
+              rows="1"
+              autosize
+              type="textarea"
+              maxlength="200"
+              show-word-limit
+              :placeholder="t('assistantAsk.placeholder')"
+              @keyup.enter.stop="submitAsk"
+            />
+            <van-button
+              size="small"
+              type="primary"
+              round
+              :loading="askLoading"
+              :disabled="!askDraft.trim()"
+              @click="submitAsk"
+            >{{ t('assistantAsk.send') }}</van-button>
+          </div>
+        </div>
+      </van-popup>
+
       <div class="result-actions">
         <van-button block round type="primary" size="large" @click="router.replace('/detect')">
           {{ t('result.retry') }}
@@ -195,6 +253,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showFailToast, showImagePreview, showSuccessToast } from 'vant';
 import { fetchHistoryDetail } from '@/api/history';
+import { askAssistant } from '@/api/assistant';  // 第 253 批：识别后追问
 import { copyText } from '@/utils/clipboard';
 import { dataUrlToFile, renderResultCard } from '@/utils/shareCard';  // 第 177 批：生成分享图  // 第 176 批：复制求助文案（含 HTTP 回退）
 import { submitRecognitionFeedback } from '@/api/detection';
@@ -212,6 +271,47 @@ const { t, locale } = useI18n();
 const isDetail = computed(() => Boolean(route.params.id));
 const loading = ref(false);
 const result = ref(detectStore.result);
+
+// 第 253 批：识别后追问（弹层）
+const askVisible = ref(false);
+const askDraft = ref('');
+const askedQuestion = ref('');
+const askAnswer = ref('');
+const askCitations = ref([]);
+const askLoading = ref(false);
+
+function openAsk() {
+  askVisible.value = true;
+  if (!askedQuestion.value && result.value?.disease?.name) {
+    // 首次打开用病害名做默认问题，减少"不知道问什么"的犹豫
+    askDraft.value = `${result.value.disease.name}该用什么药？`;
+  }
+}
+
+async function submitAsk() {
+  const question = askDraft.value.trim();
+  if (!question || askLoading.value) return;
+  askedQuestion.value = question;
+  askAnswer.value = '';
+  askCitations.value = [];
+  askLoading.value = true;
+  try {
+    const data = await askAssistant({
+      question,
+      pestIdentifier: result.value?.identifier || result.value?.pestIdentifier || '',
+    });
+    askAnswer.value = data.answer || t('assistantAsk.failed');
+    askCitations.value = data.citations || [];
+    if (data.degraded) {
+      // 降级（如词条未收录）也会给出可读回答，这里只提示一下
+      console.info('[assistant] degraded:', data.degradeReason);
+    }
+  } catch (error) {
+    showFailToast(formatApiError(error, t('assistantAsk.failed')));
+  } finally {
+    askLoading.value = false;
+  }
+}
 const feedback = ref(null);
 const feedbackLoading = ref(false);
 // 第 91 批：纠错要能选"正确是哪一种"（选了才进训练样本池）
@@ -465,6 +565,77 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 253 批：追问弹层 */
+.ask-card .ask-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.ask-sheet {
+  padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+}
+
+.ask-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+
+.ask-sheet-body {
+  max-height: 42vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.ask-bubble {
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.7;
+  margin-bottom: 10px;
+}
+
+.ask-bubble--user {
+  background: #e8f5ee;
+  color: #1f2d26;
+}
+
+.ask-bubble--bot {
+  background: #f6f8f7;
+  color: #24352c;
+}
+
+.ask-sources {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #8b9a91;
+}
+
+.ask-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8b9a91;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.ask-sheet-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.ask-sheet-input :deep(.van-field) {
+  flex: 1;
+  background: #f6f8f7;
+  border-radius: 10px;
+}
+
 /* 第 177 批：分享图按钮与预览 */
 .share-card-btn {
   margin-top: 10px;
