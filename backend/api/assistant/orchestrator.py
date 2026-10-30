@@ -42,6 +42,7 @@ from ..models_assistant import AssistantMessage, AssistantSession
 from . import context as context_builder
 from . import guard, llm, prompts, vision
 from .retriever import detect_intent, search
+from .title import build_title  # 第 251 批：会话标题（病害 · 意图）
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +373,14 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
 
     hits = search(query, pest_identifier=pest_identifier,
                   top_k=getattr(django_settings, 'ASSISTANT_TOP_K', 8))
+    # 第 251 批：首问且命中词条时，把"问题前 30 字"升级成"病害 · 意图"。
+    # 只改标题、不动任何回答逻辑；后续追问不会再覆盖标题（只看首问）。
+    if hits and not session.messages.exists():
+        better = build_title(prepared.question, pest=hits[0].pest, intent=intent, lang=code)
+        if better and better != session.title:
+            session.title = better
+            session.save(update_fields=['title'])
+
     hits = _trim_dominated_hits(hits)
     built = context_builder.build(hits, lang=code)
 

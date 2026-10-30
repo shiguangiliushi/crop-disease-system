@@ -15778,3 +15778,52 @@ class LoginCaptchaTests(APITestCase):
         payload = {'username': 'captcha_login', 'password': 'wrong-pass', **_captcha_fields(self.client)}
         response = self.client.post('/api/login/', payload, format='json')
         self.assertEqual(response.status_code, 401, response.content)
+
+
+class AssistantTitleTests(APITestCase):
+    """第 251 批：会话标题（病害 · 意图），以及 orchestrator 的首问升级"""
+
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user(
+            username='title_user', password='ZzStrong!2026')
+        self.pest = PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='Tomato___Late_blight',
+            symptoms='叶片水渍状病斑', description='低温高湿易发')
+
+    def test_build_title_uses_pest_and_intent(self):
+        from api.assistant.title import build_title
+
+        self.assertEqual(build_title('这个病用什么药？', pest=self.pest, intent='chemical'),
+                         '番茄晚疫病 · 用药')
+        self.assertEqual(build_title('有哪些症状', pest=self.pest, intent='symptom'),
+                         '番茄晚疫病 · 症状')
+        self.assertEqual(build_title('what are the symptoms', pest=self.pest,
+                                     intent='symptom', lang='en'),
+                         '番茄晚疫病 · symptoms')
+
+    def test_build_title_falls_back_without_pest(self):
+        from api.assistant.title import build_title
+
+        title = build_title('给我写一首关于春天的诗', pest=None)
+        self.assertEqual(title, '给我写一首关于春天的诗')
+
+    def test_first_question_upgrades_session_title(self):
+        from unittest.mock import patch
+
+        from api.assistant import vision
+
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        with patch('api.assistant.orchestrator.vision.describe',
+                   return_value=vision.VisionResult(status='unreadable', message='看不清')):
+            response = client.post(
+                '/api/assistant/ask/',
+                {'question': '番茄晚疫病用什么药？', 'pest_identifier': 'Tomato___Late_blight'},
+                format='json',
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        session = AssistantSession.objects.filter(user=self.user).first()
+        self.assertIsNotNone(session)
+        self.assertIn('番茄晚疫病', session.title, session.title)
+        self.assertIn('·', session.title, session.title)
