@@ -160,6 +160,7 @@ MIDDLEWARE = [  # 中间件列表
     'api.middleware.TokenAuthenticationMiddleware',  # 自定义Token认证中间件  # 自定义Token认证
     'django.contrib.messages.middleware.MessageMiddleware',  # 消息中间件
     'django.middleware.clickjacking.XFrameOptionsMiddleware',  # 点击劫持保护中间件
+    'api.middleware_security.ContentSecurityPolicyMiddleware',  # 第 255 批：CSP
     'django.middleware.locale.LocaleMiddleware',  # 本地化中间件
     'django.middleware.http.ConditionalGetMiddleware',  # 条件GET中间件
     'django.middleware.gzip.GZipMiddleware',  # GZip压缩中间件

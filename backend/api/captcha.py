@@ -28,6 +28,7 @@ import base64
 import io
 import logging
 import random
+import secrets
 import uuid
 
 from django.conf import settings
@@ -117,7 +118,8 @@ def _render(code: str) -> bytes:
 
 def issue() -> dict:
     """签发一张验证码，返回 `{captcha_id, image(data URI), expires_in}`。"""
-    code = ''.join(random.choice(ALPHABET) for _ in range(CODE_LENGTH))
+    # 第 255 批：验证码不是加密级秘密，但没理由用可预测的 `random`
+    code = ''.join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
     captcha_id = uuid.uuid4().hex
     ttl = int(getattr(settings, 'CAPTCHA_TTL_SECONDS', 300))
     # 缓存 value 用 dict：以后要加"已用过"/"来源 IP"之类不用改 key 结构

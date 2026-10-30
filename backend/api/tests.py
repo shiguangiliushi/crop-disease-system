@@ -15883,3 +15883,28 @@ class DatabaseUrlSettingsTests(APITestCase):
         from django.conf import settings
 
         self.assertEqual(settings.DATABASES['default']['ENGINE'], 'django.db.backends.sqlite3')
+
+
+class CSPHeaderTests(APITestCase):
+    """第 255 批：CSP 响应头（开关随 DEBUG，可用环境变量覆盖）"""
+
+    @override_settings(DEBUG=True)
+    def test_disabled_in_debug_mode(self):
+        # 开发（DEBUG=True）默认不加 CSP —— Vite HMR 会注入内联脚本
+        # ⚠️ `manage.py test` 本身是 DEBUG=False，所以要显式 override
+        response = self.client.get('/api/health/')
+        self.assertNotIn('Content-Security-Policy', response)
+
+    @override_settings(DEBUG=False)
+    def test_enabled_outside_debug(self):
+        response = self.client.get('/api/health/')
+        policy = response.get('Content-Security-Policy')
+        self.assertIsNotNone(policy, '生产模式应带 CSP')
+        self.assertIn("default-src 'self'", policy)
+        self.assertIn("object-src 'none'", policy)
+
+    @override_settings(DEBUG=False)
+    def test_report_only_switch(self):
+        with patch.dict('os.environ', {'DJANGO_CSP_REPORT_ONLY': '1'}):
+            response = self.client.get('/api/health/')
+        self.assertIn('Content-Security-Policy-Report-Only', response)
