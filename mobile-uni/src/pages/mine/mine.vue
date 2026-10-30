@@ -24,7 +24,11 @@
     </view>
 
     <view class="card menu">
-      <view class="menu-item" @click="goFeedback">
+      <view class="menu-item" @click="goMyFeedback">
+      <text class="menu-label">{{ t('myFeedback.title') }}</text>
+    </view>
+
+    <view class="menu-item" @click="goFeedback">
       <text class="menu-label">{{ t('feedbackForm.title') }}</text>
     </view>
 
@@ -230,6 +234,10 @@ function goProfileEdit() {
 
 function goFeedback() {
   uni.navigateTo({ url: '/pages/feedback/feedback' })
+}
+
+function goMyFeedback() {
+  uni.navigateTo({ url: '/pages/myfeedback/myfeedback' })
 }
 </script>
 

@@ -29,6 +29,13 @@
       }
     },
     {
+      "path": "pages/myfeedback/myfeedback",
+      "style": {
+        "navigationBarTitleText": "我的反馈",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/feedback/feedback",
       "style": {
         "navigationBarTitleText": "意见反馈",

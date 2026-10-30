@@ -291,6 +291,14 @@ export const messages = {
       empty: '请先填写反馈内容',
       failed: '提交失败，请稍后重试',
     },
+    myFeedback: {
+      title: '我的反馈',
+      reply: '管理员回复',
+      empty: '还没有提交过反馈',
+      statusPending: '待处理',
+      statusProcessing: '处理中',
+      statusResolved: '已处理',
+    },
     notify: {
       title: '系统通知',
       unread: '{n} 条未读',
@@ -584,6 +592,14 @@ export const messages = {
       submitted: 'Thanks! Feedback received',
       empty: 'Please describe your feedback first',
       failed: 'Could not submit, please try again',
+    },
+    myFeedback: {
+      title: 'My feedback',
+      reply: 'Admin reply',
+      empty: 'You have not submitted any feedback yet',
+      statusPending: 'Pending',
+      statusProcessing: 'In progress',
+      statusResolved: 'Resolved',
     },
     notify: {
       title: 'Notifications',

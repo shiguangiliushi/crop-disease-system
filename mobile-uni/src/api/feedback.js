@@ -43,3 +43,11 @@ export async function submitFeedback({ category, suggestion, contact = '' }) {
     data: { category, suggestion, ...(contact ? { contact } : {}) },
   })
 }
+
+
+/** 我的反馈列表（第 270 批）—— 普通用户只返回自己提交的 */
+export async function fetchMyFeedback({ pageSize = 20 } = {}) {
+  const body = await request({ url: '/feedback/', data: { page_size: pageSize } })
+  const rows = Array.isArray(body) ? body : body?.results || body?.data?.items || body?.data || []
+  return { items: rows, count: body?.count ?? rows.length }
+}
