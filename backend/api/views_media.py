@@ -29,7 +29,26 @@ from rest_framework.views import APIView
 
 
 #: 需要鉴权的目录前缀（第 257 批只有助手提问图片；后续可加 detection_history / consult_images）
-PRIVATE_PREFIXES = ('assistant_uploads/',)
+PRIVATE_PREFIXES = (
+    'assistant_uploads/',    # 助手提问图片（无页面渲染）
+    # ⚠️ 第 258 批已把签名机制做好（`api/media_sign.py`），但**暂未**把下面这些目录列进来：
+    #    它们会直接渲染在 `<img>` 上，必须先在 5 处 URL 出口调 `sign_path()`、
+    #    并跑通前端图片加载，才能收权。列进去的当天如果不改出口，就是"满屏裂图"。
+    #    'detection_history/',   # 识别原图与标注图（用户叶片照片）—— 下一步
+    #    'consult_images/',      # 专家咨询配图
+    #    'feedback_images/',     # 意见反馈附图
+)
+
+#: 归属判断：目录前缀 → (模型路径, 关联查询字段)
+#: 收权某目录时，这里要同时给出"谁算所有者"。
+OWNER_LOOKUPS = {
+    'detection_history/': ('api.models.DetectionHistory', 'user'),
+    'consult_images/': ('api.models_expert.ExpertQuestion', 'user'),
+    'feedback_images/': ('api.models.Feedback', 'user'),
+}
+
+#: 归属判断：目录前缀 → (模型路径, 关联查询字段)
+
 
 
 class MediaView(APIView):
@@ -45,6 +64,14 @@ class MediaView(APIView):
         if not any(path.startswith(prefix) for prefix in PRIVATE_PREFIXES):
             return media_serve(request, path, document_root=settings.MEDIA_ROOT)
 
+        # 第 258 批：签名 URL 优先 —— `<img>` 带不了 Authorization 头，
+        # 但可以带查询串；签名只对这一个路径、这段时限有效。
+        from .media_sign import verify as verify_sig
+
+        if verify_sig(path, request.query_params.get('sig', ''),
+                      request.query_params.get('exp', '')):
+            return media_serve(request, path, document_root=settings.MEDIA_ROOT)
+
         user = self._current_user(request)
         if user is None:
             raise Http404
@@ -53,10 +80,24 @@ class MediaView(APIView):
 
         from .models_assistant import AssistantMessage
 
-        # 归属在 session 上（AssistantMessage 没有 user 字段）
-        owned = AssistantMessage.objects.filter(
-            session__user=user, image__in=[path, f'media/{path}'],
-        ).exists()
+        owned = False
+        if path.startswith('assistant_uploads/'):
+            # 归属在 session 上（AssistantMessage 没有 user 字段）
+            owned = AssistantMessage.objects.filter(
+                session__user=user, image__in=[path, f'media/{path}'],
+            ).exists()
+        else:
+            for prefix, (model_path, field) in OWNER_LOOKUPS.items():
+                if not path.startswith(prefix):
+                    continue
+                module_name, class_name = model_path.rsplit('.', 1)
+                module = __import__(module_name, fromlist=[class_name])
+                model = getattr(module, class_name)
+                owned = model.objects.filter(
+                    **{field: user}, image__in=[path, f'media/{path}'],
+                ).exists()
+                break
+
         if not owned:
             raise Http404
 
