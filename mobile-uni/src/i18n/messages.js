@@ -254,14 +254,14 @@ export const messages = {
       deleteAccountOk: '账号已注销',
       deleteAccountFailed: '注销失败，请稍后重试',
     },
-  },
-
     notify: {
       title: '系统通知',
       unread: '{n} 条未读',
       readAll: '全部已读',
       empty: '还没有通知',
     },
+
+  },
 
   en: {
     common: {
