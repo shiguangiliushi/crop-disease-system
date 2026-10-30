@@ -47,6 +47,13 @@
           is-link
           @click="showLanguageSheet = true"
         />
+        <van-cell
+          v-if="auth.isAuthenticated"
+          :title="t('notify.title')"
+          :value="unread ? String(unread) : ''"
+          is-link
+          to="/notifications"
+        />
         <van-cell :title="t('mine.about')" is-link @click="showAbout = true" />
         <van-cell v-if="auth.isAuthenticated" :title="t('history.title')" is-link to="/history" />
       </van-cell-group>
@@ -134,6 +141,9 @@ const APP_VERSION = '0.1.0';
 
 const router = useRouter();
 const auth = useAuthStore();
+const unread = ref(0);  // 第 261 批：未读通知数
+import { fetchUnreadCount } from '@/api/notify';
+onMounted(async () => { unread.value = await fetchUnreadCount(); });
 const { t, locale, setLocale, locales } = useI18n();
 
 const stats = ref({ detections: 0, posts: 0, points: 0 });

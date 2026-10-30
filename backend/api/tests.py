@@ -16066,3 +16066,63 @@ class SignedMediaUrlTests(APITestCase):
         pest = PestInfo.objects.create(name='测试病', crop_type='番茄')
         pest.image = 'pest_images/x.png'
         self.assertNotIn('sig=', pest.image.url)
+
+
+class LikeNotificationTests(APITestCase):
+    """点赞通知（第 37 批就实现了，第 261 批补回归测试守住它）"""
+
+    def setUp(self):
+        from .models_forum import ForumBoard
+
+        self.author = get_user_model().objects.create_user(
+            username='zz_like_author', password='pw12345678')
+        self.fan = get_user_model().objects.create_user(
+            username='zz_like_fan', password='pw12345678')
+        self.board = ForumBoard.objects.create(name='点赞版块', description='')
+
+        from .models_forum import Post, Comment
+
+        self.post = Post.objects.create(
+            title='点赞通知测试帖', content='正文', author=self.author, board=self.board)
+
+    def _like_post(self, post):
+        client = APIClient()
+        client.force_authenticate(user=self.fan)
+        return client.post(f'/api/forums/posts/{post.id}/like/')
+
+    def test_like_creates_notification_for_author(self):
+        from .models_notify import Notification
+
+        response = self._like_post(self.post)
+        self.assertIn(response.status_code, (200, 201), response.content)
+        notification = Notification.objects.filter(recipient=self.author, type='like').first()
+        self.assertIsNotNone(notification, '点赞后作者应收到 like 通知')
+        self.assertEqual(notification.actor_id, self.fan.id)
+        self.assertIn('liked your post', notification.title_en)
+
+    def test_self_like_creates_no_notification(self):
+        from .models_notify import Notification
+
+        client = APIClient()
+        client.force_authenticate(user=self.author)
+        response = client.post(f'/api/forums/posts/{self.post.id}/like/')
+        self.assertIn(response.status_code, (200, 201), response.content)
+        self.assertFalse(
+            Notification.objects.filter(recipient=self.author, type='like').exists(),
+            '自己给自己点赞不该发通知',
+        )
+
+    def test_comment_like_creates_comment_like_notification(self):
+        from .models_forum import Comment
+        from .models_notify import Notification
+
+        comment = Comment.objects.create(
+            post=self.post, author=self.author, content='被点赞的评论')
+
+        client = APIClient()
+        client.force_authenticate(user=self.fan)
+        response = client.post(f'/api/forums/posts/{self.post.id}/comments/{comment.id}/like/')
+        self.assertIn(response.status_code, (200, 201), response.content)
+        notification = Notification.objects.filter(
+            recipient=self.author, type='comment_like').first()
+        self.assertIsNotNone(notification, '评论被点赞应发 comment_like 通知')

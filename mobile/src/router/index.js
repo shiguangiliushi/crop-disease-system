@@ -29,6 +29,13 @@ const routes = [
     meta: { title: 'auth.registerTitle', tabbar: false, back: true },
   },
   {
+    // 第 261 批：站内通知（入口在「我的」）
+    path: '/notifications',
+    name: 'notifications',
+    component: () => import('@/views/NotificationsView.vue'),
+    meta: { title: 'notify.title', tabbar: false, back: true },
+  },
+  {
     // 第 260 批：病害百科详情（结果页点「查看病害百科」进来）
     path: '/pests/:keyword',
     name: 'pest-detail',

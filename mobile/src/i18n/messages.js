@@ -263,8 +263,14 @@ export const messages = {
       sources: '资料来源',
       notFound: '没有找到这条病害的百科词条',
     },
-  },
+    notify: {
+      title: '系统通知',
+      unread: '{n} 条未读',
+      readAll: '全部已读',
+      empty: '还没有通知',
+    },
 
+  },
 
   en: {
     common: {
@@ -522,6 +528,12 @@ export const messages = {
       description: 'Description',
       sources: 'Sources',
       notFound: 'No wiki entry found for this disease',
+    },
+    notify: {
+      title: 'Notifications',
+      unread: '{n} unread',
+      readAll: 'Mark all read',
+      empty: 'No notifications yet',
     },
   },
 };
