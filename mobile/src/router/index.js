@@ -29,6 +29,13 @@ const routes = [
     meta: { title: 'auth.registerTitle', tabbar: false, back: true },
   },
   {
+    // 第 264 批：资料编辑
+    path: '/profile/edit',
+    name: 'profile-edit',
+    component: () => import('@/views/ProfileEditView.vue'),
+    meta: { title: 'profileEdit.title', tabbar: false, back: true },
+  },
+  {
     // 第 261 批：站内通知（入口在「我的」）
     path: '/notifications',
     name: 'notifications',
