@@ -8,6 +8,7 @@
 
 ```bash
 # 后端必须先起（E2E 打真实后端 + 真实数据库）
+
 cd backend && python manage.py runserver 127.0.0.1:8000
 
 cd frontend
