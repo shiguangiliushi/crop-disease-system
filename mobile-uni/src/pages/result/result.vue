@@ -8,7 +8,8 @@
       <view class="head">
         <image v-if="imageSrc" :src="imageSrc" mode="widthFix" class="shot" />
         <view class="meta">
-          <text class="disease">{{ detection.disease }}</text>
+          <text class="disease" @click="openWiki">{{ detection.disease }}</text>
+        <text class="wiki-link" @click="openWiki">{{ t('pestWiki.viewWiki') }} ›</text>
           <text v-if="detection.disease_en" class="disease-en">{{ detection.disease_en }}</text>
           <view class="confidence">
             <text class="conf-label">{{ t('result.confidence') }}</text>
@@ -283,9 +284,17 @@ function again() {
 function backHome() {
   uni.reLaunch({ url: '/pages/detect/detect' })
 }
+
+function openWiki() {
+  const keyword = detection.value?.disease || detection.value?.disease_en || ''
+  if (!keyword) return
+  uni.navigateTo({ url: `/pages/pest/pest?keyword=${encodeURIComponent(keyword)}` })
+}
 </script>
 
 <style scoped>
+.wiki-link { display: block; margin-top: 8rpx; color: #2f855a; font-size: 26rpx; }
+
 .page {
   min-height: 100vh;
   padding: 24rpx 0 48rpx;
