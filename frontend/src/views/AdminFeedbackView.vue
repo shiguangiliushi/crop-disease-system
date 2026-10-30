@@ -84,21 +84,36 @@
           <div class="stat-tile-label">{{ t('feedbackAdmin.statTotal') }}</div>
         </div>
       </div>
-      <div class="stat-tile stat-tile--pending">
+      <div
+        class="stat-tile stat-tile--pending clickable"
+        :class="{ active: filters.status === 'pending' }"
+        :title="t('feedbackAdmin.clickToFilter')"
+        @click="filterByStatus('pending')"
+      >
         <span class="stat-tile-icon"><i class="fas fa-hourglass-half"></i></span>
         <div>
           <div class="stat-tile-value">{{ stats.pending }}</div>
           <div class="stat-tile-label">{{ t('feedbackAdmin.statusPending') }}</div>
         </div>
       </div>
-      <div class="stat-tile stat-tile--processing">
+      <div
+        class="stat-tile stat-tile--processing clickable"
+        :class="{ active: filters.status === 'processing' }"
+        :title="t('feedbackAdmin.clickToFilter')"
+        @click="filterByStatus('processing')"
+      >
         <span class="stat-tile-icon"><i class="fas fa-spinner"></i></span>
         <div>
           <div class="stat-tile-value">{{ stats.processing }}</div>
           <div class="stat-tile-label">{{ t('feedbackAdmin.statusProcessing') }}</div>
         </div>
       </div>
-      <div class="stat-tile stat-tile--ok">
+      <div
+        class="stat-tile stat-tile--ok clickable"
+        :class="{ active: filters.status === 'resolved' }"
+        :title="t('feedbackAdmin.clickToFilter')"
+        @click="filterByStatus('resolved')"
+      >
         <span class="stat-tile-icon"><i class="fas fa-circle-check"></i></span>
         <div>
           <div class="stat-tile-value">{{ stats.resolved }}</div>
@@ -913,6 +928,16 @@ export default {
       onExternalChange: () => loadList(),
     });
 
+    /**
+     * 第 271 批：统计卡点击筛选（再点一次清空）。
+     * ⚠️ `filters` 是 `ref`，不是普通对象 —— 上一版写成 `filters.status = status`
+     * 等于给 ref 对象加了个没用的属性，筛选没变、URL 也没变（实测表格直接变空）。
+     */
+    const filterByStatus = (status) => {
+      filters.value.status = filters.value.status === status ? '' : status;
+      handleFilter();
+    };
+
     const handleFilter = () => {
       page.value = 1;
       loadList();
@@ -998,6 +1023,8 @@ export default {
     }, { immediate: true });
 
     return {
+
+      filterByStatus,
       //: 第 224 批：样本确认/排除 + 日期区间 + 统计联动
       dateRange, verifyingId, verifyLabel, verifyTagType, changeSample, bulkChangeSamples,
       exporting, exportCsv, hasActiveFilter, clearFilters, replyTemplates, applyTemplate,
@@ -1049,6 +1076,21 @@ export default {
 </script>
 
 <style scoped>
+/* 第 271 批：可点筛选的统计卡 */
+.stat-tile.clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stat-tile.clickable:hover {
+  border-color: var(--brand-400, #7cc29a);
+}
+
+.stat-tile.active {
+  border-color: var(--brand-500, #3d9a68);
+  box-shadow: 0 0 0 2px rgba(61, 154, 104, 0.15);
+}
+
 .admin-feedback {
   max-width: 1040px;
   margin: 0 auto;
