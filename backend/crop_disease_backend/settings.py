@@ -784,6 +784,19 @@ EMAIL_BACKEND = os.environ.get(
     'DJANGO_EMAIL_BACKEND',
     'django.core.mail.backends.console.EmailBackend',
 )
+
+# 第 256 批：**生产不许用控制台邮件后端** —— 它会把重置密码链接原样打进食日志/stdout，
+# 谁能看日志谁就能改任意账号的密码。这里显式检测并报警（不直接崩，避免挡住排障，
+# 但会出现在 check_env 与管理端「系统健康」的告警里）。
+CONSOLE_EMAIL_GUARD = False  # 供 check_env 读取
+if (not DEBUG) and 'console' in str(EMAIL_BACKEND).lower():
+    CONSOLE_EMAIL_GUARD = True
+    warnings.warn(
+        '生产模式仍在使用控制台邮件后端：重置密码链接会被写进日志。'
+        ' 请设置 DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend'
+        ' 并填好 DJANGO_EMAIL_HOST 等配置。',
+        RuntimeWarning, stacklevel=1,
+    )
 EMAIL_HOST = os.environ.get('DJANGO_EMAIL_HOST', '')
 EMAIL_PORT = int(os.environ.get('DJANGO_EMAIL_PORT', 25))
 EMAIL_HOST_USER = os.environ.get('DJANGO_EMAIL_HOST_USER', '')

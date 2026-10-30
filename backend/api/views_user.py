@@ -207,7 +207,9 @@ class PasswordResetRequestView(APIView):
         if user is not None and user.email and user.is_active:
             send_password_reset_mail(user)
         else:
-            logger.info('找回密码请求未命中可发信账号: %s', account)
+            # 第 256 批：**不记账号名**。接口话术已经防枚举，日志却把"命中与否"写清楚，
+            # 日志外泄时等于送了一份账号有效性清单。
+            logger.info('找回密码请求已受理（未发信）')
 
         return Response({'status': 'success', 'message': self.GENERIC_MESSAGE})
 

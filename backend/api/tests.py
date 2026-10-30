@@ -15908,3 +15908,58 @@ class CSPHeaderTests(APITestCase):
         with patch.dict('os.environ', {'DJANGO_CSP_REPORT_ONLY': '1'}):
             response = self.client.get('/api/health/')
         self.assertIn('Content-Security-Policy-Report-Only', response)
+
+
+class RichTextSanitizeTests(APITestCase):
+    """第 256 批：富文本在**保存时**净化（不再只靠前端）"""
+
+    def setUp(self):
+        from .models_forum import ForumBoard
+
+        self.user = get_user_model().objects.create_user(
+            username='zz_sanitize', password='pw12345678')
+        self.board = ForumBoard.objects.create(name='测试版块', description='')
+
+    def test_sanitizer_strips_event_handlers(self):
+        from api.utils_html import sanitize_html
+
+        dirty = '<p>正常</p><img src=x onerror="alert(1)"><script>alert(2)</script>'
+        clean = sanitize_html(dirty)
+        self.assertNotIn('onerror', clean.lower())
+        self.assertNotIn('<script', clean.lower())
+        self.assertIn('正常', clean)
+
+    def test_sanitizer_rejects_javascript_urls(self):
+        from api.utils_html import sanitize_html
+
+        clean = sanitize_html('<a href="javascript:alert(1)">点我</a>')
+        self.assertNotIn('javascript:', clean.lower())
+        self.assertIn('点我', clean)
+
+    def test_sanitizer_keeps_allowed_formatting(self):
+        from api.utils_html import sanitize_html
+
+        source = '<p><strong>粗</strong><em>斜</em></p><ul><li>条目</li></ul>'
+        self.assertEqual(sanitize_html(source), source)
+
+    def test_post_save_sanitizes_content(self):
+        from .models_forum import Post
+
+        post = Post.objects.create(
+            title='净化验证', content='<p>正文</p><img src=x onerror="alert(1)">',
+            author=self.user, board=self.board,
+        )
+        post.refresh_from_db()
+        self.assertNotIn('onerror', post.content.lower())
+        self.assertIn('正文', post.content)
+
+    def test_comment_save_sanitizes_content(self):
+        from .models_forum import Comment, Post
+
+        post = Post.objects.create(title='t', content='c', author=self.user, board=self.board)
+        comment = Comment.objects.create(
+            post=post, author=self.user, content='<script>alert(1)</script>好评论',
+        )
+        comment.refresh_from_db()
+        self.assertNotIn('<script', comment.content.lower())
+        self.assertIn('好评论', comment.content)

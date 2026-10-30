@@ -186,6 +186,10 @@ class Post(TranslatableContentMixin):
         ])
 
     def save(self, *args, **kwargs):
+        # 第 256 批：保存时净化富文本（不再只依赖前端渲染前净化）
+        from .utils_html import sanitize_html as _sanitize_html
+        if getattr(self, "content", None):
+            self.content = _sanitize_html(self.content)
         from django.db.models import F  # 导入F表达式用于数据库操作
         from django.utils import timezone  # 导入时区相关工具
         import logging  # 导入日志模块
@@ -317,6 +321,10 @@ class Comment(TranslatableContentMixin):
         return [self.content]
 
     def save(self, *args, **kwargs):
+        # 第 256 批：保存时净化富文本（不再只依赖前端渲染前净化）
+        from .utils_html import sanitize_html as _sanitize_html
+        if getattr(self, "content", None):
+            self.content = _sanitize_html(self.content)
         super().save(*args, **kwargs)  # 调用父类保存方法
         if not self.is_deleted and not self.parent:  # 如果评论未删除且不是回复评论
             self.post.update_comment_count()  # 更新帖子的评论计数
