@@ -1325,6 +1325,7 @@ export const zhCN = {
     // ── 第 225 批（P2-7 / P2-8 / P2-9 / P2-10）──
     exportCsv: '导出 CSV',
     exported: '已开始下载',
+    exportedCount: '已导出 {count} 条（当前筛选结果），可用 Excel 打开',
     exportFailed: '导出失败',
     emptyFiltered: '当前筛选没有匹配的反馈',
     clearFilters: '清除筛选',
@@ -4517,6 +4518,7 @@ export const en = {
     dateRange: 'Date range',
     exportCsv: 'Export CSV',
     exported: 'Download started',
+    exportedCount: 'Exported {count} rows (current filter)',
     exportFailed: 'Export failed',
     emptyFiltered: 'No feedback matches the current filters',
     clearFilters: 'Clear filters',

@@ -694,7 +694,9 @@ export default {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        ElMessage.success(t('feedbackAdmin.exported'));
+        // 第 272 批：把**导出条数**说出来 —— 只下载个文件、不知道导了多少条，
+        // 管理员没法判断"筛出来的对不对"（导出的是当前筛选结果，不是全量）。
+        ElMessage.success(t('feedbackAdmin.exportedCount', { count: total.value }));
       } catch (error) {
         ElMessage.error(formatApiError(error, t('feedbackAdmin.exportFailed')));
       } finally {
