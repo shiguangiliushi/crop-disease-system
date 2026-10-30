@@ -252,7 +252,19 @@ export const messages = {
       sources: '来源',
       failed: '没问到答案，请稍后再试',
     },
+    pestWiki: {
+      title: '病害百科',
+      viewWiki: '查看病害百科',
+      symptoms: '症状',
+      noSymptoms: '暂无症状描述',
+      prevention: '防治方法',
+      noPrevention: '暂无防治方法',
+      description: '详细描述',
+      sources: '资料来源',
+      notFound: '没有找到这条病害的百科词条',
+    },
   },
+
 
   en: {
     common: {
@@ -499,6 +511,17 @@ export const messages = {
       asking: 'Looking it up…',
       sources: 'Sources',
       failed: 'No answer right now — please try again later',
+    },
+    pestWiki: {
+      title: 'Disease wiki',
+      viewWiki: 'View disease wiki',
+      symptoms: 'Symptoms',
+      noSymptoms: 'No symptom description yet',
+      prevention: 'Prevention',
+      noPrevention: 'No prevention methods yet',
+      description: 'Description',
+      sources: 'Sources',
+      notFound: 'No wiki entry found for this disease',
     },
   },
 };

@@ -1,6 +1,6 @@
 # 农作物病害识别系统 · 移动端（H5）
 
-农户在田里用的 H5 客户端（`mobile/`，端口 **5174**）：登录/注册/忘记密码 → 拍照识别 → 结果 →
+农户在田里用的 H5 客户端（`mobile/`，端口 **5174**）：登录/注册/忘记密码 → 拍照识别 → 结果（可点进病害百科）→
 识别记录 → 我的。与桌面端 `../frontend` 是**两个独立工程、共用同一个后端**（`../backend`，Django）。
 
 ## 一、为什么拆两端
@@ -61,7 +61,7 @@ mobile/
 │  ├─ stores/         auth.js（登录态/持久化/clearAuth）、detect.js（当前识别结果，sessionStorage 恢复）
 │  ├─ utils/          camera.js、image.js（压缩）、detectionResult.js（两处结果统一整形，**保留 identifier**）、
 │  │                  authStorage.js、offlineQueue/offlineStorage/offlineSync（离线队列）
-│  └─ views/          LoginView / RegisterView / ForgotPasswordView / DetectView / ResultView / HistoryView / MineView
+│  └─ views/          LoginView / RegisterView / ForgotPasswordView / DetectView / ResultView / HistoryView / MineView / PestDetailView
 ├─ scripts/           check-i18n-symmetry.mjs（中英 key 对称性自检）
 ├─ vite.config.js     端口 5174、host: '0.0.0.0'、/api 与 /media 代理
 └─ .env.development   VITE_API_BASE_URL=/api；VITE_LEGAL_BASE_URL（法务页地址）

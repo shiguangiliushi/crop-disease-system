@@ -29,6 +29,13 @@ const routes = [
     meta: { title: 'auth.registerTitle', tabbar: false, back: true },
   },
   {
+    // 第 260 批：病害百科详情（结果页点「查看病害百科」进来）
+    path: '/pests/:keyword',
+    name: 'pest-detail',
+    component: () => import('@/views/PestDetailView.vue'),
+    meta: { title: 'pestWiki.title', tabbar: false, back: true },
+  },
+  {
     // 第 91 批：忘记密码。此前移动端没有这一页，忘了密码 = 永久登不进（只能找管理员）。
     path: '/forgot-password',
     name: 'forgot-password',

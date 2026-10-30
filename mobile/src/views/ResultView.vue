@@ -27,7 +27,11 @@
 
       <div class="card">
         <p class="card-title">{{ isHealthy ? t('result.healthy') : t('result.detected') }}</p>
-        <h2 class="disease-name">{{ displayName }}</h2>
+        <!-- 第 260 批：点病害名看百科详情（症状/防治/来源） -->
+        <h2 class="disease-name" @click="openWiki">{{ displayName }}</h2>
+        <p v-if="!isHealthy" class="wiki-link" @click="openWiki">
+          {{ t('pestWiki.viewWiki') }} <van-icon name="arrow" />
+        </p>
         <p v-if="isHealthy" class="muted">{{ t('result.healthyDesc') }}</p>
 
         <div class="confidence-row">
@@ -271,6 +275,15 @@ const { t, locale } = useI18n();
 const isDetail = computed(() => Boolean(route.params.id));
 const loading = ref(false);
 const result = ref(detectStore.result);
+
+/** 第 260 批：打开病害百科（优先用模型类名，回落到病害名） */
+function openWiki() {
+  // 用**病害名**而不是模型类名：后端 `?search=` 打的是 name/name_en，
+  // 类名（Tomato___Late_blight）搜不到（第 260 批实测 0 命中）。
+  const keyword = result.value?.disease?.name || result.value?.disease?.nameEn || '';
+  if (!keyword) return;
+  router.push({ name: 'pest-detail', params: { keyword } });
+}
 
 // 第 253 批：识别后追问（弹层）
 const askVisible = ref(false);
@@ -565,6 +578,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 260 批：百科入口 */
+.disease-name {
+  cursor: pointer;
+}
+
+.wiki-link {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #2f855a;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
 /* 第 253 批：追问弹层 */
 .ask-card .ask-hint {
   margin: 0 0 12px;
