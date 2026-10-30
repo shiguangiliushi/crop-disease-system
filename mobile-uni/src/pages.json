@@ -29,6 +29,13 @@
       }
     },
     {
+      "path": "pages/profile/profile",
+      "style": {
+        "navigationBarTitleText": "编辑资料",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/pest/pest",
       "style": {
         "navigationBarTitleText": "病害百科",

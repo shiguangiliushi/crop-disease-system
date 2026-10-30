@@ -24,7 +24,11 @@
     </view>
 
     <view class="card menu">
-      <view class="menu-item" @click="goNotifications">
+      <view class="menu-item" @click="goProfileEdit">
+      <text class="menu-label">{{ t('profileEdit.title') }}</text>
+    </view>
+
+    <view class="menu-item" @click="goNotifications">
       <text class="menu-label">{{ t('notify.title') }}</text>
       <text v-if="unread" class="menu-value">{{ unread }}</text>
     </view>
@@ -215,6 +219,10 @@ onShow(() => {
     unread.value = count
   })
 })
+
+function goProfileEdit() {
+  uni.navigateTo({ url: '/pages/profile/profile' })
+}
 </script>
 
 <style scoped>
