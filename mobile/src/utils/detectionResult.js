@@ -39,6 +39,9 @@ export function normalizeDetectResponse(responseData) {
 
   return {
     source: 'detect',
+    // 第 253 批：保留模型类名 —— 识别后的「追问助手」把它当 pest_identifier 传，
+    // 否则"这个病用什么药？"这种指代问题检索不到词条，会降级成"未收录"。
+    identifier: detection.identifier || detection.pest_identifier || '',
     historyId: data.history_id ?? detection.history_id ?? null,
     timestamp: detection.timestamp || data.timestamp || new Date().toISOString(),
     healthy:
@@ -66,6 +69,8 @@ export function normalizeHistoryItem(raw = {}) {
   const info = raw.pest_info || {};
   return {
     source: 'history',
+    // 第 253 批：同上（详情接口的 pest_info.english_identifier 是第 244 批加的）
+    identifier: raw.english_identifier || info.english_identifier || raw.identifier || '',
     historyId: raw.id ?? null,
     timestamp: raw.timestamp || raw.timestamp_formatted || '',
     timeText: raw.timestamp_formatted || '',
