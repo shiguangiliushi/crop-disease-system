@@ -16126,3 +16126,47 @@ class LikeNotificationTests(APITestCase):
         notification = Notification.objects.filter(
             recipient=self.author, type='comment_like').first()
         self.assertIsNotNone(notification, '评论被点赞应发 comment_like 通知')
+
+
+class FeedbackReplyNotificationTests(APITestCase):
+    """第 267 批：管理员回复反馈后给提交人投递站内通知"""
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_fb_admin', password='pw12345678', role='ADMIN')
+        self.author = User.objects.create_user(
+            username='zz_fb_author', password='pw12345678')
+        from .models import Feedback
+
+        self.feedback = Feedback.objects.create(
+            user=self.author, category='suggestion', suggestion='希望增加夜间模式')
+
+    def _reply(self, **payload):
+        client = APIClient()
+        client.force_authenticate(user=self.admin)
+        return client.post(f'/api/feedback/{self.feedback.id}/reply/', payload, format='json')
+
+    def test_reply_creates_notification(self):
+        from .models_notify import Notification
+
+        response = self._reply(status='resolved', admin_reply='已排期，下个版本上线')
+        self.assertEqual(response.status_code, 200, response.content)
+
+        notification = Notification.objects.filter(
+            recipient=self.author, type='feedback').first()
+        self.assertIsNotNone(notification, '回复后提交人应收到 feedback 类型通知')
+        self.assertIn('已排期', notification.message, notification.message)
+        # 既有实现（第 224 批那条）跳的是反馈页；移动端新增页正是 /feedback
+        self.assertEqual(notification.url, '/feedback')
+
+    def test_status_only_change_does_not_notify(self):
+        from .models_notify import Notification
+
+        response = self._reply(status='processing')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(
+            Notification.objects.filter(recipient=self.author, type='feedback').exists(),
+            '只改状态、没写回复内容时不该打扰用户',
+        )
