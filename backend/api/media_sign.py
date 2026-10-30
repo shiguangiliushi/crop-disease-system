@@ -17,6 +17,14 @@ import hashlib
 import hmac
 import time
 
+#: 需要签名才能访问的 media 子目录（第 259 批起由 SignedMediaStorage 自动加签名）
+PRIVATE_PREFIXES = (
+    'assistant_uploads/',
+    'detection_history/',
+    'consult_images/',
+    'feedback_images/',
+)
+
 DEFAULT_TTL = 3600  # 1 小时：足够一次页面浏览，又不会长期可用
 
 

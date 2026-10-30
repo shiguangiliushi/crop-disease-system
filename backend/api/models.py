@@ -22,6 +22,7 @@ from django.db import models  # 导入Django模型模块
 from django.utils import timezone  # 导入时区处理模块
 from django.conf import settings  # 导入Django配置模块
 from django.core.validators import FileExtensionValidator  # 导入文件扩展名验证器
+from .storage_private import signed_media_storage  # 第 259 批：私有图自动签名
 
 # 第 85 批：用户内容的英文译文元数据（反馈内容 / 管理员回复），见 models_i18n.py
 from .models_i18n import TranslationMetaMixin
@@ -569,8 +570,11 @@ class PreventionMethod(models.Model):  # 定义防治方法模型
 
 class DetectionHistory(models.Model):  # 定义检测历史模型
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户")  # 用户外键
-    image = models.ImageField(upload_to='detection_history/', verbose_name="检测图片")  # 检测图片字段
+    image = models.ImageField(upload_to='detection_history/',
+                              storage=signed_media_storage,  # 第 259 批：.url 自动带签名
+                              verbose_name="检测图片")  # 检测图片字段
     annotated_image = models.ImageField(upload_to='detection_history/annotated/', blank=True, null=True,
+                                       storage=signed_media_storage,  # 第 259 批：.url 自动带签名
                                         verbose_name="标注图片")  # 标注图片字段
     detection_result = models.CharField(max_length=255, verbose_name="检测结果")  # 检测结果字段
     timestamp = models.DateTimeField(auto_now_add=True, verbose_name="检测时间")  # 检测时间字段
@@ -619,7 +623,8 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户", null=True, blank=True)  # 用户外键
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='suggestion',
                                verbose_name="反馈类型")  # 反馈类型（意见反馈页使用）
-    image = models.ImageField(upload_to='feedback_images/', verbose_name="反馈图片", null=True, blank=True)  # 反馈图片字段
+    image = models.ImageField(upload_to='feedback_images/', storage=signed_media_storage,
+                              verbose_name="反馈图片", null=True, blank=True)  # 反馈图片字段
     disease_name = models.CharField(max_length=255, blank=True, default='',
                                    verbose_name="病害名称")  # 病害名称字段（识别结果反馈才有）
     confidence = models.FloatField(null=True, blank=True, verbose_name="置信度")  # 置信度字段

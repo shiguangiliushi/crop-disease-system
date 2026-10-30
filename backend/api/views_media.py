@@ -29,15 +29,7 @@ from rest_framework.views import APIView
 
 
 #: 需要鉴权的目录前缀（第 257 批只有助手提问图片；后续可加 detection_history / consult_images）
-PRIVATE_PREFIXES = (
-    'assistant_uploads/',    # 助手提问图片（无页面渲染）
-    # ⚠️ 第 258 批已把签名机制做好（`api/media_sign.py`），但**暂未**把下面这些目录列进来：
-    #    它们会直接渲染在 `<img>` 上，必须先在 5 处 URL 出口调 `sign_path()`、
-    #    并跑通前端图片加载，才能收权。列进去的当天如果不改出口，就是"满屏裂图"。
-    #    'detection_history/',   # 识别原图与标注图（用户叶片照片）—— 下一步
-    #    'consult_images/',      # 专家咨询配图
-    #    'feedback_images/',     # 意见反馈附图
-)
+from .media_sign import PRIVATE_PREFIXES  # 第 259 批：清单集中到 media_sign
 
 #: 归属判断：目录前缀 → (模型路径, 关联查询字段)
 #: 收权某目录时，这里要同时给出"谁算所有者"。
@@ -46,9 +38,6 @@ OWNER_LOOKUPS = {
     'consult_images/': ('api.models_expert.ExpertQuestion', 'user'),
     'feedback_images/': ('api.models.Feedback', 'user'),
 }
-
-#: 归属判断：目录前缀 → (模型路径, 关联查询字段)
-
 
 
 class MediaView(APIView):

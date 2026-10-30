@@ -16,6 +16,7 @@
 """
 from django.conf import settings
 from django.db import models
+from .storage_private import signed_media_storage  # 第 259 批：私有图自动签名
 
 
 class ExpertProfile(models.Model):
@@ -65,7 +66,8 @@ class ConsultQuestion(models.Model):
     crop_type = models.CharField('作物', max_length=100, blank=True, default='', db_index=True)
     title = models.CharField('问题标题', max_length=200)
     content = models.TextField('问题描述')
-    image = models.ImageField(upload_to='consult_images/', blank=True, null=True, verbose_name='配图')
+    image = models.ImageField(upload_to='consult_images/', blank=True, null=True,
+                              storage=signed_media_storage, verbose_name='配图')
 
     status = models.CharField('状态', max_length=10, choices=STATUS_CHOICES, default='open')
     accepted_answer = models.ForeignKey(

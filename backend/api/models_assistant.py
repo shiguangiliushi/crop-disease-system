@@ -27,6 +27,7 @@ from django.conf import settings as django_settings
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from .storage_private import signed_media_storage  # 第 259 批：私有图自动签名
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,9 @@ class AssistantMessage(models.Model):
     #: `vision.store_image()` 负责压缩，`post_delete` 负责在消息删除时把文件一起删掉，
     #: `prune_media` 会把它纳入"被引用文件"（FileField/ImageField 自动收集）。
     image = models.ImageField(
-        upload_to='assistant_uploads/%Y%m/', blank=True, null=True, verbose_name="提问图片",
+        upload_to='assistant_uploads/%Y%m/', blank=True, null=True,
+        storage=signed_media_storage,  # 第 259 批：.url 自动带签名
+        verbose_name="提问图片",
     )
 
     # ── 生成侧元数据（用户消息全为空/0）────────────────────────────────────

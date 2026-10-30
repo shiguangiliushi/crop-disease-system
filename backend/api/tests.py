@@ -16018,3 +16018,51 @@ class MediaAccessTests(APITestCase):
     def test_public_media_still_open(self):
         response = self.client.get('/media/pest_images/open.png')
         self.assertEqual(response.status_code, 200, '公开目录不能被一并收权，否则页面全是裂图')
+
+
+class SignedMediaUrlTests(APITestCase):
+    """第 259 批：私有图片的 .url 自动带签名，匿名可读；无签名仍 404"""
+
+    def setUp(self):
+        from django.conf import settings
+
+        self.user = get_user_model().objects.create_user(
+            username='zz_signed_owner', password='pw12345678')
+        rel = 'detection_history/202601/leaf.jpg'
+        target = Path(settings.MEDIA_ROOT) / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b'\xff\xd8\xff-test')
+        self.rel = rel
+
+        from .models import DetectionHistory
+
+        self.record = DetectionHistory.objects.create(
+            user=self.user, image=rel, detection_result='番茄晚疫病', confidence=0.9,
+        )
+
+    def test_url_contains_signature(self):
+        url = self.record.image.url
+        self.assertIn('sig=', url, url)
+        self.assertIn('exp=', url, url)
+
+    def test_anonymous_can_read_with_signature(self):
+        url = self.record.image.url
+        path = url.split('?', 1)[0]
+        query = url.split('?', 1)[1]
+        response = self.client.get(f'{path}?{query}')
+        self.assertEqual(response.status_code, 200)
+
+    def test_anonymous_without_signature_gets_404(self):
+        response = self.client.get(f'/media/{self.rel}')
+        self.assertEqual(response.status_code, 404)
+
+    def test_tampered_signature_rejected(self):
+        response = self.client.get(f'/media/{self.rel}?sig=deadbeef&exp=9999999999')
+        self.assertEqual(response.status_code, 404)
+
+    def test_public_media_has_no_signature(self):
+        from .models import PestInfo
+
+        pest = PestInfo.objects.create(name='测试病', crop_type='番茄')
+        pest.image = 'pest_images/x.png'
+        self.assertNotIn('sig=', pest.image.url)
