@@ -60,6 +60,12 @@
           is-link
           to="/profile/edit"
         />
+        <van-cell
+          v-if="auth.isAuthenticated"
+          :title="t('feedbackForm.title')"
+          is-link
+          to="/feedback"
+        />
         <van-cell :title="t('mine.about')" is-link @click="showAbout = true" />
         <van-cell v-if="auth.isAuthenticated" :title="t('history.title')" is-link to="/history" />
       </van-cell-group>

@@ -29,6 +29,13 @@ const routes = [
     meta: { title: 'auth.registerTitle', tabbar: false, back: true },
   },
   {
+    // 第 266 批：意见反馈
+    path: '/feedback',
+    name: 'feedback-form',
+    component: () => import('@/views/FeedbackView.vue'),
+    meta: { title: 'feedbackForm.title', tabbar: false, back: true },
+  },
+  {
     // 第 264 批：资料编辑
     path: '/profile/edit',
     name: 'profile-edit',
