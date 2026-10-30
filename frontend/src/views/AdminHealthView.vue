@@ -147,6 +147,66 @@
       </el-descriptions>
       <p class="field-hint">{{ t('health.runtimeHint') }}</p>
     </section>
+    <!-- 第 252 批：模型信息（管理端内部页，暂未接 i18n） -->
+    <section v-if="data && data.model" class="panel-card model-info">
+      <h3 class="panel-title">
+        模型信息
+        <span class="panel-count">YOLOv8n · {{ data.model.model }}</span>
+      </h3>
+
+      <el-descriptions :column="3" border size="small">
+        <el-descriptions-item label="mAP@0.5">
+          <strong>{{ (data.model.map50 * 100).toFixed(1) }}%</strong>
+        </el-descriptions-item>
+        <el-descriptions-item label="Precision">{{ (data.model.precision * 100).toFixed(0) }}%</el-descriptions-item>
+        <el-descriptions-item label="Recall">{{ (data.model.recall * 100).toFixed(0) }}%</el-descriptions-item>
+        <el-descriptions-item label="输入尺寸">{{ data.model.image_size }}px</el-descriptions-item>
+        <el-descriptions-item label="权重体积">
+          {{ (data.model.weights_size_bytes / 1024 / 1024).toFixed(1) }} MB
+        </el-descriptions-item>
+        <el-descriptions-item label="训练条件">{{ data.model.trained_on }}</el-descriptions-item>
+      </el-descriptions>
+
+      <div class="model-note">
+        ⚠️ 以上为<strong>训练期记录</strong>（验证集 {{ data.model.val_images.toLocaleString() }} 张），
+        不是运行时实时计算 —— 仓库里没有检测标注与训练产物，无法重算 mAP；换模型后必须同步更新。
+      </div>
+
+      <div class="model-figures">
+        <figure v-for="fig in data.model.figures" :key="fig.key">
+          <img :src="'/model/' + fig.file" :alt="fig.label" loading="lazy" />
+          <figcaption>{{ fig.label }}</figcaption>
+        </figure>
+      </div>
+
+      <template v-if="data.model_runtime">
+        <h4 class="model-subtitle">近 {{ data.model_runtime.days }} 天真实使用</h4>
+        <el-descriptions :column="4" border size="small">
+          <el-descriptions-item label="识别量">{{ data.model_runtime.total }}</el-descriptions-item>
+          <el-descriptions-item label="平均置信度">
+            {{ (data.model_runtime.avg_confidence * 100).toFixed(1) }}%
+          </el-descriptions-item>
+          <el-descriptions-item label="用户反馈准确率">
+            {{ data.model_runtime.feedback.accuracy === null
+              ? '—'
+              : (data.model_runtime.feedback.accuracy * 100).toFixed(1) + '%' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="准确 / 不准确">
+            {{ data.model_runtime.feedback.accurate }} / {{ data.model_runtime.feedback.inaccurate }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div v-if="data.model_runtime.top_diseases.length" class="model-top">
+          <span class="model-top-label">识别最多：</span>
+          <el-tag
+            v-for="row in data.model_runtime.top_diseases"
+            :key="row.name"
+            size="small"
+            effect="plain"
+          >{{ row.name }} × {{ row.count }}</el-tag>
+        </div>
+      </template>
+    </section>
   </div>
 </template>
 
@@ -250,6 +310,61 @@ export default {
 </script>
 
 <style scoped>
+/* 第 252 批：模型信息卡片 */
+.model-note {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fff8e6;
+  color: #8a6d1f;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.model-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin: 14px 0;
+}
+
+.model-figures figure {
+  margin: 0;
+  text-align: center;
+}
+
+.model-figures img {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e2ebe5);
+  background: #fff;
+}
+
+.model-figures figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-500, #78897f);
+}
+
+.model-subtitle {
+  margin: 18px 0 10px;
+  font-size: 14px;
+  color: var(--ink-700, #2f4238);
+}
+
+.model-top {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-top-label {
+  font-size: 12.5px;
+  color: var(--ink-500, #78897f);
+}
+
 .overall {
   margin-bottom: 14px;
 }

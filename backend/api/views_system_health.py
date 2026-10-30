@@ -69,6 +69,96 @@ def _media_size():
     return {'files': files, 'bytes': total, 'mb': round(total / 1024 / 1024, 1)}
 
 
+#: 第 252 批：模型指标来自 `docs/模型训练说明.md` 的训练记录（Colab, 验证集 24,595 张）。
+#: ⚠️ 这些**不是运行时实时计算**：仓库里没有检测标注，也没有 runs/ 产物，
+#:    无法重算 mAP。改模型后必须同步更新这里，否则看板会撒谎。
+MODEL_METRICS = {
+    'map50': 0.828,
+    'precision': 0.89,
+    'recall': 0.78,
+    'image_size': 640,
+    'model': 'YOLOv8n',
+    'trained_on': '2026-01 · Google Colab T4 · 50 epochs（patience=20 早停）',
+    'val_images': 24595,
+    'figures': [
+        {'key': 'pr_curve', 'label': 'PR 曲线', 'file': 'pr_curve.png'},
+        {'key': 'confusion_matrix', 'label': '混淆矩阵', 'file': 'confusion_matrix.png'},
+        {'key': 'training_results', 'label': '训练曲线', 'file': 'training_results.png'},
+    ],
+}
+
+
+def _model_metrics() -> dict:
+    """静态指标 + 权重信息 + 图片文件名（前端从 /model/ 静态目录取图）。"""
+    from django.conf import settings as django_settings
+    from pathlib import Path as _Path
+
+    weights = _Path(django_settings.BASE_DIR) / 'api' / 'newmodels' / 'best.pt'
+    data = dict(MODEL_METRICS)
+    try:
+        data['weights_size_bytes'] = weights.stat().st_size
+        data['weights_mtime'] = weights.stat().st_mtime
+    except OSError:
+        data['weights_size_bytes'] = 0
+    return data
+
+
+def _runtime_model_stats(days: int = 30) -> dict:
+    """第 252 批：**真实使用数据**（与训练指标分开，避免把两件事混为一谈）。
+
+    指标：近 N 天识别量、平均置信度、置信度分桶、用户反馈"准确/不准确"、
+    识别最多的病害 Top 5。
+    """
+    from datetime import timedelta
+
+    from django.db.models import Avg, Count
+    from django.utils import timezone
+
+    from .models import DetectionHistory, Feedback
+
+    since = timezone.now() - timedelta(days=days)
+    rows = DetectionHistory.objects.filter(timestamp__gte=since)
+
+    total = rows.count()
+    avg = rows.aggregate(value=Avg('confidence'))['value'] or 0
+
+    buckets = {'lt50': 0, 'p50_70': 0, 'p70_90': 0, 'gte90': 0}
+    for value in rows.values_list('confidence', flat=True):
+        pct = float(value or 0) * (100 if float(value or 0) <= 1 else 1)
+        if pct < 50:
+            buckets['lt50'] += 1
+        elif pct < 70:
+            buckets['p50_70'] += 1
+        elif pct < 90:
+            buckets['p70_90'] += 1
+        else:
+            buckets['gte90'] += 1
+
+    feedback = Feedback.objects.filter(category='recognition', timestamp__gte=since)
+    accurate = feedback.filter(is_correct=True).count()
+    inaccurate = feedback.filter(is_correct=False).count()
+
+    top = (
+        rows.exclude(detection_result='')
+        .values('detection_result')
+        .annotate(n=Count('id'))
+        .order_by('-n')[:5]
+    )
+
+    return {
+        'days': days,
+        'total': total,
+        'avg_confidence': round(float(avg), 4),
+        'buckets': buckets,
+        'feedback': {
+            'accurate': accurate,
+            'inaccurate': inaccurate,
+            'accuracy': round(accurate / (accurate + inaccurate), 4) if (accurate + inaccurate) else None,
+        },
+        'top_diseases': [{'name': row['detection_result'], 'count': row['n']} for row in top],
+    }
+
+
 class AdminHealthView(APIView):
     """系统健康（仅全权管理员）"""
 
@@ -110,6 +200,8 @@ class AdminHealthView(APIView):
             'counts': _counts(),
             'media': _media_size(),
             'history': _history(),
+            'model': _model_metrics(),  # 第 252 批：模型指标（静态）+ 权重信息
+            'model_runtime': _runtime_model_stats(),  # 第 252 批：近 30 天真实使用数据
             'runtime': {
                 'debug': bool(settings.DEBUG),
                 'python': f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}',

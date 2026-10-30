@@ -15827,3 +15827,25 @@ class AssistantTitleTests(APITestCase):
         self.assertIsNotNone(session)
         self.assertIn('番茄晚疫病', session.title, session.title)
         self.assertIn('·', session.title, session.title)
+
+
+class ModelMetricsTests(APITestCase):
+    """第 252 批：系统健康里的模型指标（静态训练指标 + 近 30 天真实使用数据）"""
+
+    def setUp(self):
+        cache.clear()
+        self.admin = get_user_model().objects.create_user(
+            username='zz_model_admin', password='pw12345678', role='ADMIN')
+
+    def test_model_section_shape(self):
+        client = APIClient()
+        client.force_authenticate(user=self.admin)
+        response = client.get('/api/admin/health/')
+        self.assertEqual(response.status_code, 200, response.content)
+        model = response.data['model']
+        self.assertAlmostEqual(model['map50'], 0.828)
+        self.assertEqual(len(model['figures']), 3)
+        runtime = response.data['model_runtime']
+        self.assertIn('total', runtime)
+        self.assertIn('buckets', runtime)
+        self.assertIn('accuracy', runtime['feedback'])
