@@ -24,6 +24,8 @@ staticfiles/
 # 本机密钥（.env* 全忽略，只放行模板；口径见项目根 .gitignore 的说明）
 .env
 .env.*
+# 第 251 批：生产配置**模板**要入库（里面没有真实密钥）
+!.env.production.example
 !.env.example
 
 # Python 缓存与虚拟环境
