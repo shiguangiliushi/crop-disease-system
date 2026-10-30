@@ -120,6 +120,7 @@ deploy/     deploy/nginx.conf（反代示例）；容器编排见根目录 docke
 
 ```bash
 # ── 后端（需要一个装好依赖的 Python 环境）──────────────────────────────────
+
 cd backend
 pip install -r requirements.txt
 python manage.py migrate
@@ -128,12 +129,15 @@ python manage.py init_forum_boards            # 初始化论坛版块（首次�
 python manage.py runserver 127.0.0.1:8000
 
 # ── 桌面端 ────────────────────────────────────────────────────────────────
+
 cd frontend && npm install && npm run dev      # http://127.0.0.1:5173
 
 # ── 移动端（可选，独立应用）───────────────────────────────────────────────
+
 cd mobile && npm install && npm run dev        # http://127.0.0.1:5174
 
 # ── 移动端 uni-app 版（可选，第 232 批：先跑 H5，后续出小程序/APP）────────
+
 cd mobile-uni && npm install && npm run dev:h5  # http://127.0.0.1:5175
 ```
 
@@ -164,12 +168,15 @@ cd mobile-uni && npm install && npm run dev:h5  # http://127.0.0.1:5175
 
 ```bash
 # 后端：910 条测试（权限矩阵、限流、注销冷静期、备份恢复、审计日志、助手多轮/看图/看板……）
+
 cd backend && python manage.py test api.tests
 
 # 桌面端：131 条单元测试 + 类型检查 + 4 个一致性检查脚本（共 6 条检查）
+
 cd frontend && npm run test:unit && npm run type-check && npm run check
 
 # 端到端（真实后端 + 真实浏览器）：7 个 Playwright spec + 43 个按批留证的验证脚本
+
 cd frontend && npm run e2e                     # Playwright 用例（7 个 spec）
 cd frontend && node scripts/verify-forum-module.mjs   # 按批留证的验证脚本（43 个）
 ```
@@ -189,9 +196,11 @@ python docs/tools/check_i18n_coverage.py       # 模板里还有多少裸露中�
 python docs/tools/refresh_audit_report.py --check  # 注释审计报告的数字是否需要刷新
 
 # 环境自检（命令行版；管理端「系统健康」页与它是**同一套检查**）
+
 cd backend && python manage.py check_env
 
 # 模型类名 ↔ 词条一致性（"识别对了但显示错了"先跑这个）
+
 cd backend && python manage.py check_model_labels
 ```
 
@@ -199,10 +208,13 @@ cd backend && python manage.py check_model_labels
 
 ```bash
 # 推送并**核对远端 ref**（不是看命令有没有报错）—— 约定见 docs/提交与仓库约定.md
+
 python docs/tools/push_and_verify.py
 
 # 备份到底可不可信：真跑一次演练（造标记物 → 备份 → 破坏 → 恢复 → 逐项核对）
+
 # ⚠️ 它会**改写数据库**，只在副本/预发上跑，不要对着开发库跑
+
 cd backend && python manage.py backup_drill --yes
 ```
 

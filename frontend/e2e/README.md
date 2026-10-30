@@ -15,9 +15,11 @@
 
 ```bash
 # 后端必须先跑起来（E2E 打真实后端 + 真实数据库）
+
 cd backend && python manage.py runserver 127.0.0.1:8000
 
 # 另一终端
+
 cd frontend
 npm run e2e              # 只跑 chromium（推荐，约 3.5 分钟 / 24 条）
 npm run e2e:headed       # 带界面看过程（调试用）
@@ -138,7 +140,6 @@ await loginAsMobile(page, session);     // 移动端：localStorage
 **单个** `detection` 对象（前端 `DetectView` 自己包成数组给结果卡片用），
 记录 id 叫 `history_id`（`detection_id` 是 `Feedback` 上的字段名）。
 写新接口的断言前，先 `curl`/`fetch` 一次把真实响应打出来。
-
 
 ---
 

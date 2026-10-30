@@ -21,9 +21,11 @@
 
 ```bash
 # 1) 后端（必须先起来，两端都依赖它）
+
 cd ../backend && python manage.py runserver        # http://127.0.0.1:8000
 
 # 2) 移动端
+
 cd ../mobile
 npm install
 npm run dev                                        # http://localhost:5174
