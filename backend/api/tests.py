@@ -15963,3 +15963,58 @@ class RichTextSanitizeTests(APITestCase):
         comment.refresh_from_db()
         self.assertNotIn('<script', comment.content.lower())
         self.assertIn('好评论', comment.content)
+
+
+class MediaAccessTests(APITestCase):
+    """第 257 批：/media/ 访问控制（公开目录直出，私有目录鉴权）"""
+
+    def setUp(self):
+        from django.conf import settings
+
+        self.media_root = Path(settings.MEDIA_ROOT)
+        self.owner = get_user_model().objects.create_user(
+            username='zz_media_owner', password='pw12345678')
+        self.other = get_user_model().objects.create_user(
+            username='zz_media_other', password='pw12345678')
+        self.admin = get_user_model().objects.create_user(
+            username='zz_media_admin', password='pw12345678', role='ADMIN')
+
+        private = self.media_root / 'assistant_uploads' / '202601'
+        private.mkdir(parents=True, exist_ok=True)
+        self.private_rel = 'assistant_uploads/202601/secret.jpg'
+        (self.media_root / self.private_rel).write_bytes(b'\xff\xd8\xff-test')
+
+        public = self.media_root / 'pest_images'
+        public.mkdir(parents=True, exist_ok=True)
+        (public / 'open.png').write_bytes(b'PNG-test')
+
+        from .models_assistant import AssistantMessage, AssistantSession
+
+        session = AssistantSession.objects.create(user=self.owner, title='测试会话')
+        AssistantMessage.objects.create(
+            session=session, role='user', content='看图',
+            image=self.private_rel,
+        )
+
+    def test_anonymous_cannot_read_private_media(self):
+        response = self.client.get(f'/media/{self.private_rel}')
+        self.assertEqual(response.status_code, 404, '未登录必须 404（不是 403，避免泄露存在性）')
+
+    def test_non_owner_cannot_read_private_media(self):
+        self.client.force_authenticate(user=self.other)
+        response = self.client.get(f'/media/{self.private_rel}')
+        self.assertEqual(response.status_code, 404)
+
+    def test_owner_can_read_private_media(self):
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.get(f'/media/{self.private_rel}')
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_can_read_private_media(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f'/media/{self.private_rel}')
+        self.assertEqual(response.status_code, 200)
+
+    def test_public_media_still_open(self):
+        response = self.client.get('/media/pest_images/open.png')
+        self.assertEqual(response.status_code, 200, '公开目录不能被一并收权，否则页面全是裂图')

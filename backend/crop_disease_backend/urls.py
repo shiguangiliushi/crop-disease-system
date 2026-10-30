@@ -24,6 +24,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
 from django.views.static import serve as media_serve
+from api.views_media import MediaView  # 第 257 批：媒体访问控制
 from django.contrib.staticfiles.views import serve as static_serve
 
 # 动态导入视图
@@ -504,9 +505,10 @@ if settings.DEBUG:
 
 if settings.SERVE_MEDIA:
     urlpatterns += [
+        # 第 257 批：改走 api.views_media.MediaView —— 公开目录直出，
+        # 私有目录（assistant_uploads/）要求登录 + 本人或管理员，其余 404。
         re_path(
             r'^%s(?P<path>.*)$' % re.escape(settings.MEDIA_URL.lstrip('/')),
-            media_serve,          # django.views.static.serve（文件顶部已导入）
-            {'document_root': settings.MEDIA_ROOT},
+            MediaView.as_view(),
         ),
     ]
