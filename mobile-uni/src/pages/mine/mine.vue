@@ -24,7 +24,12 @@
     </view>
 
     <view class="card menu">
-      <view class="menu-item" @click="goHistory">
+      <view class="menu-item" @click="goNotifications">
+      <text class="menu-label">{{ t('notify.title') }}</text>
+      <text v-if="unread" class="menu-value">{{ unread }}</text>
+    </view>
+
+    <view class="menu-item" @click="goHistory">
         <text class="menu-icon">🗂</text>
         <text class="menu-label">{{ t('history.title') }}</text>
         <text class="menu-arrow">›</text>
@@ -73,6 +78,7 @@ import BottomNav from '@/components/BottomNav.vue'
 import { useAuthStore } from '@/stores/auth'
 import { fetchDetectionCount, fetchMyPoints, fetchUserStats } from '@/api/profile'
 import { TOKEN_KEY } from '@/utils/request'
+import { fetchUnreadCount } from '@/api/notify'
 // #ifdef APP-PLUS
 import { apiBase, saveApiBase } from '@/utils/config'
 // #endif
@@ -80,6 +86,7 @@ import { apiBase, saveApiBase } from '@/utils/config'
 const auth = useAuthStore()
 const stats = reactive({ detections: 0, posts: 0, points: 0 })
 const levelName = ref('')
+const unread = ref(0)  // 第 262 批：未读通知数
 
 const initial = computed(() => (auth.username || '?').slice(0, 1).toUpperCase())
 
@@ -197,6 +204,16 @@ onShow(() => {
     return
   }
   loadStats()
+})
+
+function goNotifications() {
+  uni.navigateTo({ url: '/pages/notify/notify' })
+}
+
+onShow(() => {
+  fetchUnreadCount().then((count) => {
+    unread.value = count
+  })
 })
 </script>
 

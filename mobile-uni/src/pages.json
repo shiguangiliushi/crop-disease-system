@@ -29,6 +29,13 @@
       }
     },
     {
+      "path": "pages/notify/notify",
+      "style": {
+        "navigationBarTitleText": "通知",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/history/history",
       "style": {
         "navigationBarTitleText": "识别记录",

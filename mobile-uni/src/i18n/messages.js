@@ -256,6 +256,13 @@ export const messages = {
     },
   },
 
+    notify: {
+      title: '系统通知',
+      unread: '{n} 条未读',
+      readAll: '全部已读',
+      empty: '还没有通知',
+    },
+
   en: {
     common: {
       appName: 'Crop Disease Detection',
@@ -503,6 +510,12 @@ export const messages = {
       deleteAccountPasswordRequired: 'Please enter your password',
       deleteAccountOk: 'Account deleted',
       deleteAccountFailed: 'Could not delete the account, please try again later',
+    },
+    notify: {
+      title: 'Notifications',
+      unread: '{n} unread',
+      readAll: 'Mark all read',
+      empty: 'No notifications yet',
     },
   },
 };
