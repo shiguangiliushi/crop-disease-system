@@ -24,3 +24,12 @@ export async function submitFeedback({ category, suggestion, contact = '', image
   });
   return response.data || {};
 }
+
+
+/** 我的反馈列表（第 268 批）—— 普通用户只返回自己提交的 */
+export async function fetchMyFeedback({ pageSize = 20 } = {}) {
+  const response = await http.get('/feedback/', { params: { page_size: pageSize } });
+  const body = response.data || {};
+  const rows = Array.isArray(body) ? body : body.results || body.data?.items || body.data || [];
+  return { items: rows, count: body?.count ?? rows.length };
+}
