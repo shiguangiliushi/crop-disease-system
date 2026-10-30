@@ -15849,3 +15849,37 @@ class ModelMetricsTests(APITestCase):
         self.assertIn('total', runtime)
         self.assertIn('buckets', runtime)
         self.assertIn('accuracy', runtime['feedback'])
+
+
+class DatabaseUrlSettingsTests(APITestCase):
+    """第 254 批：DATABASE_URL 解析（纯字符串，不连库）"""
+
+    def test_sqlite_url_keeps_absolute_path(self):
+        from crop_disease_backend.settings import _parse_database_url
+
+        config = _parse_database_url('sqlite:///C:/tmp/app.db')
+        self.assertEqual(config['ENGINE'], 'django.db.backends.sqlite3')
+        self.assertTrue(config['NAME'].endswith('app.db'), config['NAME'])
+
+    def test_postgres_url_maps_all_fields(self):
+        from crop_disease_backend.settings import _parse_database_url
+
+        config = _parse_database_url('postgres://user:p%40ss@db.example.com:5433/crops')
+        self.assertEqual(config['ENGINE'], 'django.db.backends.postgresql')
+        self.assertEqual(config['NAME'], 'crops')
+        self.assertEqual(config['USER'], 'user')
+        self.assertEqual(config['PASSWORD'], 'p@ss', 'URL 里的百分号编码要还原')
+        self.assertEqual(config['HOST'], 'db.example.com')
+        self.assertEqual(config['PORT'], '5433')
+
+    def test_unknown_scheme_falls_back_to_sqlite(self):
+        from crop_disease_backend.settings import _parse_database_url
+
+        with self.assertWarns(RuntimeWarning):
+            config = _parse_database_url('oracle://x/y')
+        self.assertEqual(config['ENGINE'], 'django.db.backends.sqlite3')
+
+    def test_no_url_means_local_sqlite(self):
+        from django.conf import settings
+
+        self.assertEqual(settings.DATABASES['default']['ENGINE'], 'django.db.backends.sqlite3')

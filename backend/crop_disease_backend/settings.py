@@ -307,15 +307,77 @@ TEMPLATES = [  # 模板配置
 
 WSGI_APPLICATION = 'crop_disease_backend.wsgi.application'  # WSGI应用
 
-# 数据库配置
-DATABASES = {
-    'default': {
+# 数据库配置（第 254 批：支持 DATABASE_URL；不配则仍然是本地 SQLite）
+#
+# 为什么现在做：以前引擎与路径是写死的，换 PostgreSQL 必须改代码；写死的东西没法用环境变量
+# 区分开发/生产，部署时只能手改 `settings.py`（一改就进版本库，容易把本地路径带上线）。
+#
+# 支持：
+#   postgres://user:pass@host:5432/dbname      （需要 psycopg / psycopg2）
+#   postgresql://…                             （同上，别名）
+#   mysql://user:pass@host:3306/dbname         （需要 mysqlclient）
+#   sqlite:///绝对路径                          （sqlite://:memory: 也行）
+# 不认识的 scheme 不会让服务起不来：打印警告并**回退到本地 SQLite**
+# （这类配置错误要能被看见，但不该表现为"整个站点 500 看不出原因"）。
+DEFAULT_SQLITE_PATH = str(BASE_DIR / 'db.sqlite3')
+
+
+def _sqlite_config(name: str = '') -> dict:
+    return {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': str(BASE_DIR / 'db.sqlite3'),
-        'OPTIONS': {
-            'timeout': 30,  # 增加超时时间到30秒
-        }
+        'NAME': name or DEFAULT_SQLITE_PATH,
+        'OPTIONS': {'timeout': 30},  # 增加超时时间到30秒
     }
+
+
+def _parse_database_url(url: str) -> dict:
+    """把 DATABASE_URL 转成 Django 的 DATABASES['default'] 字典。
+
+    只做**纯字符串解析**（不连库），所以可以在测试里直接调用，不需要真实数据库。
+    """
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or '').lower()
+
+    if scheme == 'sqlite':
+        # sqlite:///C:/x/db.sqlite3 → path=/C:/x/db.sqlite3；sqlite://:memory: → netloc 为空
+        name = parsed.path or ''
+        if name.startswith('//'):
+            name = name[2:]
+        if name.startswith('/') and len(name) > 2 and name[2] == ':':
+            name = name[1:]  # 去掉 Windows 盘符前的多余斜杠
+        return _sqlite_config(name.replace('/', '\\') if ':' in name else name)
+
+    engines = {
+        'postgres': 'django.db.backends.postgresql',
+        'postgresql': 'django.db.backends.postgresql',
+        'mysql': 'django.db.backends.mysql',
+    }
+    engine = engines.get(scheme)
+    if engine is None or not parsed.path:
+        warnings.warn(
+            f'DATABASE_URL 无法识别（scheme={scheme!r}），已回退到本地 SQLite。'
+            ' 支持 postgres(ql):// / mysql:// / sqlite://',
+            RuntimeWarning, stacklevel=2,
+        )
+        return _sqlite_config()
+
+    config = {
+        'ENGINE': engine,
+        'NAME': unquote(parsed.path.lstrip('/')),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or '',
+        'PORT': str(parsed.port or ''),
+        'CONN_MAX_AGE': int(os.environ.get('DJANGO_DB_CONN_MAX_AGE') or 60),
+    }
+    return {key: value for key, value in config.items() if value != ''}
+
+
+DATABASE_URL = (os.environ.get('DATABASE_URL') or '').strip()
+DATABASES = {
+    'default': _parse_database_url(DATABASE_URL) if DATABASE_URL else _sqlite_config(),
 }
 
 # 密码验证
