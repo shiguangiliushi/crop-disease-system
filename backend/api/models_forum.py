@@ -138,7 +138,12 @@ class Post(TranslatableContentMixin):
     )
 
     class Meta:
-        verbose_name = '帖子'  # 单数名称
+        verbose_name = '帖子'
+        # 第 285 批：论坛列表固定 "is_deleted=False + created_at 倒序"，管理端还有状态筛选
+        indexes = [
+            models.Index(fields=['-created_at'], name='post_created_idx'),
+            models.Index(fields=['status', '-created_at'], name='post_status_idx'),
+        ]  # 单数名称
         verbose_name_plural = verbose_name  # 复数名称（与单数相同）
         ordering = ['-is_pinned', '-last_comment_at', '-created_at']  # 默认排序：先按置顶降序，再按最后评论时间降序，最后按创建时间降序
 
@@ -309,7 +314,12 @@ class Comment(TranslatableContentMixin):
     updated_at = models.DateTimeField('更新时间', auto_now=True)  # 更新时间字段，自动设置为更新时间
 
     class Meta:
-        verbose_name = '评论'  # 单数名称
+        verbose_name = '评论'
+        # 第 285 批：评论列表 = "post_id=? + is_deleted=False + created_at 升序"
+        indexes = [
+            models.Index(fields=['post', 'created_at'], name='comment_post_idx'),
+            models.Index(fields=['created_at'], name='comment_created_idx'),
+        ]  # 单数名称
         verbose_name_plural = verbose_name  # 复数名称（与单数相同）
         ordering = ['created_at']  # 默认排序：按创建时间升序
 
