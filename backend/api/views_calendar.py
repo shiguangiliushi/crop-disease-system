@@ -222,8 +222,17 @@ class CalendarView(APIView):
         #: ⚠️ 作物筛选必须加在 `values()/annotate()` **之前** ——
         #:    加在后面等于对聚合结果再过滤，语义不对（而且 Django 会报
         #:    "Cannot filter a query once a slice has been taken" 之类的错）。
+        # 第 299 批：**用明确的时间区间，不用 `__year/__month`**。
+        # `__month` 在 SQLite 上按数据库存储值（UTC）提取，而请求的 month 来自
+        # `timezone.localdate()`（本地）——UTC+8 的凌晨两者会差一个月，
+        # 表现成"我明明今天识别过，日历格子却是空的"。
+        from datetime import datetime as _dt, time as _time
+
+        _start = timezone.make_aware(_dt.combine(_dt(today.year, month, 1).date(), _time.min))
+        _next_year, _next_month = (today.year + 1, 1) if month == 12 else (today.year, month + 1)
+        _end = timezone.make_aware(_dt.combine(_dt(_next_year, _next_month, 1).date(), _time.min))
         activity_qs = DetectionHistory.objects.filter(
-            timestamp__year=today.year, timestamp__month=month, pest_info__isnull=False)
+            timestamp__gte=_start, timestamp__lt=_end, pest_info__isnull=False)
         if crop and crop != 'all':
             activity_qs = activity_qs.filter(pest_info__crop_type=crop)
         day_rows = (activity_qs

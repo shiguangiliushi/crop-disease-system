@@ -6948,7 +6948,9 @@ class CalendarTests(TestCase):
         self._detect(self.user, self.tomato_pest)
         self._detect(self.user, self.corn_pest)
 
-        month = timezone.now().month
+        # 第 299 批：月份口径必须与视图一致（视图用 localdate）——
+        # 用 UTC 的 `timezone.now().month` 会在本地凌晨跨月时查错月份。
+        month = timezone.localdate().month
         corn = self.client_user.get('/api/calendar/', {'month': month, 'crop': '玉米'})
         total_corn = sum(item['count'] for item in corn.data['day_activity'])
         self.assertEqual(total_corn, 1, '筛玉米时只该算玉米那一条')
@@ -6962,7 +6964,9 @@ class CalendarTests(TestCase):
         self._detect(self.user, self.tomato_pest)
         self._detect(self.admin, self.corn_pest)
 
-        month = timezone.now().month
+        # 第 299 批：月份口径必须与视图一致（视图用 localdate）——
+        # 用 UTC 的 `timezone.now().month` 会在本地凌晨跨月时查错月份。
+        month = timezone.localdate().month
         mine = self.client_user.get('/api/calendar/', {'month': month})
         self.assertEqual(len(mine.data['my_days']), 1, '我只识别过一天')
 
