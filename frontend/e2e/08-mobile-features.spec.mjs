@@ -58,6 +58,27 @@ test.describe('移动端 · 新增能力', () => {
     await page.getByText('保存', { exact: true }).first().click();
   });
 
+  test('意见反馈：提交成功（POST 201）', async ({ page }) => {
+    const session = await login();
+    await loginAsMobile(page, session);
+
+    let status = null;
+    page.on('response', (res) => {
+      if (res.url().endsWith('/api/feedback/') && res.request().method() === 'POST') {
+        status = res.status();
+      }
+    });
+
+    await page.goto(`${MOBILE_BASE}/feedback`, { waitUntil: 'networkidle' });
+    await expect(page.locator('.chip')).toHaveCount(3);
+
+    await page.locator('.chip').nth(1).click();  // 问题反馈
+    await page.locator('textarea').first().fill(`e2e 反馈 ${Date.now()}`);
+    await page.getByText('提交反馈', { exact: true }).click();
+
+    await expect.poll(() => status, { timeout: 15000 }).toBe(201);
+  });
+
   test('结果页入口存在（追问助手 / 查看病害百科）', async ({ page, request }) => {
     const session = await login();
     const response = await request.get(`${MOBILE_BASE.replace('5174', '8000')}${HISTORY_SAMPLE}`, {
