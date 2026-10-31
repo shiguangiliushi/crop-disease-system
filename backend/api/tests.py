@@ -4584,7 +4584,12 @@ class PruneMediaCommandTests(TestCase):
         path = self.media / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-        stamp = time.time() - age_days * 86400
+        # 第 296 批：这里原写 `time.time()`，但本文件顶部 `from datetime import … time`
+        # 把 `time` 覆盖成了 `datetime.time` 类 → `AttributeError: type object 'datetime.time'
+        # has no attribute 'time'`，导致 PruneMediaCommandTests 9 条全部 ERROR。
+        import time as _time
+
+        stamp = _time.time() - age_days * 86400
         os.utime(path, (stamp, stamp))
         return path
 
