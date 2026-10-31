@@ -6923,7 +6923,7 @@ class CalendarTests(TestCase):
         self._detect(self.user, self.tomato_pest)
         self._detect(self.user, self.corn_pest)
 
-        response = self.client_user.get('/api/calendar/', {'month': timezone.now().month})
+        response = self.client_user.get('/api/calendar/', {'month': timezone.localdate().month})
         self.assertEqual(response.status_code, 200)
         days = response.data['day_activity']
         self.assertTrue(days, '本月应有按天数据')
