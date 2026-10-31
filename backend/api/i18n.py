@@ -119,6 +119,26 @@ MESSAGES.update({
 })
 
 
+MESSAGES.update({
+    'forum.rate_limited': {
+        'zh': '操作过于频繁，请稍后再试',
+        'en': 'Too many actions, please try again later',
+    },
+    'forum.like_limited': {
+        'zh': '操作过于频繁，{seconds} 秒内最多点赞 {limit} 次',
+        'en': 'Too many likes: at most {limit} per {seconds} seconds',
+    },
+    'forum.sensitive_title': {
+        'zh': '标题包含不当内容，请修改后重试',
+        'en': 'The title contains inappropriate content, please revise it',
+    },
+    'forum.sensitive_content': {
+        'zh': '内容包含不当内容，请修改后重试',
+        'en': 'The content contains inappropriate content, please revise it',
+    },
+})
+
+
 def request_lang(request) -> str:
     """从 `?lang=` 或 `Accept-Language` 取语言码（zh / en）。
 

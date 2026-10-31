@@ -71,6 +71,7 @@ User = get_user_model()  # 第 38 批：给版主发通知时需要
 logger = logging.getLogger(__name__)
 from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志
 from .bulk import parse_ids  # noqa: E402  第 147 批：批量接口的公共校验  # 日志记录器（配置见 settings.LOGGING 的 api 记录器）
+from .i18n import render_for  # 第 278 批：论坛互动文案多语言
 
 
 def is_moderator(user):
@@ -1216,7 +1217,7 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         
         if recent_comments >= 3:  # 限制每分钟最多3条评论
             raise serializers.ValidationError({
-                'detail': '操作过于频繁，请稍后再试',
+                'detail': render_for(request, 'forum.rate_limited'),
                 'code': 'too_many_requests'
             })
             
@@ -1484,8 +1485,9 @@ class LikeViewSet(viewsets.ModelViewSet):  # 定义点赞视图集
                 # 第 106 批：文案里带上真实规则（"N 秒内最多 M 次"），
                 # 否则用户只知道"太频繁"、不知道要等多久。
                 {
-                    'detail': f'操作过于频繁，{LIKE_RATE_WINDOW_SECONDS} 秒内最多点赞 '
-                              f'{LIKE_RATE_LIMIT} 次，请稍后再试',
+                    'detail': render_for(request, 'forum.like_limited',
+                                         seconds=LIKE_RATE_WINDOW_SECONDS,
+                                         limit=LIKE_RATE_LIMIT),  # 第 278 批
                     'code': 'too_many_requests',
                     'retry_after': LIKE_RATE_WINDOW_SECONDS,
                 },
