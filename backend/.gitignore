@@ -80,3 +80,8 @@ media/detection_history/i18n-audit_placeholder_*.jpg
 
 # 第 242 批：`manage.py export_pests` 的输出目录（导出物是数据快照，不入库）
 exports/
+
+# 覆盖率产物（第 289 批）
+.coverage
+.coverage.*
+htmlcov/
