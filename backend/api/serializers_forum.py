@@ -254,14 +254,24 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
 
     def validate_title(self, value):
         if self._plain_length(value) < self.TITLE_MIN:
+            # 第 279 批：校验文案按请求语言渲染（request 从 DRF 的 context 取，
+            # 与同类 `get_is_liked` 的取法一致；拿不到就回落中文）
+            from .i18n import msg as _render, request_lang
+
+            request = self.context.get('request')
             raise serializers.ValidationError(
-                f'标题至少 {self.TITLE_MIN} 个字，写清楚是哪种作物、什么症状，别人才答得上')
+                _render('forum.title_too_short', request_lang(request) if request else 'zh',
+                        min=self.TITLE_MIN))
         return value
 
     def validate_content(self, value):
         if self._plain_length(value) < self.BODY_MIN:
+            from .i18n import msg as _render, request_lang
+
+            request = self.context.get('request')
             raise serializers.ValidationError(
-                f'正文至少 {self.BODY_MIN} 个字，把症状、发生时间、用过什么药说清楚')
+                _render('forum.body_too_short', request_lang(request) if request else 'zh',
+                        min=self.BODY_MIN))
         return value
 
     def get_is_liked(self, obj):  # 定义获取是否点赞方法

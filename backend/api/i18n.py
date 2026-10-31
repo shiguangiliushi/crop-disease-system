@@ -139,6 +139,18 @@ MESSAGES.update({
 })
 
 
+MESSAGES.update({
+    'forum.title_too_short': {
+        'zh': '标题至少 {min} 个字，写清楚是哪种作物、什么症状，别人才答得上',
+        'en': 'Title needs at least {min} characters — say which crop and what symptom',
+    },
+    'forum.body_too_short': {
+        'zh': '正文至少 {min} 个字，把症状、发生时间、用过什么药说清楚',
+        'en': 'Body needs at least {min} characters — describe symptoms, timing and any treatment used',
+    },
+})
+
+
 def request_lang(request) -> str:
     """从 `?lang=` 或 `Accept-Language` 取语言码（zh / en）。
 
