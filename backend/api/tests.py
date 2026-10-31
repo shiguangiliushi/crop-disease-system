@@ -14332,11 +14332,11 @@ class AssistantVisionTests(APITestCase):
             self._post(question='这张图是什么病', image=_png_upload('leaf.png'))
         message = AssistantMessage.objects.filter(session__user=self.user, role='user').first()
         file_name = message.image.name
-        self.assertTrue(default_storage.exists(file_name))
+        self.assertTrue(message.image.storage.exists(file_name))
 
         response = self.client.delete(f'/api/assistant/sessions/{message.session_id}/')
         self.assertEqual(response.status_code, 204)
-        self.assertFalse(default_storage.exists(file_name), '会话删了，图片文件也得删')
+        self.assertFalse(message.image.storage.exists(file_name), '会话删了，图片文件也得删')
 
     def test_unreadable_image_is_not_stored(self):
         """认不出来的图不存 —— 存下来只会占磁盘，历史里也帮不上忙"""
