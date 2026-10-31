@@ -71,7 +71,7 @@ User = get_user_model()  # 第 38 批：给版主发通知时需要
 logger = logging.getLogger(__name__)
 from .audit import log_admin_action  # noqa: E402  第 146 批：管理操作日志
 from .bulk import parse_ids  # noqa: E402  第 147 批：批量接口的公共校验  # 日志记录器（配置见 settings.LOGGING 的 api 记录器）
-from .i18n import render_for  # 第 278 批：论坛互动文案多语言
+from .i18n import render_for, request_lang  # 第 281 批：文案多语言
 
 
 def is_moderator(user):
@@ -443,7 +443,9 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         check_text(
             serializer.validated_data.get('title'),
             serializer.validated_data.get('content'),
-            field_label='帖子',
+            # 这里在视图方法内部，没有局部 request 变量，用 DRF 的 self.request
+            field_label=render_for(self.request, 'forum.field_post'),
+            lang=request_lang(self.request),
         )
 
         if is_moderator(user):  # 版主/管理员可以设置置顶与精华

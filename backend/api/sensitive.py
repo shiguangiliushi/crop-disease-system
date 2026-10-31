@@ -61,7 +61,7 @@ def find_sensitive_words(*texts):
     return hits
 
 
-def check_text(*texts, field_label='内容'):
+def check_text(*texts, field_label='内容', lang='zh'):
     """
     命中敏感词就抛 ValidationError（DRF 会转成 400）
 
@@ -75,8 +75,12 @@ def check_text(*texts, field_label='内容'):
     if hits:
         joined = '、'.join(hits[:5])
         more = '等' if len(hits) > 5 else ''
+        # 第 281 批：文案按请求语言渲染（lang 由调用方从 request 取，不传回中文）
+        from .i18n import msg as _render
+
         raise serializers.ValidationError({
-            'detail': f'{field_label}包含不允许的词汇：{joined}{more}，请修改后重试',
+            'detail': _render('forum.sensitive_hit', lang,
+                              label=field_label, words=f'{joined}{more}'),
             'code': 'sensitive_word',
             'words': hits,
         })

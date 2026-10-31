@@ -151,6 +151,16 @@ MESSAGES.update({
 })
 
 
+MESSAGES.update({
+    'forum.sensitive_hit': {
+        'zh': '{label}包含不允许的词汇：{words}，请修改后重试',
+        'en': '{label} contains disallowed words: {words}. Please revise and retry',
+    },
+    'forum.field_post': {'zh': '帖子', 'en': 'The post'},
+    'forum.field_comment': {'zh': '评论', 'en': 'The comment'},
+})
+
+
 def request_lang(request) -> str:
     """从 `?lang=` 或 `Accept-Language` 取语言码（zh / en）。
 
