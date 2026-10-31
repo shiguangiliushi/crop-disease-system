@@ -546,7 +546,7 @@ def _inactive_login_response(user):
 
     return Response({
         'status': 'error',
-        'message': '账户已被停用，请联系管理员',
+        'message': _msg('auth.account_disabled', request),
         'code': 'account_disabled',
     }, status=status.HTTP_403_FORBIDDEN)
 
@@ -617,7 +617,7 @@ class LoginView(APIView):
                 if not captcha.verify(data.get('captcha_id'), data.get('captcha_code')):
                     return Response({
                         'status': 'error',
-                        'message': '验证码错误或已过期，请刷新后重试',
+                        'message': _msg('captcha.required', request),
                         'code': 'captcha_required',
                         'captcha_required': True,
                         'captcha_code': ['验证码错误或已过期，请刷新后重试'],
@@ -644,7 +644,7 @@ class LoginView(APIView):
             if existing_user and getattr(existing_user, 'is_deleted', False):
                 return Response({
                     'status': 'error',
-                    'message': '该账号已注销，无法登录。如需继续使用，请重新注册。',
+                    'message': _msg('auth.account_deleted', request),
                     'code': 'account_deleted',
                 }, status=status.HTTP_403_FORBIDDEN)
 
@@ -727,7 +727,7 @@ class LoginView(APIView):
                 # 用户不存在：不累加计数（没有账号可锁），但同样给统一口径的提示
                 return Response({
                     'status': 'error',
-                    'message': '用户名或密码错误',
+                    'message': _msg('auth.bad_credentials', request),
                     'code': 'user_not_found'
                 }, status=status.HTTP_404_NOT_FOUND)
 

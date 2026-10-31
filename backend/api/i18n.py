@@ -47,14 +47,60 @@ MESSAGES = {
 }
 
 
+MESSAGES.update({
+    'auth.account_disabled': {
+        'zh': '账户已被停用，请联系管理员',
+        'en': 'This account is disabled. Please contact the administrator',
+    },
+    'auth.account_deleted': {
+        'zh': '该账号已注销，无法登录。如需继续使用，请重新注册。',
+        'en': 'This account has been deleted. Please sign up again if needed',
+    },
+    'auth.bad_credentials': {
+        'zh': '用户名或密码错误',
+        'en': 'Incorrect username or password',
+    },
+    'reset.missing_account': {
+        'zh': '请输入用户名或邮箱',
+        'en': 'Please enter your username or email',
+    },
+    'reset.incomplete_link': {
+        'zh': '重置链接不完整，请重新申请',
+        'en': 'The reset link is incomplete, please request a new one',
+    },
+    'reset.invalid_link': {
+        'zh': '重置链接无效，请重新申请',
+        'en': 'The reset link is invalid, please request a new one',
+    },
+    'reset.expired_link': {
+        'zh': '重置链接已失效，请重新申请',
+        'en': 'The reset link has expired, please request a new one',
+    },
+    'reset.done': {
+        'zh': '密码已重置，请用新密码登录',
+        'en': 'Password reset. Please sign in with the new password',
+    },
+})
+
+
 def request_lang(request) -> str:
-    """从 `?lang=` 或 `Accept-Language` 取语言码（zh / en），取不到回中文。"""
-    explicit = ''
+    """从 `?lang=` 或 `Accept-Language` 取语言码（zh / en）。
+
+    ⚠️ 必须**全程容错**：这个函数被登录/停用等分支调用，其中有些分支拿到的
+    `request` 可能是 None 或缺少属性 —— 一旦抛异常，用户看到的是 500
+    "服务器内部错误"，而不是本该有的"账号已停用"。（第 276 批实测踩到）
+    """
     try:
-        explicit = str(request.query_params.get('lang') or '').strip()
-    except AttributeError:
-        explicit = str(request.GET.get('lang') or '').strip()
-    header = explicit or str(request.META.get('HTTP_ACCEPT_LANGUAGE') or '')
+        explicit = str(request.query_params.get('lang') or '').strip()  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001
+        try:
+            explicit = str(request.GET.get('lang') or '').strip()  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            explicit = ''
+    try:
+        header = explicit or str(getattr(request, 'META', {}).get('HTTP_ACCEPT_LANGUAGE') or '')
+    except Exception:  # noqa: BLE001
+        header = explicit
     code = (header.split(',')[0] if header else '').strip().lower()
     return 'en' if code.startswith('en') else DEFAULT_LANG
 
@@ -69,3 +115,8 @@ def msg(key: str, lang: str = DEFAULT_LANG, **kwargs) -> str:
         return text.format(**kwargs)
     except (KeyError, IndexError):
         return text
+
+
+def render_for(request, key: str, **kwargs) -> str:
+    """按请求语言渲染文案（views 里一行调用即可）。"""
+    return msg(key, request_lang(request), **kwargs)

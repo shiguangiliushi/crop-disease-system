@@ -66,7 +66,8 @@ from rest_framework.throttling import ScopedRateThrottle  # 按 scope 限流
 # 第 106 批：密码策略的唯一来源（注册 / 重置 / 改密三处共用，避免规则分叉）
 from .password_policy import MIN_LENGTH as PASSWORD_MIN_LENGTH, validate_password
 
-logger = logging.getLogger(__name__)  # 获取日志记录器
+logger = logging.getLogger(__name__)
+from .i18n import render_for  # 第 276 批：用户可见文案多语言  # 获取日志记录器
 
 User = get_user_model()  # 获取用户模型
 
@@ -196,7 +197,7 @@ class PasswordResetRequestView(APIView):
     def post(self, request):
         account = (request.data.get('username_or_email') or request.data.get('account') or '').strip()
         if not account:
-            return Response({'status': 'error', 'message': '请输入用户名或邮箱'},
+            return Response({'status': 'error', 'message': render_for(request, 'reset.missing_account')},
                             status=status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.filter(username__iexact=account).first()
@@ -232,18 +233,18 @@ class PasswordResetConfirmView(APIView):
         new_password = request.data.get('new_password') or ''
 
         if not uid or not token:
-            return Response({'status': 'error', 'message': '重置链接不完整，请重新申请'},
+            return Response({'status': 'error', 'message': render_for(request, 'reset.incomplete_link')},
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user_id = force_str(urlsafe_base64_decode(uid))
             user = User.objects.get(pk=user_id)
         except (TypeError, ValueError, OverflowError, User.DoesNotExist):
-            return Response({'status': 'error', 'message': '重置链接无效，请重新申请'},
+            return Response({'status': 'error', 'message': render_for(request, 'reset.invalid_link')},
                             status=status.HTTP_400_BAD_REQUEST)
 
         if not default_token_generator.check_token(user, token):
-            return Response({'status': 'error', 'message': '重置链接已失效，请重新申请'},
+            return Response({'status': 'error', 'message': render_for(request, 'reset.expired_link')},
                             status=status.HTTP_400_BAD_REQUEST)
 
         # 第 106 批：密码策略改为统一来源（原来这里只判 `len < 6`，
@@ -266,7 +267,7 @@ class PasswordResetConfirmView(APIView):
         revoke_all(user)
 
         logger.info('用户通过邮件重置了密码: user_id=%s', user.id)
-        return Response({'status': 'success', 'message': '密码已重置，请用新密码登录'})
+        return Response({'status': 'success', 'message': render_for(request, 'reset.done')})
 
 
 class UserProfileView(APIView):  # 定义用户资料视图类
