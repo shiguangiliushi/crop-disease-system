@@ -16170,3 +16170,41 @@ class FeedbackReplyNotificationTests(APITestCase):
             Notification.objects.filter(recipient=self.author, type='feedback').exists(),
             '只改状态、没写回复内容时不该打扰用户',
         )
+
+
+class BackendMessageI18nTests(APITestCase):
+    """第 275 批：登录链路的用户可见文案按请求语言渲染"""
+
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user(
+            username='zz_i18n_login', password='pw12345678')
+
+    def _post(self, payload, lang=None):
+        headers = {'HTTP_ACCEPT_LANGUAGE': lang} if lang else {}
+        return self.client.post('/api/login/', payload, format='json', **headers)
+
+    def test_zh_is_default(self):
+        response = self._post({'username': '', 'password': ''})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('不能为空', response.data['message'])
+
+    def test_en_via_locale_param(self):
+        response = self.client.post(
+            '/api/login/?lang=en', {'username': '', 'password': ''}, format='json')
+        self.assertEqual(response.data['message'], 'Username and password are required')
+
+    def test_en_via_accept_language(self):
+        response = self._post({'username': 'zz_i18n_login', 'password': 'wrong'}, lang='en-US,en;q=0.9')
+        self.assertEqual(response.status_code, 401)
+        self.assertIn('Incorrect password', response.data['message'])
+
+    def test_unknown_lang_falls_back_to_zh(self):
+        response = self.client.post(
+            '/api/login/?lang=fr', {'username': '', 'password': ''}, format='json')
+        self.assertIn('不能为空', response.data['message'])
+
+    def test_render_helper_unknown_key_returns_key(self):
+        from .i18n import msg
+
+        self.assertEqual(msg('nope.not.exists', 'en'), 'nope.not.exists')

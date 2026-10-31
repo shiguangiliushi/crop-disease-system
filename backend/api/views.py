@@ -551,6 +551,14 @@ def _inactive_login_response(user):
     }, status=status.HTTP_403_FORBIDDEN)
 
 
+def _msg(key: str, request, **kwargs) -> str:
+    """第 275 批：登录链路的用户可见文案按请求语言渲染。"""
+    from .i18n import msg as render
+    from .i18n import request_lang
+
+    return render(key, request_lang(request), **kwargs)
+
+
 class LoginView(APIView):
     """
     用户登录API视图
@@ -590,14 +598,14 @@ class LoginView(APIView):
         except ParseError:
             return Response({
                 'status': 'error',
-                'message': '请求体格式错误：应为合法的 JSON',
+                'message': _msg('login.invalid_payload', request),
                 'code': 'invalid_payload'
             }, status=status.HTTP_400_BAD_REQUEST)
 
         if not isinstance(data, dict):
             return Response({
                 'status': 'error',
-                'message': '请求体格式错误：应为 JSON 对象',
+                'message': _msg('login.invalid_payload_object', request),
                 'code': 'invalid_payload'
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -622,7 +630,7 @@ class LoginView(APIView):
             if not username or not password:
                 return Response({
                     'status': 'error',
-                    'message': '用户名和密码不能为空'
+                    'message': _msg('login.credentials_required', request)
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             # 第 35 批：登录前先看账号是否处于锁定期
@@ -650,7 +658,7 @@ class LoginView(APIView):
                 minutes = max(1, remaining // 60)
                 return Response({
                     'status': 'error',
-                    'message': f'登录失败次数过多，账号已被锁定，请 {minutes} 分钟后再试',
+                    'message': _msg('login.locked', request, minutes=minutes),
                     'code': 'account_locked',
                     'retry_after_seconds': remaining,
                 }, status=status.HTTP_423_LOCKED)
@@ -679,13 +687,13 @@ class LoginView(APIView):
                 if just_locked:
                     return Response({
                         'status': 'error',
-                        'message': f'密码错误次数过多，账号已锁定 {self.LOCK_MINUTES} 分钟',
+                        'message': _msg('login.just_locked', request, minutes=self.LOCK_MINUTES),
                         'code': 'account_locked',
                         'retry_after_seconds': self.LOCK_MINUTES * 60,
                     }, status=status.HTTP_423_LOCKED)
                 return Response({
                     'status': 'error',
-                    'message': f'密码错误，还可尝试 {remaining} 次',
+                    'message': _msg('login.wrong_password', request, remaining=remaining),
                     'code': 'invalid_password',
                     'remaining_attempts': remaining,
                 }, status=status.HTTP_401_UNAUTHORIZED)
@@ -704,14 +712,14 @@ class LoginView(APIView):
                         logger.warning('账号因连续登录失败被锁定: username=%s', username)
                         return Response({
                             'status': 'error',
-                            'message': f'密码错误次数过多，账号已锁定 {self.LOCK_MINUTES} 分钟',
+                            'message': _msg('login.just_locked', request, minutes=self.LOCK_MINUTES),
                             'code': 'account_locked',
                             'retry_after_seconds': self.LOCK_MINUTES * 60,
                         }, status=status.HTTP_423_LOCKED)
 
                     return Response({
                         'status': 'error',
-                        'message': f'密码错误，还可尝试 {remaining} 次',
+                        'message': _msg('login.wrong_password', request, remaining=remaining),
                         'code': 'invalid_password',
                         'remaining_attempts': remaining,
                     }, status=status.HTTP_401_UNAUTHORIZED)
