@@ -71,5 +71,13 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 60 * 1000,
     },
+    {
+      // uni-app 版（mobile-uni，:5175）—— 第 280 批：它此前**没有**被 webServer 托管，
+      // 于是 uni 的用例必须人手起服务，忘了起就表现为"一堆莫名其妙的失败"。
+      command: 'npm --prefix ../mobile-uni run dev:h5',
+      port: 5175,
+      reuseExistingServer: true,
+      timeout: 90 * 1000,
+    },
   ],
 })
