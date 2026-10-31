@@ -1,0 +1,30 @@
+# 本项目的五个定时任务（第 291 批）
+#
+# 安装：
+#   crontab -e          # 粘贴下面内容并按实际路径修改
+#   crontab -l          # 确认
+#
+# 为什么这五件事缺一不可：它们都是"安静的故障"——
+# 备份没跑、健康快照断了、注销账号永远不执行，都不会有人来报错。
+#
+# 约定：所有命令都先 cd 到 backend/ 再执行（Django 管理命令依赖工作目录）。
+
+# 变量：按实际环境改
+PY=/root/anaconda3/envs/crop_env/bin/python
+APP=/srv/crop-disease-system/backend
+LOG=/var/log/crop-disease
+
+# 1) 每日备份（02:30）
+30 2 * * * cd $APP && mkdir -p $LOG && $PY manage.py backend_backup >> $LOG/backup.log 2>&1
+
+# 2) 每日校验最新备份（03:10）
+10 3 * * * cd $APP && $PY manage.py backup_verify >> $LOG/verify.log 2>&1
+
+# 3) 每日健康快照（03:40）—— 管理端"14 天趋势"靠它
+40 3 * * * cd $APP && $PY manage.py health_snapshot >> $LOG/health.log 2>&1
+
+# 4) 每日清理孤儿图片（04:10）
+10 4 * * * cd $APP && $PY manage.py cleanup_media >> $LOG/media.log 2>&1
+
+# 5) 每小时执行注销冷静期到期（整点后 5 分）
+5 * * * * cd $APP && $PY manage.py process_deletions >> $LOG/deletions.log 2>&1
