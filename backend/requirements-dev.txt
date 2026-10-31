@@ -11,3 +11,7 @@
 
 Faker>=30.0.0
 tabulate>=0.9.0
+
+# 覆盖率（第 289 批）：`coverage run --source=api manage.py test api.tests` + `coverage report -m`
+# 配置见 backend/.coveragerc（fail_under=60，逐步提高）
+coverage>=7.6.0

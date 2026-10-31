@@ -1,0 +1,27 @@
+# 覆盖率配置（第 289 批）
+#
+# 本机 `coverage` 没装（conda 环境里只有业务依赖），所以这里先把**配置与用法**备好：
+#   pip install coverage          # 或 pip install -r requirements-dev.txt
+#   coverage run --source=api manage.py test api.tests
+#   coverage report -m            # 逐文件缺失行
+#   coverage html                 # 生成 htmlcov/index.html
+#
+# 为什么值得做：后端已有 968 个测试方法，但没有量化指标 ——
+# 改动时"哪些逻辑真的被覆盖"只能靠印象。
+
+[run]
+source = api
+omit =
+    api/migrations/*
+    api/management/commands/*          # 管理命令多为一次性运维脚本，不追求覆盖
+    */tests.py
+    */__init__.py
+
+[report]
+# 低于这个覆盖率直接报错（逐步提高，不要一次设成 90 让所有人都关掉它）
+fail_under = 60
+show_missing = True
+skip_covered = False
+
+[html]
+directory = htmlcov
