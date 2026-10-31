@@ -83,6 +83,42 @@ MESSAGES.update({
 })
 
 
+MESSAGES.update({
+    'report.bad_type': {
+        'zh': '举报对象类型不合法',
+        'en': 'Invalid report target type',
+    },
+    'report.missing_target': {
+        'zh': '缺少有效的举报对象',
+        'en': 'Missing report target',
+    },
+    'report.post_gone': {
+        'zh': '帖子不存在或已被删除',
+        'en': 'The post does not exist or has been deleted',
+    },
+    'report.comment_gone': {
+        'zh': '评论不存在或已被删除',
+        'en': 'The comment does not exist or has been deleted',
+    },
+    'report.self': {
+        'zh': '不能举报自己的内容',
+        'en': 'You cannot report your own content',
+    },
+    'report.duplicate': {
+        'zh': '你已经举报过这条内容了，管理员会尽快处理',
+        'en': 'You already reported this content. Our team will review it soon',
+    },
+    'feedback.export_failed': {
+        'zh': '导出失败，请稍后重试',
+        'en': 'Export failed, please try again later',
+    },
+    'feedback.delete_ok': {
+        'zh': '删除成功',
+        'en': 'Deleted',
+    },
+})
+
+
 def request_lang(request) -> str:
     """从 `?lang=` 或 `Accept-Language` 取语言码（zh / en）。
 

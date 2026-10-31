@@ -2310,7 +2310,7 @@ class DetectionHistoryView(APIView):
             logger.exception('[History] 导出 Excel 失败')
             return Response({
                 'status': 'error',
-                'message': '导出失败，请稍后重试',
+                'message': _msg('feedback.export_failed', request),
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, *args, **kwargs):
@@ -2356,7 +2356,7 @@ class DetectionHistoryView(APIView):
 
                 return Response({
                     'status': 'success',
-                    'message': '删除成功',
+                    'message': _msg('feedback.delete_ok', request),
                     'data': None
                 }, status=status.HTTP_204_NO_CONTENT)
 

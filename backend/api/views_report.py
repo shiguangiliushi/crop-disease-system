@@ -33,6 +33,7 @@ from rest_framework.views import APIView
 
 from .models_forum import Comment, Post
 from .models_report import Report
+from .i18n import render_for  # 第 277 批：举报/反馈文案多语言
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -156,7 +157,7 @@ class ReportViewSet(APIView):
         detail = (request.data.get('detail') or '').strip()[:500]
 
         if target_type not in {choice[0] for choice in Report.TARGET_CHOICES}:
-            return Response({'detail': '举报对象类型不合法'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': render_for(request, 'report.bad_type')}, status=status.HTTP_400_BAD_REQUEST)
         if reason not in {choice[0] for choice in Report.REASON_CHOICES}:
             reason = 'other'
 
@@ -166,17 +167,17 @@ class ReportViewSet(APIView):
         try:
             target_id = int(raw_id)
         except (TypeError, ValueError):
-            return Response({'detail': '缺少有效的举报对象'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': render_for(request, 'report.missing_target')}, status=status.HTTP_400_BAD_REQUEST)
 
         if target_type == 'post':
             post = Post.objects.filter(pk=target_id).select_related('author').first()
             if not post:
-                return Response({'detail': '帖子不存在或已被删除'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'detail': render_for(request, 'report.post_gone')}, status=status.HTTP_404_NOT_FOUND)
             owner = post.author
         elif target_type == 'comment':
             comment = Comment.objects.filter(pk=target_id).select_related('author').first()
             if not comment:
-                return Response({'detail': '评论不存在或已被删除'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'detail': render_for(request, 'report.comment_gone')}, status=status.HTTP_404_NOT_FOUND)
             owner = comment.author
         else:
             target_user = User.objects.filter(pk=target_id).first()
@@ -186,7 +187,7 @@ class ReportViewSet(APIView):
 
         # 不能举报自己（自己的帖子/评论/账号都不行）
         if owner and owner.id == request.user.id:
-            return Response({'detail': '不能举报自己的内容'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': render_for(request, 'report.self')}, status=status.HTTP_400_BAD_REQUEST)
 
         target_key = f'{target_type}:{target_id}'
 
@@ -195,7 +196,7 @@ class ReportViewSet(APIView):
         # TransactionManagementError（"当前事务已损坏"）。所以：
         #   ① 先查一次给出友好提示；② 真并发时用保存点（atomic）兜住唯一约束。
         if Report.objects.filter(reporter=request.user, target_key=target_key).exists():
-            return Response({'detail': '你已经举报过这条内容了，管理员会尽快处理'},
+            return Response({'detail': render_for(request, 'report.duplicate')},
                             status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -206,7 +207,7 @@ class ReportViewSet(APIView):
                     reason=reason, detail=detail,
                 )
         except IntegrityError:
-            return Response({'detail': '你已经举报过这条内容了，管理员会尽快处理'},
+            return Response({'detail': render_for(request, 'report.duplicate')},
                             status=status.HTTP_400_BAD_REQUEST)
 
         self._notify_admins(report)
