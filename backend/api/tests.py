@@ -16208,3 +16208,65 @@ class BackendMessageI18nTests(APITestCase):
         from .i18n import msg
 
         self.assertEqual(msg('nope.not.exists', 'en'), 'nope.not.exists')
+
+
+class ReportCreateTests(APITestCase):
+    """第 290 批：举报提交的分支（views_report.py 覆盖率最低，但权限/校验最多）"""
+
+    def setUp(self):
+        from .models_forum import ForumBoard, Post
+
+        cache.clear()
+        User = get_user_model()
+        self.author = User.objects.create_user(
+            username='zz_report_author', password='pw12345678')
+        self.reporter = User.objects.create_user(
+            username='zz_report_user', password='pw12345678')
+        self.board = ForumBoard.objects.create(name='举报版块', description='')
+        self.post = Post.objects.create(
+            title='举报测试帖', content='正文内容', author=self.author, board=self.board)
+
+    def _post_report(self, payload, user=None):
+        client = APIClient()
+        if user is not None:
+            client.force_authenticate(user=user)
+        return client.post('/api/reports/', payload, format='json')
+
+    def test_anonymous_cannot_report(self):
+        response = self._post_report({'target_type': 'post', 'target_id': self.post.id})
+        self.assertIn(response.status_code, (401, 403), response.content)
+
+    def test_invalid_target_type_rejected(self):
+        response = self._post_report({'target_type': 'video', 'target_id': 1}, self.reporter)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('举报', str(response.data))
+
+    def test_missing_post_rejected(self):
+        response = self._post_report({'target_type': 'post', 'target_id': 999999}, self.reporter)
+        self.assertEqual(response.status_code, 404, response.content)
+
+    def test_cannot_report_own_content(self):
+        response = self._post_report({'target_type': 'post', 'target_id': self.post.id}, self.author)
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_duplicate_report_rejected(self):
+        first = self._post_report(
+            {'target_type': 'post', 'target_id': self.post.id, 'reason': 'spam'},
+            self.reporter,
+        )
+        self.assertIn(first.status_code, (200, 201), first.content)
+
+        second = self._post_report(
+            {'target_type': 'post', 'target_id': self.post.id, 'reason': 'spam'},
+            self.reporter,
+        )
+        self.assertEqual(second.status_code, 400, second.content)
+
+    def test_successful_report_creates_row(self):
+        from .models_report import Report
+
+        before = Report.objects.count()
+        response = self._post_report(
+            {'target_type': 'post', 'target_id': self.post.id, 'reason': 'abuse'}, self.reporter)
+        self.assertIn(response.status_code, (200, 201), response.content)
+        self.assertEqual(Report.objects.count(), before + 1)
