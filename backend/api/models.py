@@ -589,6 +589,12 @@ class DetectionHistory(models.Model):  # 定义检测历史模型
         verbose_name = "识别历史"  # 单数名称
         verbose_name_plural = verbose_name  # 复数名称
         ordering = ['-timestamp']  # 默认按时间倒序排列
+        # 第 286 批：历史列表 = "user + 时间倒序"；管理端统计按检测结果聚合。
+        indexes = [
+            models.Index(fields=['user', '-timestamp'], name='dh_user_ts_idx'),
+            models.Index(fields=['timestamp'], name='dh_ts_idx'),
+            models.Index(fields=['detection_result'], name='dh_result_idx'),
+        ]
 
 
 # 用户反馈模型
@@ -714,6 +720,14 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
         verbose_name = "用户反馈"  # 单数名称
         verbose_name_plural = verbose_name  # 复数名称
         ordering = ['-timestamp']  # 默认按时间倒序排列
+        # 第 286 批：管理端列表 = "status/category + 时间倒序"，核验队列 = "verify_status"。
+        # 这些字段此前全无索引（全表扫）。
+        indexes = [
+            models.Index(fields=['status', '-timestamp'], name='fb_status_ts_idx'),
+            models.Index(fields=['category', '-timestamp'], name='fb_cat_ts_idx'),
+            models.Index(fields=['verify_status'], name='fb_verify_idx'),
+            models.Index(fields=['is_correct'], name='fb_correct_idx'),
+        ]
 
 
 class News(models.Model):  # 定义新闻模型
