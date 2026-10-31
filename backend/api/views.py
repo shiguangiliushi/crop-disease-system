@@ -2029,7 +2029,9 @@ class DetectionHistoryView(APIView):
         """
         user = self.request.user
 
-        queryset = DetectionHistory.objects.select_related('pest_info')
+        # 第 288 批：补上 user —— 序列化器要输出识别者用户名，原来每行单独查一次用户
+        # （第 287 批 audit_n_plus_one 实测：10 条数据发出 22 条 SQL）。
+        queryset = DetectionHistory.objects.select_related('pest_info', 'user')
 
         pest_name = (self.request.query_params.get('pest') or '').strip()
         date_str = (self.request.query_params.get('date') or '').strip()
