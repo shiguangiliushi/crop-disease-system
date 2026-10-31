@@ -62,6 +62,10 @@ def compute_alerts(days=DEFAULT_DAYS, baseline_days=DEFAULT_BASELINE_DAYS,
     :param user: 传入登录用户时会标注 `is_personal` / `my_count` / `my_last_at`
     """
     now = timezone.now()
+    # 第 298 批：**月份/年份必须用本地日期**。
+    # `timezone.now()` 是 UTC —— 在 UTC+8 的 00:00~08:00 之间，UTC 的月份可能比本地小一个月，
+    # 于是"去年同月"取错月份，seasonal 信号永远匹配不上（实测：本地 11-01，UTC 还是 10-31）。
+    local_today = timezone.localdate()
     recent_start = now - timedelta(days=days)
     baseline_start = recent_start - timedelta(days=baseline_days)
 
@@ -94,8 +98,8 @@ def compute_alerts(days=DEFAULT_DAYS, baseline_days=DEFAULT_BASELINE_DAYS,
     seasonal_map = set(
         DetectionHistory.objects
         .filter(
-            timestamp__month=now.month,
-            timestamp__year=now.year - 1,
+            timestamp__month=local_today.month,
+            timestamp__year=local_today.year - 1,
             pest_info__isnull=False,
         )
         .values_list('pest_info_id', flat=True)

@@ -6679,6 +6679,7 @@ class AlertEngineTests(TestCase):
         self._detect(self.other, 1)
 
         alerts = compute_alerts(min_cases=2)
+        print('DIAG alerts =', [(a.get('pest') or a.get('name'), a.get('signals')) for a in alerts])
         self.assertEqual(len(alerts), 1)
         self.assertIn('seasonal', alerts[0]['signals'])
 
