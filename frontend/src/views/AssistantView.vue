@@ -225,6 +225,17 @@
               <span v-else class="assistant-escalate-done">
                 <i class="bi bi-check-circle me-1" aria-hidden="true"></i>{{ t('assistant.escalateDone') }}
               </span>
+              <router-link
+                v-if="escalatedQuestionId && expertReplyCount > 0"
+                to="/consult"
+                class="assistant-expert-replied"
+              >
+                <i class="bi bi-chat-left-text me-1" aria-hidden="true"></i>
+                {{ t('assistant.expertReplied', { count: expertReplyCount }) }}
+              </router-link>
+              <span v-else-if="escalatedQuestionId" class="assistant-expert-waiting">
+                <i class="bi bi-hourglass-split me-1" aria-hidden="true"></i>{{ t('assistant.expertWaiting') }}
+              </span>
             </span>
           </div>
 
@@ -392,6 +403,8 @@ const mobileView = ref('list');
 const feedbackBusy = ref(false);
 const escalating = ref(false);
 const escalatedQuestionId = ref(null);
+// 第 314 批：专家回复追踪 —— 转人工后告诉用户"专家回没回"
+const expertReplyCount = ref(0);
 
 let messageKey = 0;
 
@@ -497,6 +510,7 @@ const applySession = (data) => {
   currentSessionId.value = data.id;
   currentPestName.value = data.pest_name || '';
   escalatedQuestionId.value = data.consult_question_id || null;
+  expertReplyCount.value = data.expert_answer_count || 0;
   messages.value = (data.messages || []).map((item) => ({
     key: ++messageKey,
     role: item.role,
@@ -698,6 +712,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 314 批：专家回复状态 */
+.assistant-expert-replied,
+.assistant-expert-waiting {
+  margin-left: 10px;
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.assistant-expert-replied { color: #2f6b4f; font-weight: 600; }
+.assistant-expert-waiting { color: #8a8f8c; }
+
 /* 第 307 批：追问建议 chips */
 .followup-chips {
   display: flex;

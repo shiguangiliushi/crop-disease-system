@@ -68,6 +68,16 @@ def _brief(session, last_message: AssistantMessage | None) -> dict:
         'degraded': degraded,
         'escalated': bool(session.consult_question_id),
         'consult_question_id': session.consult_question_id,
+        # 第 314 批：专家回复追踪 —— 用户转人工后最想知道的是"专家回没回"。
+        # `consult_question` 是 OneToOne（第 197 批），这里直接数它的 answers。
+        'expert_replied': bool(
+            session.consult_question_id
+            and session.consult_question.answers.exists()
+        ),
+        'expert_answer_count': (
+            session.consult_question.answers.count()
+            if session.consult_question_id else 0
+        ),
         'created_at': session.created_at,
         'updated_at': session.updated_at,
         'preview': preview,
@@ -157,6 +167,16 @@ class AssistantSessionDetailView(APIView):
             'degrade_reason': last_answer.degrade_reason if last_answer else '',
             'escalated': bool(session.consult_question_id),
             'consult_question_id': session.consult_question_id,
+            # 第 314 批：专家回复追踪 —— 用户转人工后最想知道的是"专家回没回"。
+            # `consult_question` 是 OneToOne（第 197 批），这里直接数它的 answers。
+            'expert_replied': bool(
+                session.consult_question_id
+                and session.consult_question.answers.exists()
+            ),
+            'expert_answer_count': (
+                session.consult_question.answers.count()
+                if session.consult_question_id else 0
+            ),
             'created_at': session.created_at,
             'messages': [
                 {

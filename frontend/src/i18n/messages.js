@@ -2480,6 +2480,8 @@ export const zhCN = {
     feedbackSubmitFailed: '提交反馈失败，请稍后重试',
     escalate: '找专家解答',
     escalateHint: '把这个问题和 AI 的回答一起发给平台专家',
+    expertReplied: '专家已回复 {count} 条 →',
+    expertWaiting: '等待专家回复',
     escalateDone: '已转人工，专家会看到你的问题和 AI 当时的回答',
     escalateAlready: '这次会话已经转过人工了，无需重复提交',
     // 第 198 批：独立问答页（历史 / 会话 / 环境文案）
@@ -5652,6 +5654,8 @@ export const en = {
     feedbackSubmitFailed: 'Failed to submit feedback, please try again later',
     escalate: 'Ask an expert',
     escalateHint: 'Send this question and the AI answer to a platform expert',
+    expertReplied: '{count} expert repl(y/ies) →',
+    expertWaiting: 'Waiting for an expert',
     escalateDone: 'Sent to an expert — they will see your question and what the AI answered',
     escalateAlready: 'This conversation was already sent to an expert',
     // 第 198 批：独立问答页（历史 / 会话 / 环境文案）
