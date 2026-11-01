@@ -17,7 +17,7 @@
       <!-- 未选图：两个大入口（拍照是主路径，做成整块可点，田里戴手套也点得中） -->
       <div v-if="!previewUrl" class="card">
         <button type="button" class="entry entry--primary" @click="openCamera">
-          <span class="entry-icon">📷</span>
+          <svg class="entry-icon" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.2-1.8h6.4L16 6h2.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.4"/></svg>
           <span class="entry-text">
             <strong>{{ t('detect.takePhoto') }}</strong>
             <em>{{ t('detect.takePhotoHint') }}</em>
@@ -26,7 +26,7 @@
         </button>
 
         <button type="button" class="entry" @click="openGallery">
-          <span class="entry-icon">🖼️</span>
+          <svg class="entry-icon" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.5" cy="10" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg>
           <span class="entry-text">
             <strong>{{ t('detect.fromGallery') }}</strong>
             <em>{{ t('detect.galleryHint') }}</em>
@@ -344,6 +344,8 @@ onBeforeUnmount(stopProgressTimer);
 }
 
 .entry-icon {
+  display: inline-flex;
+  align-items: center;
   font-size: 1.5rem;
   width: 34px;
   text-align: center;

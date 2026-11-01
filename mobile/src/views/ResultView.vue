@@ -22,7 +22,7 @@
           :alt="t('result.annotated')"
           @click="previewImage"
         />
-        <p v-if="isHealthy" class="healthy-badge">🌿 {{ t('result.healthy') }}</p>
+        <p v-if="isHealthy" class="healthy-badge"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4c-8 0-13 3.6-13 9a5.5 5.5 0 0 0 5.5 5.5C18 18.5 20 12 20 4z"/><path d="M4 20c2.5-4.5 6-7 11-8.5"/></svg> {{ t('result.healthy') }}</p>
       </div>
 
       <div class="card">
