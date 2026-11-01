@@ -253,6 +253,8 @@ class AssistantAskStreamView(APIView):
             lang=payload['lang'],
             image=payload['image'],
         )
+        # 第 311 批：唯一出口处补 suggestions（上次因守卫字符串与函数定义同名而漏掉）
+        stream = _inject_suggestions_into_stream(stream, payload.get('question', ''), payload.get('lang') or 'zh')
         response = StreamingHttpResponse(stream, content_type='text/event-stream; charset=utf-8')
         # ① 别让 GZipMiddleware 把流攒住（见模块 docstring 第 4 条）
         response['Content-Encoding'] = 'identity'
