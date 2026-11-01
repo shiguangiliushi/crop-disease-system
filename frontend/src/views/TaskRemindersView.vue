@@ -23,7 +23,8 @@
       </el-skeleton>
     </div>
 
-    <el-empty v-else-if="!loading && !items.length" :description="t('assistant.remindersEmpty')" />
+    <EmptyState v-else-if="!loading && !items.length" variant="leaf"
+                 :description="t('assistant.remindersEmpty')" />
 
     <el-table v-else :data="items" class="reminders-table">
       <el-table-column width="56">
@@ -64,6 +65,7 @@
 import { onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from '@/i18n';
+import EmptyState from '@/components/EmptyState.vue';
 import { deleteTaskReminder, listTaskReminders, setTaskReminderDone } from '@/api/calendar';
 
 const { t } = useI18n();
