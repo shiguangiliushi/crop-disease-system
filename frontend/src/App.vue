@@ -67,6 +67,7 @@ const NAV_GROUPS = [
   [
     { to: '/alerts', key: 'alerts' },
     { to: '/calendar', key: 'calendar' },
+    { to: '/reminders', key: 'reminders' },  // 第 317 批：我的农事提醒
     { to: '/consult', key: 'consult' },
   ],
   [
