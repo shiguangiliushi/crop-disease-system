@@ -303,7 +303,7 @@ const ICONS = {
 
 export default {
   name: 'NotificationsView',
-  components: { BackButton },  // 第 87 批：返回按钮
+  components: { BackButton, EmptyState },  // 第 326 批：EmptyState 需显式注册（Options API）
   setup() {
     const { t } = useI18n();  // 第 56 批：多语言
     const { localizedField } = useLocalized();  // 第 72 批
