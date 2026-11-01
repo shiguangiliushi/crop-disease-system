@@ -149,7 +149,7 @@
             </p>            <p v-if="msg.role === 'assistant' && msg.hasPesticide" class="assistant-disclaimer">
               {{ t('assistant.pesticideDisclaimer') }}
             </p>
-          </div>
+          <span v-if="isStreaming(msg)" class="typing-caret" aria-hidden="true"></span></div>
 
           <!-- 引用来源 -->
           <!-- 第 304 批：可信度标注（避免把推测当医嘱） -->
@@ -755,6 +755,22 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 318 批：流式输出的打字光标（纯 CSS，不碰数据流） */
+.typing-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
 /* 第 315 批：加入农事提醒 */
 .assistant-add-task { margin-left: 10px; font-size: 12.5px; }
 
