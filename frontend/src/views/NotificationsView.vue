@@ -80,7 +80,11 @@
         <div class="panel-body">
           <el-skeleton v-if="loading" :rows="5" animated />
 
-          <el-empty v-else-if="items.length === 0" :description="activeTab === 'unread' ? t('notify.emptyUnread') : t('notify.emptyAll')" />
+          <EmptyState
+          v-else-if="items.length === 0"
+          variant="chat"
+          :description="activeTab === 'unread' ? t('notify.emptyUnread') : t('notify.emptyAll')"
+        />
 
           <ul v-else class="notify-list">
             <li
@@ -175,7 +179,7 @@
                 </div>
               </article>
             </template>
-            <el-empty v-else :description="t('notify.emptyAnnouncements')" :image-size="70" />
+            <EmptyState v-else variant="leaf" :description="t('notify.emptyAnnouncements')" />
           </div>
         </section>
       </aside>
@@ -261,6 +265,7 @@ import { formatTime } from '@/utils/date';
 import { useI18n } from '@/i18n';  // 第 56 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 72 批：通知标题/摘要的英文内容
 import BackButton from '@/components/BackButton.vue';  // 第 87 批：返回按钮
+import EmptyState from '@/components/EmptyState.vue';  // 第 323 批：空状态插画
 
 /** 通知类型 → i18n key（后端 type_display 是中文） */
 const TYPE_KEYS = {
