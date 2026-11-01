@@ -10,9 +10,22 @@
       </el-button>
     </header>
 
-    <el-empty v-if="!loading && !items.length" :description="t('assistant.remindersEmpty')" />
+    <!-- 第 320 批：加载中给骨架行，而不是白页 + 转圈（慢网络下感知差很多） -->
+    <div v-if="loading && !items.length" class="reminders-skeleton">
+      <el-skeleton :rows="0" animated>
+        <template #template>
+          <div v-for="i in 4" :key="i" class="skeleton-row">
+            <el-skeleton-item variant="circle" style="width: 16px; height: 16px" />
+            <el-skeleton-item variant="text" style="width: 34%" />
+            <el-skeleton-item variant="text" style="width: 46%" />
+          </div>
+        </template>
+      </el-skeleton>
+    </div>
 
-    <el-table v-else v-loading="loading" :data="items" class="reminders-table">
+    <el-empty v-else-if="!loading && !items.length" :description="t('assistant.remindersEmpty')" />
+
+    <el-table v-else :data="items" class="reminders-table">
       <el-table-column width="56">
         <template #default="{ row }">
           <el-checkbox :model-value="row.is_done" @change="toggle(row)" />
@@ -102,6 +115,21 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* 第 320 批：骨架行，高度与真实行接近，避免加载完成后跳动 */
+.reminders-skeleton {
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-100, #f0f3f1);
+}
+.skeleton-row:last-child { border-bottom: none; }
+
 .reminders-page { padding: 24px 28px 40px; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
 .page-head h1 { font-size: 1.25rem; margin: 0 0 4px; }
