@@ -359,6 +359,29 @@ def prepare_history(history: list[dict] | None, *,
     return kept
 
 
+def _time_note(code: str) -> str:
+    """当前日期与季节，追加到 system 末尾（第 302 批）。
+
+    同样问"怎么预防"，10 月与 3 月的答案本该不同 —— 此前模型不知道现在几月，
+    只能给通用建议。用 `localdate()`（不是 `now()`）：UTC 与本地跨月时口径会错，
+    这个坑今天已踩过多次。
+    """
+    from django.utils import timezone
+
+    today = timezone.localdate()
+    month = today.month
+    if code == 'en':
+        season = ('winter' if month in (12, 1, 2) else 'spring' if month in (3, 4, 5)
+                  else 'summer' if month in (6, 7, 8) else 'autumn')
+        return (f'\n\nCurrent date: {today.isoformat()} ({season}). '
+                'Take the season into account when discussing onset, prevention timing '
+                'and spraying windows; do not invent dates.')
+    season = ('冬季' if month in (12, 1, 2) else '春季' if month in (3, 4, 5)
+              else '夏季' if month in (6, 7, 8) else '秋季')
+    return (f'\n\n当前日期：{today.isoformat()}（{season}）。'
+            '回答发病规律、预防时机与用药窗口时考虑当前季节，不要编造具体日期。')
+
+
 def build_messages(question: str, knowledge: str, intent: str = 'general',
                    lang: str = DEFAULT_LANG, history: list[dict] | None = None) -> list[dict]:
     """拼出 `messages`。`knowledge` 为空时要走降级（见 orchestrator），不在这里兜。
@@ -374,7 +397,7 @@ def build_messages(question: str, knowledge: str, intent: str = 'general',
     code = normalize_lang(lang)
     focus = (FOCUS_BY_INTENT.get(code) or FOCUS_BY_INTENT[DEFAULT_LANG]).get(
         intent, FOCUS_BY_INTENT[code]['general'])
-    messages = [{'role': 'system', 'content': SYSTEM_PROMPTS[code]}]
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPTS[code] + _time_note(code)}]
     messages.extend(history or [])
     messages.append({'role': 'user', 'content': USER_TEMPLATES[code].format(
         knowledge=knowledge, question=question.strip(), focus=focus)})
