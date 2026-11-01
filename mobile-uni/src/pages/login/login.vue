@@ -211,7 +211,7 @@ async function editServer() {
   height: 88rpx;
   border-radius: 24rpx;
   background: #e8f5ee;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 44rpx;
   font-weight: 700;
   display: flex;
@@ -260,7 +260,7 @@ async function editServer() {
   display: block;
   margin-top: 20rpx;
   text-align: right;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 24rpx;
 }
 
@@ -280,7 +280,7 @@ async function editServer() {
 
 .link {
   margin-left: 8rpx;
-  color: #2f855a;
+  color: #2a7f53;
   font-weight: 600;
 }
 
@@ -316,7 +316,7 @@ async function editServer() {
 }
 
 .server-edit {
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 22rpx;
   font-weight: 600;
 }

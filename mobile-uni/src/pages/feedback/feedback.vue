@@ -71,8 +71,8 @@ async function submit() {
 .label { display: block; font-size: 24rpx; color: #566b60; margin: 8rpx 0 12rpx; }
 .chips { display: flex; gap: 12rpx; flex-wrap: wrap; margin-bottom: 12rpx; }
 .chip { padding: 10rpx 24rpx; border-radius: 999rpx; background: #f2f6f3; color: #566b60; font-size: 26rpx; }
-.chip.active { background: #2f855a; color: #fff; }
+.chip.active { background: #2a7f53; color: #fff; }
 .textarea { width: 100%; min-height: 200rpx; background: #f7faf8; border-radius: 12rpx; padding: 16rpx; font-size: 26rpx; }
 .input { background: #f7faf8; border-radius: 12rpx; padding: 16rpx; font-size: 26rpx; }
-.btn-primary { background: #2f855a; color: #fff; border-radius: 999rpx; font-size: 28rpx; height: 84rpx; line-height: 84rpx; }
+.btn-primary { background: #2a7f53; color: #fff; border-radius: 999rpx; font-size: 28rpx; height: 84rpx; line-height: 84rpx; }
 </style>

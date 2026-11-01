@@ -136,7 +136,7 @@ void isEnglish;
 .reply-label {
   display: block;
   font-size: 12px;
-  color: #2f855a;
+  color: #2a7f53;
   margin-bottom: 4px;
 }
 

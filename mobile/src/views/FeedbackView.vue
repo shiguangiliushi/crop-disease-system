@@ -131,7 +131,7 @@ async function submit() {
 }
 
 .chip.active {
-  background: #2f855a;
+  background: #2a7f53;
   color: #fff;
 }
 

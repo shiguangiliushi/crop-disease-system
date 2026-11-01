@@ -2329,7 +2329,7 @@ textarea.form-control {
   border: 1px solid rgba(47, 133, 90, 0.28);
   border-radius: 999px;
   background: #f4f8f5;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 13px;
   padding: 4px 12px;
   cursor: pointer;

@@ -4,8 +4,8 @@
      ⚠️ 用 rem 基准放大而不是逐条改 font-size：Vant 组件内部字号也走 rem，
         一次调整全端一致；逐条改容易漏。 */
   font-size: 17px;
-  --brand: #2e7d32;
-  --brand-soft: #e8f5e9;
+  --brand: #2a7f53;
+  --brand-soft: #f1f9f4;
   --page-bg: #f4f6f4;
   --ink: #1f2a1f;
 }

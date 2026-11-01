@@ -93,5 +93,5 @@ async function save() {
 .label { display: block; font-size: 24rpx; color: #8b9a91; margin-bottom: 10rpx; }
 .input { font-size: 28rpx; color: #24352c; width: 100%; }
 .textarea { min-height: 120rpx; }
-.btn-primary { background: #2f855a; color: #fff; border-radius: 999rpx; font-size: 28rpx; height: 84rpx; line-height: 84rpx; }
+.btn-primary { background: #2a7f53; color: #fff; border-radius: 999rpx; font-size: 28rpx; height: 84rpx; line-height: 84rpx; }
 </style>

@@ -90,5 +90,5 @@ onLoad((options) => {
 .block-text { display: block; font-size: 26rpx; line-height: 1.8; color: #3d4a3d; }
 .prevention-row { margin-bottom: 16rpx; }
 .tag { display: inline-block; margin-right: 8rpx; padding: 2rpx 12rpx; border-radius: 999rpx;
-  background: #eef6f1; color: #2f855a; font-size: 22rpx; }
+  background: #eef6f1; color: #2a7f53; font-size: 22rpx; }
 </style>

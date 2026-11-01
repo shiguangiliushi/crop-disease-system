@@ -293,7 +293,7 @@ function openWiki() {
 </script>
 
 <style scoped>
-.wiki-link { display: block; margin-top: 8rpx; color: #2f855a; font-size: 26rpx; }
+.wiki-link { display: block; margin-top: 8rpx; color: #2a7f53; font-size: 26rpx; }
 
 .page {
   min-height: 100vh;
@@ -338,7 +338,7 @@ function openWiki() {
 }
 
 .conf-value {
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 40rpx;
   font-weight: 700;
 }
@@ -398,7 +398,7 @@ function openWiki() {
 
 .ask-send {
   margin-top: 16rpx;
-  background: #2f855a;
+  background: #2a7f53;
   color: #fff;
   border-radius: 999rpx;
   font-size: 26rpx;
@@ -432,7 +432,7 @@ function openWiki() {
   flex: 1;
   margin: 0;
   background: #f2f6f3;
-  color: #2f855a;
+  color: #2a7f53;
   border-radius: 999rpx;
   font-size: 26rpx;
   height: 72rpx;
@@ -446,14 +446,14 @@ function openWiki() {
 .feedback-msg {
   display: block;
   margin-top: 14rpx;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 24rpx;
 }
 
 .share-btn {
   margin: 0 40rpx 24rpx;
   background: #fff;
-  color: #2f855a;
+  color: #2a7f53;
   border: 1rpx solid rgba(47, 133, 90, 0.25);
   border-radius: 999rpx;
   font-size: 28rpx;
@@ -479,7 +479,7 @@ function openWiki() {
 .btn-ghost {
   flex: 1;
   background: #eef1ef;
-  color: #2f855a;
+  color: #2a7f53;
   border-radius: 999rpx;
   font-size: 28rpx;
   height: 88rpx;

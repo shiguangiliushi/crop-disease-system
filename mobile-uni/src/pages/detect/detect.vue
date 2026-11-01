@@ -221,7 +221,7 @@ async function onLogout() {
 }
 
 .pending-action {
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 24rpx;
   font-weight: 600;
 }
@@ -342,7 +342,7 @@ async function onLogout() {
 .btn-ghost {
   flex: 1;
   background: #eef1ef;
-  color: #2f855a;
+  color: #2a7f53;
   border-radius: 999rpx;
   font-size: 28rpx;
   height: 80rpx;

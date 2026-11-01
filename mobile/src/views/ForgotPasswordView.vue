@@ -19,7 +19,7 @@
         <van-icon name="info-o" /> {{ t('auth.forgotNotReceived') }}
       </p>
       <div class="auth-actions">
-        <!-- 第 174 批：原来写死 color="#2e7d32"，改成 type="primary" 走主题变量 -->
+        <!-- 第 174 批：原来写死 color="#2a7f53"，改成 type="primary" 走主题变量 -->
       <van-button round block type="primary" @click="goBack">
           {{ t('auth.backToLogin') }}
         </van-button>

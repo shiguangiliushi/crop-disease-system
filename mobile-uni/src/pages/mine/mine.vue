@@ -260,7 +260,7 @@ function goMyFeedback() {
   height: 108rpx;
   border-radius: 50%;
   background: #e8f5ee;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 44rpx;
   font-weight: 700;
   display: flex;

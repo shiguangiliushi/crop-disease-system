@@ -99,7 +99,7 @@ export default {
   margin: 0 0 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--el-color-primary, #2e7d32);
+  color: var(--el-color-primary, #2a7f53);
 }
 
 .perms-list {

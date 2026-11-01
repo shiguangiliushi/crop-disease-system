@@ -63,7 +63,7 @@ function go(item) {
 }
 
 .nav-item.is-active {
-  color: #2f855a;
+  color: #2a7f53;
 }
 
 .nav-icon {

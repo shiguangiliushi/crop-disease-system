@@ -660,7 +660,7 @@ const brandName = computed(() => t('auth.brandName'));
   padding: 8px 16px;
   border: none;
   border-radius: 999px;
-  background: linear-gradient(135deg, #2f855a, #1f6343);
+  background: linear-gradient(135deg, #2a7f53, #1f6343);
   color: #fff;
   font-size: 13.5px;
   font-weight: 600;
@@ -766,7 +766,7 @@ const brandName = computed(() => t('auth.brandName'));
 
 .al-modal-ok {
   border: none;
-  background: linear-gradient(135deg, #2f855a, #1f6343);
+  background: linear-gradient(135deg, #2a7f53, #1f6343);
   color: #fff;
 }
 

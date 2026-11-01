@@ -69,7 +69,7 @@ onMounted(load)
 .page { min-height: 100vh; background: #f6f8f7; padding: 24rpx; box-sizing: border-box; }
 .head { display: flex; justify-content: space-between; align-items: center; padding: 0 8rpx 16rpx; }
 .hint { color: #8b9a91; font-size: 24rpx; }
-.action { color: #2f855a; font-size: 26rpx; }
+.action { color: #2a7f53; font-size: 26rpx; }
 .loading, .empty { padding: 80rpx 0; text-align: center; color: #8b9a91; font-size: 26rpx; }
 .list { background: #fff; border-radius: 20rpx; overflow: hidden; }
 .row { display: flex; gap: 12rpx; padding: 24rpx 20rpx; border-bottom: 1rpx solid #f0f4f1; }

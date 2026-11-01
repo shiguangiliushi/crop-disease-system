@@ -70,11 +70,11 @@ onMounted(async () => {
 .head { display: flex; align-items: center; gap: 12rpx; margin-bottom: 12rpx; }
 .tag { padding: 4rpx 14rpx; border-radius: 999rpx; font-size: 22rpx; background: #fff6e5; color: #a8761a; }
 .tag.processing { background: #eef4ff; color: #2c5aa0; }
-.tag.resolved { background: #eef7f1; color: #2f855a; }
+.tag.resolved { background: #eef7f1; color: #2a7f53; }
 .cat { font-size: 22rpx; color: #566b60; }
 .time { margin-left: auto; font-size: 22rpx; color: #9dada5; }
 .content { font-size: 26rpx; line-height: 1.7; color: #24352c; }
 .reply { margin-top: 16rpx; padding: 16rpx; border-radius: 12rpx; background: #f2f8f4; }
-.reply-label { display: block; font-size: 22rpx; color: #2f855a; margin-bottom: 6rpx; }
+.reply-label { display: block; font-size: 22rpx; color: #2a7f53; margin-bottom: 6rpx; }
 .reply-text { font-size: 24rpx; line-height: 1.7; color: #3d4a3d; }
 </style>

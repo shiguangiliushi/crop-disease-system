@@ -60,7 +60,7 @@ export function makeShareCard({ canvasId, disease, diseaseEn = '', confidence = 
     ctx.setFillStyle('#f2f7f3')
     ctx.fillRect(0, 0, CARD_W, CARD_H)
     // 顶部色块
-    ctx.setFillStyle('#2f855a')
+    ctx.setFillStyle('#2a7f53')
     ctx.fillRect(0, 0, CARD_W, 92)
     ctx.setFillStyle('#ffffff')
     ctx.setFontSize(20)
@@ -85,7 +85,7 @@ export function makeShareCard({ canvasId, disease, diseaseEn = '', confidence = 
     }
 
     // 置信度
-    ctx.setFillStyle('#2f855a')
+    ctx.setFillStyle('#2a7f53')
     ctx.setFontSize(44)
     ctx.fillText(percent, 32, cursor + 64)
     ctx.setFillStyle('#8b9a91')

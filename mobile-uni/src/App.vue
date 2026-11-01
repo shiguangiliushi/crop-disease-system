@@ -43,7 +43,7 @@ button::after {
 }
 
 .btn-primary {
-  background: #2f855a;
+  background: #2a7f53;
   color: #fff;
   border-radius: 999rpx;
   font-size: 32rpx;

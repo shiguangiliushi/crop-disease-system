@@ -161,7 +161,7 @@ onMounted(async () => {
 }
 
 .source-list a {
-  color: #2f855a;
+  color: #2a7f53;
   word-break: break-all;
 }
 </style>

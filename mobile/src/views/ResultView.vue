@@ -586,7 +586,7 @@ onMounted(async () => {
 .wiki-link {
   margin: 6px 0 0;
   font-size: 13px;
-  color: #2f855a;
+  color: #2a7f53;
   display: inline-flex;
   align-items: center;
   gap: 4px;

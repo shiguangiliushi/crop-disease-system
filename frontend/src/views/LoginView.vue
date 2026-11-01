@@ -250,7 +250,7 @@ const form = useLoginForm({ adminEntry: false });
   padding: 8px 16px;
   border: none;
   border-radius: 999px;
-  background: var(--gradient-brand, linear-gradient(135deg, #2f855a, #1f6343));
+  background: var(--gradient-brand, linear-gradient(135deg, #2a7f53, #1f6343));
   color: #fff;
   font-size: 13.5px;
   font-weight: 600;
@@ -323,7 +323,7 @@ const form = useLoginForm({ adminEntry: false });
 
 .auth-modal-ok {
   border: none;
-  background: var(--gradient-brand, linear-gradient(135deg, #2f855a, #1f6343));
+  background: var(--gradient-brand, linear-gradient(135deg, #2a7f53, #1f6343));
   color: #fff;
 }
 

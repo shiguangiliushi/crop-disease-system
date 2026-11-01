@@ -251,7 +251,7 @@ function goLogin() {
   display: block;
   margin-top: 12rpx;
   text-align: right;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 22rpx;
 }
 
@@ -271,7 +271,7 @@ function goLogin() {
 
 .link {
   margin-left: 8rpx;
-  color: #2f855a;
+  color: #2a7f53;
   font-weight: 600;
 }
 </style>

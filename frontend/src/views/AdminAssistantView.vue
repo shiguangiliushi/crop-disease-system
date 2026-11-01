@@ -407,7 +407,7 @@ onMounted(load);
   display: inline-block;
 }
 
-.dot--q { background: #2f855a; }
+.dot--q { background: #2a7f53; }
 .dot--d { background: #d98324; }
 .dot--n { background: #c0392b; }
 
@@ -437,7 +437,7 @@ onMounted(load);
   transition: height 0.2s ease;
 }
 
-.bar--q { background: #2f855a; }
+.bar--q { background: #2a7f53; }
 .bar--d { background: #d98324; }
 .bar--n { background: #c0392b; }
 

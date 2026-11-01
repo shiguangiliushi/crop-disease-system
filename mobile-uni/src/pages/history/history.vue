@@ -162,7 +162,7 @@ onShow(() => {
 }
 
 .add {
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 26rpx;
   padding-top: 8rpx;
 }
@@ -230,7 +230,7 @@ onShow(() => {
 }
 
 .row-conf {
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 26rpx;
   font-weight: 600;
 }
@@ -241,7 +241,7 @@ onShow(() => {
 }
 
 .more-text {
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 26rpx;
 }
 

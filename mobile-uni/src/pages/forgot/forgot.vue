@@ -135,7 +135,7 @@ function goLogin() {
   display: block;
   font-size: 30rpx;
   font-weight: 600;
-  color: #2f855a;
+  color: #2a7f53;
 }
 
 .sent-body {
@@ -157,7 +157,7 @@ function goLogin() {
 .link {
   display: block;
   margin-top: 24rpx;
-  color: #2f855a;
+  color: #2a7f53;
   font-size: 26rpx;
   font-weight: 600;
 }

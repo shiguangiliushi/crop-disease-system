@@ -29,7 +29,7 @@
 const CARD_WIDTH = 750;
 const CARD_HEIGHT = 1000;
 const IMAGE_HEIGHT = 560;
-const BRAND = '#2e7d32';
+const BRAND = '#2a7f53';
 
 /** 文字折行：按可用宽度切片（中文没有空格，只能逐字量） */
 function wrapText(ctx, text, maxWidth, maxLines = 3) {

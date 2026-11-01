@@ -100,18 +100,18 @@ const showTabBar = computed(() => route.meta?.tabbar !== false);
 const cachedViews = ['DetectView', 'HistoryView'];
 
 /**
- * 主题变量：主色与网页端保持一致（`--brand: #2e7d32`，见 styles/app.css），
+ * 主题变量：主色与网页端保持一致（`--brand: #2a7f53`，见 styles/app.css），
  * 圆角比 Vant 默认更大一点 —— App 的观感来自"更大的圆角 + 更松的留白"。
  */
 const themeVars = {
-  primaryColor: '#2e7d32',
-  buttonPrimaryBackground: '#2e7d32',
-  buttonPrimaryBorderColor: '#2e7d32',
+  primaryColor: '#2a7f53',
+  buttonPrimaryBackground: '#2a7f53',
+  buttonPrimaryBorderColor: '#2a7f53',
   navBarTitleFontSize: '17px',
   navBarHeight: '48px',
   radiusMd: '10px',
   radiusLg: '14px',
-  tabbarItemActiveColor: '#2e7d32',
+  tabbarItemActiveColor: '#2a7f53',
 };
 
 // -- 顶栏（第 173 批）-------------------------------------------------------
