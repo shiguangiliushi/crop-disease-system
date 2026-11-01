@@ -271,3 +271,21 @@ export default {
   deleteAssistantSession,
   formatAssistantError,
 };
+
+
+/**
+ * 追问建议（第 312 批）
+ *
+ * 独立接口、不走 SSE：只查库不算模型，回答结束后调一次即可。
+ * 之所以不复用流式 done 事件里的字段 —— 那条链路排查了 6 轮仍未稳定，
+ * 换成"回答完再要一次"更可靠（多一次请求，但行为确定）。
+ */
+export async function fetchSuggestions({ question, pestIdentifier = '', pestName = '' } = {}) {
+  const response = await http.post('/assistant/suggestions/', {
+    question,
+    pest_identifier: pestIdentifier || '',
+    pest_name: pestName || '',
+  });
+  const body = response.data || {};
+  return Array.isArray(body.suggestions) ? body.suggestions : [];
+}

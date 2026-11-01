@@ -324,6 +324,7 @@ import { useI18n } from '@/i18n';
 import { parseAnswerParagraphs } from '@/utils/assistantText';
 import {
   askAssistantStream,
+  fetchSuggestions,
   deleteAssistantSession,
   escalateSession,
   formatAssistantError,
@@ -615,6 +616,15 @@ const submit = async (presetText) => {
         : '');
     target.citations = Array.isArray(data?.citations) ? data.citations : [];
     target.suggestions = Array.isArray(data?.suggestions) ? data.suggestions : [];
+    // 第 312 批：流式链路拿不到建议时，回答结束后单独要一次（独立接口，确定可用）
+    if (!target.suggestions.length) {
+      fetchSuggestions({
+        question,
+        pestName: currentPestName.value,
+      }).then((list) => {
+        target.suggestions = list;
+      }).catch(() => {});
+    }
     target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
     target.hasPesticide = hasPesticideText(target.content);
     target.messageId = data?.message_id || null;

@@ -136,6 +136,7 @@ AnswerAcceptView = import_view('api.views_expert', 'AnswerAcceptView')
 ExpertListView = import_view('api.views_expert', 'ExpertListView')
 # 第 193 批：智能回答助手（语料 = 校准版知识库，见 docs/知识库入库方案.md）
 AssistantAskView = import_view('api.views_assistant', 'AssistantAskView')
+AssistantSuggestView = import_view('api.views_assistant', 'AssistantSuggestView')
 # 第 195 批：流式版（SSE 逐字返回；GZip/代理缓冲的绕法见 views_assistant 的模块说明）
 AssistantAskStreamView = import_view('api.views_assistant', 'AssistantAskStreamView')
 # 第 196 批：反馈闭环（打分 / 转人工）
@@ -462,6 +463,9 @@ api_urlpatterns = [
     # 智能回答助手（第 193 批）
     #   只有 ask 一个接口：会话与会话历史直接读 AssistantSession / AssistantMessage，
     #   不另开 REST 端点 —— 前端要用时再加，避免先建一堆没人调的路由。
+    # 第 312 批：追问建议（独立接口，不走 SSE）
+    path('assistant/suggestions/', AssistantSuggestView.as_view(),
+         name='assistant-suggestions'),
     path('assistant/ask/', AssistantAskView.as_view(), name='assistant-ask'),
     # 流式版（第 195 批）：同一套参数与降级语义，只是逐字返回
     path('assistant/ask/stream/', AssistantAskStreamView.as_view(), name='assistant-ask-stream'),

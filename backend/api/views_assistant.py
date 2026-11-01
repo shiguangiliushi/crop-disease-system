@@ -268,6 +268,71 @@ class AssistantAskStreamView(APIView):
         return response
 
 
+class AssistantSuggestView(APIView):
+    """追问建议（第 312 批）—— **独立接口**，不经过 LLM、不依赖 SSE。
+
+    ## 为什么另开接口
+
+    前面 6 轮都在"把 suggestions 塞进流式 done 事件"上打转（守卫误命中、分支不命中、
+    包装器没执行……）。这条链路只要有一环没对上，前端就永远拿不到数据。
+
+    换个思路：**回答结束后单独要一次建议**。它只查库、不算模型，开销可以忽略，
+    而且行为确定 —— 前端拿到回答后立刻调，不依赖流式事件的内部结构。
+
+    请求：`POST /api/assistant/suggestions/`  `{question, pest_identifier, lang?}`
+    返回：`{suggestions: [{intent, question}, …]}`
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .pest_lookup import find_pest_info
+
+        question = str(request.data.get('question') or '')
+        identifier = str(request.data.get('pest_identifier') or '')
+        lang = 'en' if 'en' in str(request.data.get('lang') or '').lower() else 'zh'
+
+        pest, _why = find_pest_info(identifier) if identifier else (None, '')
+        if pest is None:
+            # 第 312 批：前端问答页手里只有病害**名字**（currentPestName），没有模型类名，
+            # 所以这里允许按名字回查 —— 比逼前端再传一个它没有的字段更实际。
+            from .models import PestInfo
+
+            name_hint = str(request.data.get('pest_name') or '').strip()
+            if name_hint:
+                pest = (PestInfo.objects.filter(name=name_hint).first()
+                        or PestInfo.objects.filter(name_en=name_hint).first())
+        if pest is None:
+            # 第 312 批：前端手里可能既没有 identifier 也没有上下文名字
+            # （新开一个问题时 currentPestName 为空），最后一招：**从问题文本里找词条名**。
+            # 38 条词条，逐个 in 判断的代价可以忽略。
+            from .models import PestInfo
+
+            for candidate in PestInfo.objects.only('id', 'name', 'name_en'):
+                if candidate.name and candidate.name in question:
+                    pest = candidate
+                    break
+                if candidate.name_en and candidate.name_en.lower() in question.lower():
+                    pest = candidate
+                    break
+        if pest is None:
+            return Response({'suggestions': []})
+
+        name = pest.name
+        if lang == 'en':
+            name = getattr(pest, 'name_en', '') or name
+
+        current = _guess_intent(question)
+        out = []
+        for intent, templates in _FOLLOWUP_TEMPLATES.items():
+            if intent == current:
+                continue
+            out.append({'intent': intent, 'question': templates[lang].format(name=name)})
+            if len(out) == 3:
+                break
+        return Response({'suggestions': out})
+
+
 class AssistantFeedbackView(APIView):
     """给某条助手回答打分（有用 / 没用）。
 
