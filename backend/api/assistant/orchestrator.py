@@ -672,6 +672,20 @@ def _sse(event: str, data: dict) -> bytes:
     return f'event: {event}\ndata: {payload}\n\n'.encode('utf-8')
 
 
+def _followups_for(citations: list, question: str, lang: str = 'zh') -> list[dict]:
+    """流式收尾用的追问建议（第 308 批）。
+
+    复用 `views_assistant._suggest_followups`，**不复制规则** ——
+    否则两条链路迟早算出不一样的推荐。
+    """
+    try:
+        from api.views_assistant import _suggest_followups
+
+        return _suggest_followups({'citations': citations or []}, question or '', lang or 'zh')
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def ask_stream(*, user, question: str, session: AssistantSession | None = None,
                pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None):
     """流式问答：yield SSE 事件字节串。
@@ -849,6 +863,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     yield _sse('citations', {'citations': citations})
     yield _sse('done', {'usage': usage, 'degraded': bool(reason), 'degrade_reason': reason,
                         'model': actual_model, 'latency_ms': latency_ms,
+                        # 第 308 批：追问建议（与视图层同一套规则，不复制）
+                        'suggestions': _followups_for(citations, question, code),
                         # 前端据此在气泡下方提示"回答可能不完整"
                         'truncated': truncated,
                         # 第 212 批：带上**最终正文**（可能与逐字增量略有不同 ——
