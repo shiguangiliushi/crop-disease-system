@@ -20,7 +20,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import DetectionHistory, PestInfo
-from .models_calendar import CalendarTask
+from .models_calendar import CalendarTask, UserTaskReminder
 from .services_content_i18n import crop_en, pest_en_maps  # 第 77 批：内容数据中英对照
 
 logger = logging.getLogger(__name__)
@@ -402,3 +402,98 @@ class CalendarCropOptionsView(APIView):
 
     def get(self, request):
         return Response({'crops': _crop_options()})
+
+
+def _serialize_reminder(reminder) -> dict:
+    return {
+        'id': reminder.pk,
+        'title': reminder.title,
+        'detail': reminder.detail,
+        'crop_type': reminder.crop_type,
+        'task_type': reminder.task_type,
+        'due_date': reminder.due_date.isoformat() if reminder.due_date else None,
+        'is_done': reminder.is_done,
+        'created_at': reminder.created_at.isoformat(),
+    }
+
+
+class TaskReminderListView(APIView):
+    """我的农事提醒（第 315 批）。
+
+    ⚠️ 与 `CalendarTask` 的区别写在这：那张是**全局**农事表（管理员维护、所有人可见），
+       这张是**按用户**的私人提醒。两者不要混用。
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        queryset = UserTaskReminder.objects.filter(user=request.user)
+        return Response({'items': [_serialize_reminder(item) for item in queryset[:100]]})
+
+    def post(self, request):
+        from .models_assistant import AssistantMessage
+        from .models_calendar import UserTaskReminder
+
+        data = request.data
+        title = str(data.get('title') or '').strip()
+        if not title:
+            return Response({'detail': '请填写提醒标题'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(title) > 120:
+            return Response({'detail': '标题最多 120 字'}, status=status.HTTP_400_BAD_REQUEST)
+
+        due_date = None
+        raw_date = str(data.get('due_date') or '').strip()
+        if raw_date:
+            from datetime import date as _date
+
+            try:
+                due_date = _date.fromisoformat(raw_date)
+            except ValueError:
+                return Response({'detail': '日期格式应为 YYYY-MM-DD'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        source_message = None
+        message_id = data.get('message_id')
+        if message_id:
+            source_message = AssistantMessage.objects.filter(
+                pk=message_id, session__user=request.user, role='assistant',
+            ).first()
+
+        if UserTaskReminder.objects.filter(
+                user=request.user, title=title, due_date=due_date).exists():
+            return Response({'detail': '这条提醒已经有了'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        reminder = UserTaskReminder.objects.create(
+            user=request.user,
+            title=title,
+            detail=str(data.get('detail') or '').strip()[:2000],
+            crop_type=str(data.get('crop_type') or '').strip()[:100],
+            task_type=str(data.get('task_type') or 'pest_control'),
+            due_date=due_date,
+            source_message=source_message,
+        )
+        logger.info('农事提醒：user=%s reminder=%s', request.user.pk, reminder.pk)
+        return Response(_serialize_reminder(reminder), status=status.HTTP_201_CREATED)
+
+
+class TaskReminderDetailView(APIView):
+    """标记完成 / 删除一条提醒。"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        from .models_calendar import UserTaskReminder
+
+        reminder = UserTaskReminder.objects.filter(pk=pk, user=request.user).first()
+        if reminder is None:
+            return Response({'detail': '提醒不存在'}, status=status.HTTP_404_NOT_FOUND)
+        reminder.is_done = bool(request.data.get('is_done', True))
+        reminder.save(update_fields=['is_done'])
+        return Response(_serialize_reminder(reminder))
+
+    def delete(self, request, pk):
+        from .models_calendar import UserTaskReminder
+
+        deleted, _ = UserTaskReminder.objects.filter(pk=pk, user=request.user).delete()
+        if not deleted:
+            return Response({'detail': '提醒不存在'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)

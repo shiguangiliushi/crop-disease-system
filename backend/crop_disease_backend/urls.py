@@ -127,6 +127,8 @@ AlertNotifyView = import_view('api.views_alert', 'AlertNotifyView')
 CalendarView = import_view('api.views_calendar', 'CalendarView')
 CalendarCropOptionsView = import_view('api.views_calendar', 'CalendarCropOptionsView')
 CalendarTaskListView = import_view('api.views_calendar', 'CalendarTaskListView')
+TaskReminderListView = import_view('api.views_calendar', 'TaskReminderListView')
+TaskReminderDetailView = import_view('api.views_calendar', 'TaskReminderDetailView')
 CalendarTaskDetailView = import_view('api.views_calendar', 'CalendarTaskDetailView')
 # 第 49 批：专家咨询
 QuestionListView = import_view('api.views_expert', 'QuestionListView')
@@ -450,6 +452,10 @@ api_urlpatterns = [
     path('calendar/', CalendarView.as_view(), name='calendar'),
     path('calendar/crops/', CalendarCropOptionsView.as_view(), name='calendar-crops'),
     path('calendar/tasks/', CalendarTaskListView.as_view(), name='calendar-task-list'),
+    # 第 315 批：用户自己的农事提醒（与全局 CalendarTask 分开）
+    path('calendar/reminders/', TaskReminderListView.as_view(), name='task-reminder-list'),
+    path('calendar/reminders/<int:pk>/', TaskReminderDetailView.as_view(),
+         name='task-reminder-detail'),
     path('calendar/tasks/<int:pk>/', CalendarTaskDetailView.as_view(), name='calendar-task-detail'),
 
     # 专家咨询（第 49 批）

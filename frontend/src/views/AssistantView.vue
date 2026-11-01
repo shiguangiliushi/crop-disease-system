@@ -212,6 +212,15 @@
                 <i class="bi bi-hand-thumbs-down me-1"></i>{{ t('assistant.feedbackUseless') }}
               </el-button>
             </template>
+            <el-button
+              v-if="msg.role === 'assistant' && msg.content"
+              link
+              size="small"
+              class="assistant-add-task"
+              @click="addToReminders(msg)"
+            >
+              <i class="bi bi-calendar-plus me-1"></i>{{ t('assistant.addToCalendar') }}
+            </el-button>
             <span class="assistant-escalate">
               <el-button
                 v-if="!escalatedQuestionId"
@@ -335,6 +344,7 @@ import { useI18n } from '@/i18n';
 import { parseAnswerParagraphs } from '@/utils/assistantText';
 import {
   askAssistantStream,
+  createTaskReminder,
   fetchSuggestions,
   deleteAssistantSession,
   escalateSession,
@@ -568,6 +578,39 @@ const removeSession = async (item) => {
   }
 };
 
+/**
+ * 把这条回答加入"我的农事提醒"（第 315 批）
+ *
+ * ⚠️ 一定要**先确认**：回答里的"发病初期/一周后"是相对时间，
+ *    系统无法确定具体日期，替用户编一个日期比不填更糟。
+ */
+const addToReminders = async (msg) => {
+  const fallbackTitle = (currentPestName.value || '').trim()
+    ? `${currentPestName.value}农事提醒`
+    : t('assistant.reminderDefaultTitle');
+  try {
+    await ElMessageBox.confirm(
+      t('assistant.reminderConfirm', { title: fallbackTitle }),
+      t('assistant.reminderConfirmTitle'),
+      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'info' },
+    );
+  } catch {
+    return;  // 用户取消
+  }
+  try {
+    await createTaskReminder({
+      title: fallbackTitle,
+      detail: (msg.content || '').slice(0, 1500),
+      cropType: currentPestName.value || '',
+      taskType: 'pest_control',
+      messageId: msg.messageId || null,
+    });
+    ElMessage.success(t('assistant.reminderAdded'));
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || t('assistant.reminderFailed'));
+  }
+};
+
 const submit = async (presetText) => {
   const question = String(presetText ?? draft.value).trim();
   const image = pendingImage.value;
@@ -712,6 +755,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 315 批：加入农事提醒 */
+.assistant-add-task { margin-left: 10px; font-size: 12.5px; }
+
 /* 第 314 批：专家回复状态 */
 .assistant-expert-replied,
 .assistant-expert-waiting {

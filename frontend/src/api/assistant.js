@@ -289,3 +289,24 @@ export async function fetchSuggestions({ question, pestIdentifier = '', pestName
   const body = response.data || {};
   return Array.isArray(body.suggestions) ? body.suggestions : [];
 }
+
+
+/**
+ * 把一条助手建议加入"我的农事提醒"（第 315 批）
+ *
+ * ⚠️ 写的是 **UserTaskReminder**（按用户），不是全局的 `CalendarTask` ——
+ * 后者是管理员维护、所有人共享的农事表，往里写会替所有人加任务。
+ */
+export async function createTaskReminder({
+  title, detail = '', cropType = '', taskType = 'pest_control', dueDate = '', messageId = null,
+} = {}) {
+  const response = await http.post('/calendar/reminders/', {
+    title,
+    detail,
+    crop_type: cropType,
+    task_type: taskType,
+    due_date: dueDate || '',
+    message_id: messageId,
+  });
+  return response.data;
+}
