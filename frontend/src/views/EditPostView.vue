@@ -424,19 +424,15 @@ export default {
       try {
         loading.value = true;
         const postId = route.params.id;
-        console.log('开始获取帖子详情，ID:', postId);
         
         if (!postId) {
-          console.log('未提供帖子ID，进入新建帖子模式');
           loading.value = false;
           return;
         }
         
         const response = await getPost(postId);
-        console.log('获取到帖子详情响应:', response);
         
         if (response) {
-          console.log('处理帖子内容，原始内容:', response.content);
           
           // 检查是否有权限编辑
           const { canEdit, message } = checkEditPermission(response);
@@ -448,7 +444,6 @@ export default {
           
           // 直接使用原始内容，不进行HTML标签处理
           let content = response.content || '';
-          console.log('处理后的内容:', content);
           
           // 设置表单数据
           form.value = {
@@ -485,7 +480,6 @@ export default {
           // 重置脏数据标记
           isDirty.value = false;
           
-          console.log('表单数据已更新:', form.value);
         }
       } catch (error) {
         console.error('获取帖子失败:', error);
@@ -659,7 +653,6 @@ export default {
      */
     const performDraftSave = async (force = false) => {
       if ((!force && !isDirty.value) || isSaving.value) {
-        console.log('内容未修改或正在保存，跳过自动保存');
         return;
       }
       
@@ -669,7 +662,6 @@ export default {
         
         // 基本验证
         if (!form.value.title?.trim() || !form.value.content?.trim()) {
-          console.log('标题或内容为空，跳过自动保存');
           saveStatus.value = t('post.draftEmpty');
           setTimeout(() => saveStatus.value = '', 3000);
           return;
@@ -691,7 +683,6 @@ export default {
           postData.is_pinned = !!form.value.is_pinned;
         }
 
-        console.log('自动保存草稿数据:', postData);
 
         let response;
         // 编辑已有帖子 → 更新；新建帖子 → 第一次创建后记住 id，后续都走更新
@@ -717,7 +708,6 @@ export default {
         lastSaved.value = new Date();
         saveStatus.value = t('post.draftSaved', { time: formatTime(lastSaved.value) });
         
-        console.log('草稿保存成功:', response);
         return true;
       } catch (error) {
         console.error('自动保存草稿失败:', error);
@@ -801,7 +791,6 @@ export default {
           postData.is_pinned = !!form.value.is_pinned;
         }
 
-        console.log('提交数据:', postData);
 
         // 若之前自动保存已经建过草稿，这里针对同一条更新，避免产生重复帖子
         const targetId = route.params.id || draftPostId.value;
@@ -809,12 +798,10 @@ export default {
         if (targetId) {
           // 更新现有帖子
           response = await updatePost(targetId, postData);
-          console.log('更新帖子响应:', response);
         } else {
           // 创建新帖子
           response = await createPost(postData);
           if (response?.id) draftPostId.value = response.id;
-          console.log('创建帖子响应:', response);
         }
         
         // createPost/updatePost 返回的是**帖子数据本身**（forum.js 里已 .then(res => res.data)），

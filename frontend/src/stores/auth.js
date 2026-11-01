@@ -53,16 +53,9 @@ export const useAuthStore = defineStore('auth', () => {
 
       // 没有 token 就没有登录态，直接返回
       if (!token) {
-        console.log('No auth token found in storage');
         return { user: null, token: null };
       }
 
-      console.log('Loaded initial auth state:', {
-        hasUser: !!storedUser,
-        hasToken: !!token,
-        source,                    // 'session' = 本标签页自己的登录态
-        tokenLength: token?.length || 0
-      });
 
       return { user: storedUser, token };
     } catch (error) {
@@ -134,11 +127,6 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => {
     // 有 token 即视为已登录
     const hasToken = !!authToken.value;
-    console.log('Auth store - isAuthenticated check:', { 
-      hasToken,
-      user: user.value,
-      currentTime: new Date().toISOString()
-    });
     return hasToken;
   });
 
@@ -240,11 +228,6 @@ const CONTENT_MODULES = [
   });
 
   function setAuth({ userData, token, remember = true }) {
-    console.log('Setting auth:', { 
-      hasUserData: !!userData, 
-      hasToken: !!token,
-      remember
-    });
     
     // 更新内存状态
     user.value = userData;
@@ -280,7 +263,6 @@ const CONTENT_MODULES = [
 
   async function login(credentials, router) {
     try {
-      console.log('Sending login request with credentials:', credentials);
       
       // 先清掉旧登录态，避免半登录状态
       clearAuth();
@@ -298,7 +280,6 @@ const CONTENT_MODULES = [
         withCredentials: true
       });
       
-      console.log('Raw login response:', response);
 
       if (!response) {
         console.error('Empty response from server');
@@ -312,7 +293,6 @@ const CONTENT_MODULES = [
       // AxiosResponse。统一交给 unwrapAuthPayload 处理，避免"登录明明成功、
       // 界面却没登录"这类只在某种响应形状下才复现的问题。
       const payload = unwrapAuthPayload(response);
-      console.log('Response data structure:', payload);
 
       // 后端可能返回 200 但 status:'error'（业务失败）
       if (payload.status === 'error' || response.status === 'error') {
@@ -334,7 +314,6 @@ const CONTENT_MODULES = [
         remember: true
       });
 
-      console.log('Login succeeded, redirecting to home');
       
       // 有 router 就自动跳首页
       if (router) {
@@ -378,9 +357,7 @@ const CONTENT_MODULES = [
   // 见 LoginView.vue / RegisterView.vue 的用法。
   async function register(userData, router) {
     try {
-      console.log('Sending registration request with data:', userData);
       const body = await api.post('register/', userData);
-      console.log('Registration response data:', body);
 
       if (!body) {
         throw new Error(t('msg.serverEmptyResponse'));
@@ -397,13 +374,11 @@ const CONTENT_MODULES = [
           token: payload.token,
           remember: true
         });
-        console.log('Registration successful, redirecting to home');
         if (router && typeof router.push === 'function') {
           router.push('/');
         }
       } else {
         // 旧行为：后端没签发 token，交给用户再登录一次
-        console.log('Registration successful, redirecting to login');
         if (router && typeof router.push === 'function') {
           router.push('/login');
         }
@@ -517,15 +492,12 @@ const CONTENT_MODULES = [
     try {
       // 内存里已有 token
       if (authToken.value) {
-        console.log('Auth token found in store, using cached login state (validity is enforced on API 401).');
         return true;
       }
 
-      console.log('No token in store, reading from storage...');
       const { token: storedToken, user: storedUser } = getIdentity();
 
       if (storedToken && storedUser) {
-        console.log('Found token and user in storage, restoring auth state.');
         authToken.value = storedToken;
         user.value = storedUser;
         return true;
@@ -534,13 +506,11 @@ const CONTENT_MODULES = [
       // 只有 token 没有 user：仍算已登录（用户资料可以稍后再拉），
       // 避免"token 有效却因为缺资料被判定未登录"。
       if (storedToken) {
-        console.log('Found token only, restoring token without user profile.');
         authToken.value = storedToken;
         user.value = null;
         return true;
       }
 
-      console.log('No auth token found in storage.');
       return false;
     } catch (error) {
       console.error("An unexpected error occurred during auth check:", error);

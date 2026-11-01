@@ -76,17 +76,14 @@ const setupWebSocket = () => {
         const ws = new WebSocket(wsUrl);
         
         ws.onopen = () => {
-          console.log('WebSocket connected');
           reconnectAttempts = 0; // 重置重连次数
         };
         
         ws.onclose = (e) => {
-          console.log(`WebSocket disconnected: ${e.code} ${e.reason}`);
           
           // 指数退避重连
           if (reconnectAttempts < maxReconnectAttempts) {
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-            console.log(`Reconnecting in ${delay}ms...`);
             reconnectTimeout = setTimeout(connectWebSocket, delay);
             reconnectAttempts++;
           } else {
@@ -120,7 +117,6 @@ const setupWebSocket = () => {
       }
     };
   } else {
-    console.log('WebSocket is disabled in development mode');
     return () => {}; // 返回空清理函数
   }
 };
@@ -250,7 +246,6 @@ const initAuth = async () => {
   const token = getToken();
   
   if (token) {
-    console.log('Found auth token, checking auth status...');
     try {
       await authStore.checkAuth();
     } catch (error) {
@@ -294,7 +289,6 @@ const mountApp = async () => {
     // 挂载应用
     app.mount('#app-container');
     window.__app_mounted__ = true;
-    console.log('App mounted successfully');
     
     // 初始化 WebSocket
     if (!window.__websocket_initialized__) {
@@ -333,7 +327,6 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     navigator.serviceWorker
       .register('/sw.js')
               .then((registration) => {
-        console.log('[pwa] Service Worker 已注册:', registration.scope);
         // 第 242 批：新版本提示（见 components/PwaUpdateBanner.vue）
         window.__pwaRegistration = registration;
         const notify = () => window.dispatchEvent(new Event('pwa-update-ready'));

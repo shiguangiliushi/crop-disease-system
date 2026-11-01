@@ -156,11 +156,9 @@ const props = defineProps({
 // 获取统计数据
 const fetchStatistics = async () => {
   try {
-    console.log('正在请求统计数据...');
     const response = await api.get('/statistics/', {
       params: props.allUsers ? { all_users: 'true' } : {},
     });
-    console.log('统计接口响应:', response);
 
     // 确保响应数据存在
     if (!response || !response.data) {
@@ -169,7 +167,6 @@ const fetchStatistics = async () => {
     }
 
     const data = response.data;
-    console.log('原始统计数据:', data);
 
     // 确保数据结构正确
     const processedData = {
@@ -190,7 +187,6 @@ const fetchStatistics = async () => {
       }));
     }
 
-    console.log('处理后的统计数据:', processedData);
     statisticsData.value = processedData;
     return processedData;
 
@@ -599,13 +595,11 @@ const cropDiseaseData = computed(() => {
       const cropDisplayName = new Map();
 
       // 处理作物分布数据
-      console.log('原始 crop_distribution 数据:', JSON.parse(JSON.stringify(statisticsData.value.crop_distribution)));
       
       statisticsData.value.crop_distribution.forEach(item => {
         const cropType = item.pest_info__crop_type || '未知作物';
         const count = item.count || 0;
         
-        console.log(`处理作物: ${cropType}, 数量: ${count}`);
 
         if (!cropDisplayName.has(cropType)) {
           cropDisplayName.set(cropType, chartLabel(item, 'pest_info__crop_type') || t('stats.unknownCrop'));

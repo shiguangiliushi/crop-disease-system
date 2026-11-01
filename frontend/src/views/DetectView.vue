@@ -828,7 +828,6 @@ const handleImageError = (event) => {
 
 // 图片加载成功
 const handleImageLoad = (event) => {
-  console.log('图片加载成功:', event);
 };
 
 // 识别结果列表（第 73 批：删除了此前的"作物类型筛选"死代码 ——
@@ -928,7 +927,6 @@ const queueForOffline = async () => {
     const counts = await getOfflineQueue().count();
     window.dispatchEvent(new Event('offline-queue-changed'));
     $toast.success(t('detect.queuedOffline', { count: counts.pending }));
-    console.log('[offline] 已入队:', item.id);
   } catch (error) {
     console.error('[offline] 入队失败:', error);
     $toast.error(t('detect.offlineSaveFailed'));
@@ -1007,9 +1005,7 @@ const detectDisease = async () => {
       }
     });
 
-    console.log('后端响应数据:', response.data);
 
-    console.log('后端响应数据:', response.data);
 
     // 检查响应格式 - 现在支持两种格式：
     // 1. 直接返回检测数据: { detection: {...}, history_id: 123 }
@@ -1092,22 +1088,9 @@ const detectDisease = async () => {
     persistResult(detectionResult.value);
 
     // 调试信息
-    console.log('原始检测数据:', detectionData);
-    console.log('原始图片URL:', detectionData.original_image || detectionData.image_url);
-    console.log('标注图片URL:', detectionData.annotated_image || detectionData.annotated_image_url);
-    console.log('处理后的原始图片URL:', detectionResult.value.originalImage);
-    console.log('处理后的标注图片URL:', detectionResult.value.annotatedImage);
 
     // 打印调试信息
-    console.log('检测结果详情:', {
-      disease: detectionData.disease,
-      symptoms: detectionData.symptoms,
-      prevention: detectionData.prevention,
-      originalImage: detectionResult.value.originalImage,
-      annotatedImage: detectionResult.value.annotatedImage
-    });
 
-    console.log('处理后的检测结果:', detectionResult.value);
 
     // 为每个病害添加反馈状态
     detectionResult.value.diseases = detectionResult.value.diseases.map(disease => ({
@@ -1264,13 +1247,6 @@ const submitFeedback = async (disease, isCorrect = false) => {
       formData.append('image', selectedFile.value);
     }
 
-    console.log('提交反馈数据:', {
-      disease_name: diseaseName,
-      is_correct: isCorrect,
-      suggestion: suggestionText,
-      corrected_pest_id: disease.correctedPestId || null,
-      has_image: !!selectedFile.value
-    });
 
     // 发送multipart/form-data请求
     // 使用axios实例，确保已经配置了baseURL
@@ -1283,7 +1259,6 @@ const submitFeedback = async (disease, isCorrect = false) => {
     });
 
     $toast.success(t('detect.feedbackThanks'));
-    console.log('反馈提交成功:', response.data);
 
     // 更新UI状态
     disease.feedbackSent = true;

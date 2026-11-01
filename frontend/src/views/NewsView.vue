@@ -602,7 +602,6 @@ const loadNewsDetail = async (id) => {
     loading.value = true;
     // 注意：vite.config.ts 中已经配置了 /api 代理，所以这里不需要再加 /api
     const url = `/news/${id}/`;
-    console.log('正在加载新闻详情，URL:', url);
 
     const response = await axios.get(url, {
       headers: {
@@ -611,7 +610,6 @@ const loadNewsDetail = async (id) => {
     });
 
     const data = response.data;
-    console.log('新闻详情响应:', data);
 
     if (!data) {
       throw new Error(t('news.emptyData'));
@@ -648,7 +646,6 @@ const loadNewsDetail = async (id) => {
       is_published: data.is_published || false
     };
 
-    console.log('更新后的表单数据:', newsForm.value);
     // 标记"正在编辑哪条新闻"，否则弹窗标题会显示成「添加新闻」
     editingNews.value = data;
     showAddDialog.value = true;
@@ -711,9 +708,7 @@ const fetchNews = async () => {
     // 否则会出现"后台已下架、前台刷新还是旧内容"的假象。
     const cacheBuster = `_t=${Date.now()}`;
     const url = queryString ? `${baseUrl}?${queryString}&${cacheBuster}` : `${baseUrl}?${cacheBuster}`;
-    console.log('Final request URL:', url);  // 添加调试日志
 
-    console.log('Request URL:', url);
 
     // 准备请求头
     const headers = {
@@ -727,7 +722,6 @@ const fetchNews = async () => {
       headers['Authorization'] = `Token ${token}`;
     }
     
-    console.log('Request headers:', JSON.stringify(headers, null, 2));
     
     // 使用 fetch API 发送请求
     const response = await fetch(url, {
@@ -737,7 +731,6 @@ const fetchNews = async () => {
       cache: 'no-store'        // 发布状态随时可能被管理员改动，禁用协商缓存
     });
 
-    console.log('Response status:', response.status, response.statusText);
     
     if (!response.ok) {
       let errorData;
@@ -760,7 +753,6 @@ const fetchNews = async () => {
     }
     
     const data = await response.json();
-    console.log('API Response:', data);
 
     // 处理响应数据
     if (data.results) {
@@ -940,7 +932,6 @@ const getFullImageUrl = (url) => {
 
 // 处理图片上传
 const handleUpload = (file) => {
-  console.log('处理文件上传:', file);
 
   // 生成预览URL
   const reader = new FileReader();
@@ -976,8 +967,6 @@ const handleUpload = (file) => {
     // 保存文件对象到表单数据
     newsForm.value.image = fileObj;
 
-    console.log('生成预览URL:', newsForm.value.image_preview);
-    console.log('文件信息:', fileObj);
 
     // 如果是编辑模式，清除原始图片URL，以便在提交时更新
     if (newsForm.value.id) {

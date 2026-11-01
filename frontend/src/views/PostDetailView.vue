@@ -739,9 +739,6 @@ export default {
     
     // 确保用户信息已加载
     onMounted(async () => {
-      console.log('Current user from store:', userStore.user);
-      console.log('Is authenticated:', authStore.isAuthenticated);
-      console.log('Is admin:', userStore.isAdmin);
       
       // 如果用户已认证但用户信息未加载，尝试从本地存储加载
       if (authStore.isAuthenticated && !userStore.user) {
@@ -750,9 +747,7 @@ export default {
           const parsedUser = getStoredUser();
           if (parsedUser) {
             userStore.setUser(parsedUser);
-            console.log('User data loaded from storage:', parsedUser);
           } else {
-            console.log('No user data found in storage');
           }
         } catch (error) {
           console.error('Error loading user data:', error);
@@ -776,7 +771,6 @@ export default {
 
     // 分页后的评论列表
     const paginatedComments = computed(() => {
-      console.log('计算 paginatedComments，当前评论数:', comments.value?.length || 0);
       if (!Array.isArray(comments.value)) {
         console.warn('评论数据格式不正确:', comments.value);
         return [];
@@ -808,7 +802,6 @@ export default {
         loading.value = true;
         loadingComments.value = true;
         const data = await getPost(postId.value);
-        console.log('获取到帖子详情:', data);
         
         post.value = { 
           ...data, 
@@ -826,7 +819,6 @@ export default {
           // 设置是否有更多评论可以加载
           pagination.value.hasMore = data.comment_count > 0;
           
-          console.log('评论总数:', data.comment_count);
           
           // 确保 DOM 更新后滚动到评论区域
           nextTick(() => {
@@ -913,7 +905,6 @@ export default {
     // 获取评论列表
     const fetchComments = async (loadMore = false) => {
       if ((loadingMoreComments.value && loadMore) || (loadingComments.value && !loadMore)) {
-        console.log('正在加载中，跳过重复请求');
         return;
       }
       
@@ -926,7 +917,6 @@ export default {
           pagination.value.currentPage = 1;
           // 清空评论前先记录当前评论ID，用于去重
           const currentCommentIds = new Set(comments.value.map(c => c.id));
-          console.log('当前已加载的评论ID:', Array.from(currentCommentIds));
           comments.value = [];
         }
 
@@ -937,9 +927,7 @@ export default {
           parent__isnull: true // 只获取顶级评论
         };
 
-        console.log('正在获取评论，参数:', params);
         const response = await getComments(postId.value, params);
-        console.log('获取到评论响应:', response);
         
         let results = response.results || [];
         const count = response.count || 0;
@@ -949,11 +937,9 @@ export default {
           // 去重处理：过滤掉已存在的评论
           const currentCommentIds = new Set(comments.value.map(c => c.id));
           const newComments = results.filter(comment => !currentCommentIds.has(comment.id));
-          console.log(`加载更多评论：新加载${results.length}条，去重后${newComments.length}条`);
           comments.value = [...comments.value, ...newComments];
         } else {
           // 首次加载或刷新
-          console.log(`首次加载评论，共${results.length}条`);
           comments.value = results;
           pagination.value.total = count;
         }
@@ -961,12 +947,6 @@ export default {
         // 更新分页信息
         pagination.value.hasMore = !!next;
         
-        console.log('更新后的评论列表:', comments.value);
-        console.log('分页信息:', {
-          hasMore: pagination.value.hasMore,
-          currentPage: pagination.value.currentPage,
-          total: pagination.value.total
-        });
         
         // 如果是初始加载，滚动到评论区域
         if (isInitialLoad.value) {
@@ -1071,7 +1051,6 @@ export default {
           parent: commentForm.value.parentId ? Number(commentForm.value.parentId) : null
         };
         
-        console.log('提交评论数据:', commentData);
 
         // 创建评论
         const newComment = await createComment(currentPostId, commentData);
@@ -1406,7 +1385,6 @@ export default {
         });
 
         try {
-          console.log(`正在删除帖子 ${postId.value} 的评论 ${commentId}`);
           // 调用API删除评论，需要传入帖子ID和评论ID
           await deleteComment(postId.value, commentId);
           
@@ -1415,7 +1393,6 @@ export default {
             return commentsList.reduce((acc, comment) => {
               // 过滤掉被删除的评论
               if (comment.id === commentId) {
-                console.log(`从评论列表中移除评论 ${commentId}`);
                 return acc;
               }
 
@@ -1433,7 +1410,6 @@ export default {
                     0,
                     (comment.reply_count || originalCount) - 1
                   );
-                  console.log(`从回复中移除了评论 ${commentId}`);
                 }
               }
 
@@ -1449,7 +1425,6 @@ export default {
           const oldCount = post.value.comment_count || 0;
           const newCount = Math.max(0, oldCount - 1);
           post.value.comment_count = newCount;
-          console.log(`更新评论数: ${oldCount} -> ${newCount}`);
           
           // 更新评论列表
           comments.value = newComments;
@@ -1555,7 +1530,6 @@ export default {
       // 然后获取评论
       await fetchComments();
       
-      console.log('初始评论加载完成，当前评论数:', comments.value.length);
 
       // 检查URL中是否有评论锚点
       if (route.hash === '#comments') {
@@ -1614,7 +1588,6 @@ export default {
       const originalLikeStatus = post.value.is_liked;
       const originalLikeCount = post.value.like_count;
       
-      console.log('开始点赞/取消点赞，当前状态:', originalLikeStatus, '点赞数:', originalLikeCount);
       
       try {
         // 1. 立即更新UI，提升用户体验
@@ -1625,7 +1598,6 @@ export default {
         
         // 2. 发送点赞/取消点赞请求
         const response = await toggleLike({ post: postId.value });
-        console.log('点赞API返回:', response);
         
         // 3. 显示操作成功提示
         ElMessage.success(post.value.is_liked ? t('msg.likeOk') : t('msg.unlikeOk'));
@@ -1633,7 +1605,6 @@ export default {
         // 4. 重新获取帖子详情以确保数据同步
         try {
           const postData = await getPost(postId.value);
-          console.log('重新获取的帖子数据:', postData);
           
           // 保留当前UI状态，只更新其他字段
           post.value = {
@@ -1669,7 +1640,6 @@ export default {
       }
       
       try {
-        console.log(`正在${comment.is_liked ? '取消点赞' : '点赞'}评论 ${comment.id}`);
         // 评论接口是嵌套路由，需要带上帖子 ID
         const result = await toggleCommentLike(postId.value, comment.id);
 

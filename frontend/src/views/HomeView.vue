@@ -105,7 +105,6 @@ const loadAlerts = async () => {
 };
 
 onMounted(() => {
-  console.log('HomeView mounted');
   loadAnnouncement();
   loadAlerts();
 });
@@ -115,13 +114,11 @@ const router = useRouter();
 // 导航函数
 const navigateTo = (path) => {
   try {
-    console.log('Navigating to:', path);
     if (path) {
       router.push(path).catch(err => {
         console.error('Navigation error:', err);
         // 如果是未知路由，跳转到404页面
         if (err.name === 'NavigationDuplicated') {
-          console.log('Navigation duplicated, ignoring...');
         } else {
           router.push('/404');
         }

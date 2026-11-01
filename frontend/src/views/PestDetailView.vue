@@ -126,7 +126,6 @@ const loadPest = async () => {
   loading.value = true;
   error.value = '';
   try {
-    console.log('Fetching pest details for:', identifier);
     // 使用正确的API路径 /pests/{identifier}/
     // 注意：api 实例已经包含了 /api 前缀，所以这里不需要再加 /api
     const response = await api.get(`pests/${identifier}/`);

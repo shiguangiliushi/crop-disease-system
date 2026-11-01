@@ -599,7 +599,6 @@ const initializeData = async () => {
     ]);
 
     isInitialized.value = true;
-    console.log('Data initialization completed successfully');
   } catch (err) {
     console.error('初始化数据失败:', err);
     error.value = t('history.initFailed');
@@ -610,11 +609,9 @@ const initializeData = async () => {
 
 // 组件挂载时加载数据（原来这里有两个 onMounted，会导致历史记录与统计接口重复请求两次）
 onMounted(async () => {
-  console.log('HistoryView component mounted, initializing data...');
   await loadAllPestTypes();
   // initializeData 内部已经并行请求了历史记录与统计数据
   await initializeData();
-  console.log('Initial data loaded');
   //: 第 224 批：`/history?record=<id>` 直接打开那条识别详情 ——
   //: 反馈管理里「查看该次识别」就跳这里。取不到静默（深链不是主流程）。
   const recordId = route.query.record;
@@ -630,13 +627,11 @@ onMounted(async () => {
 
 // 刷新数据
 const refreshData = async () => {
-  console.log('Refreshing data...');
   await initializeData();
 };
 
 // 清除所有筛选条件
 const clearFilters = () => {
-  console.log('Clearing all filters');
   filterPest.value = '';
   filterDate.value = '';
   searchKeyword.value = '';
@@ -903,13 +898,11 @@ const fetchHistory = async (page = 1, extraParams = {}) => {
     // 移除空参数
     Object.keys(params).forEach(key => (params[key] === '' || params[key] === null) && delete params[key]);
 
-    console.log(`Fetching history page ${page} with params:`, params);
 
     // 添加请求超时处理
     const requestParams = { ...params };
     
     // 记录请求参数
-    console.log('Sending request with params:', requestParams);
     
     const response = await Promise.race([
       apiClient.get('detection-history/', { params: requestParams }),
@@ -926,13 +919,6 @@ const fetchHistory = async (page = 1, extraParams = {}) => {
     const responseData = response.data.data;
 
     // 记录调试信息
-    console.log('History API Response:', {
-      status: response.status,
-      count: responseData.total,
-      total_pages: responseData.total_pages,
-      results_count: responseData.items.length,
-      first_item: responseData.items[0],
-    });
 
     // 处理数据并更新状态
     const processedItems = responseData.items.map(item => ({
@@ -1175,16 +1161,6 @@ const fetchHistory = async (page = 1, extraParams = {}) => {
     });
   } finally {
     isLoading.value = false;
-    console.log('History state after fetch:', {
-      historyItems: history.value?.length || 0,
-      totalRecords: totalRecords.value,
-      totalPages: totalPages.value,
-      currentPage: currentPage.value,
-      isLoading: isLoading.value,
-      error: error.value,
-      uniquePests: uniquePests.value?.size || 0,
-      diseaseTypes: diseaseTypes.value?.length || 0,
-    });
   }
 };
 

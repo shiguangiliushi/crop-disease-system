@@ -237,21 +237,16 @@ export default {
     const router = useRouter();
     const authStore = useAuthStore(); // 使用 auth store
     
-    console.log('ForumBoardView 初始化，路由参数:', route.params);
-    console.log('完整路由对象:', route);
     
     // 组件挂载时加载数据
     onMounted(() => {
-      console.log('ForumBoardView 组件已挂载，开始加载数据...');
       fetchBoard();
       fetchPosts();
     });
     
     // 监听路由参数变化
     watch(() => route.params.id, (newId, oldId) => {
-      console.log('版块ID变化:', { oldId, newId });
       if (newId && newId !== oldId) {
-        console.log('版块ID变化，重新加载数据');
         fetchBoard();
         fetchPosts();
       }
@@ -274,22 +269,13 @@ export default {
     // 确保boardId是数字类型
     const boardId = computed(() => {
       const id = Number(route.params.id);
-      console.log('计算属性 boardId 被调用，原始值:', route.params.id, '转换后:', id);
       return isNaN(id) ? null : id;
     });
     
     // 调试用
-    console.log('初始状态:', {
-      routeParams: route.params,
-      routeQuery: route.query,
-      path: route.path,
-      fullPath: route.fullPath,
-      boardId: boardId.value
-    });
     
     // 获取版块详情
     const fetchBoard = async () => {
-      console.log('fetchBoard 被调用，当前 boardId:', boardId.value);
       
       if (!boardId.value) {
         console.error('无法获取版块：boardId 为空');
@@ -299,7 +285,6 @@ export default {
       loading.value = true;
       
       try {
-        console.log('正在获取版块详情，ID:', boardId.value);
         
         // 获取版块详情
         const [boardData, postsData, essenceData] = await Promise.all([
@@ -328,11 +313,6 @@ export default {
           }).catch(() => ({ count: 0 }))
         ]);
         
-        console.log('版块详情数据:', boardData);
-        console.log('帖子统计数据:', {
-          total: postsData?.count || 0,
-          results: postsData?.results?.length || 0
-        });
         
         // 更新版块数据
         board.value = {
@@ -378,10 +358,8 @@ export default {
           params.order_by = '-created_at';
         }
 
-        console.log('获取帖子参数:', params);
         
         const response = await getPosts(params);
-        console.log('获取帖子响应:', response);
         
         // 处理不同的响应格式
         if (response) {
@@ -413,13 +391,6 @@ export default {
             return post.created_at && post.created_at.startsWith(today);
           }).length;
           
-          console.log(`成功获取 ${results.length} 条帖子，共 ${count} 条，总页数: ${totalPages.value}`);
-          console.log('帖子详情:', results.map(post => ({
-            id: post.id,
-            title: post.title,
-            board_id: post.board?.id || post.board,
-            created_at: post.created_at
-          })));
           
           // 更新版块中的帖子总数
           if (board.value) {
@@ -562,7 +533,6 @@ export default {
         return;
       }
       
-      console.log('正在跳转到帖子详情，ID:', postId);
       
       try {
         // 使用路由跳转到帖子详情页
@@ -625,7 +595,6 @@ export default {
         return;
       }
       
-      console.log('正在跳转到用户主页，用户ID:', userId);
       
       try {
         // ⚠️ 第 112 批修：路由名是 `user-profile`，这里原来写的是驼峰的 `userProfile`。
@@ -660,7 +629,6 @@ export default {
 
     // 发帖成功后的回调
     const postCreated = () => {
-      console.log('检测到新帖子创建，刷新帖子列表...');
       // 刷新帖子列表
       fetchPosts();
       // 如果当前在版块页面，也刷新版块统计信息

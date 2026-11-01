@@ -210,12 +210,10 @@ export function getPosts(params = {}) {
   requestParams._t = new Date().getTime();
   
   // 添加详细的调试日志
-  console.log('getPosts 请求参数:', JSON.stringify(requestParams, null, 2));
   
   // 使用正确的URL路径，不需要加/api前缀，因为axios实例已经配置了baseURL
   return axios.get('/forums/posts/', { params: requestParams })
     .then(response => {
-      console.log('getPosts 响应数据:', response.data);
       const responseData = response.data;
       
       // 处理标准分页响应
@@ -251,14 +249,8 @@ export function getPosts(params = {}) {
 
 // 获取热门帖子
 export function getHotPosts(limit = 10) {
-  console.log('获取热门帖子，数量:', limit);
   return axios.get(`/forums/posts/hot/`, { params: { limit } })
   .then(response => {
-    console.log('热门帖子API响应:', {
-      status: response.status,
-      data: response.data,
-      headers: response.headers
-    });
     const responseData = response.data;
     // 确保返回的数据格式一致
     if (Array.isArray(responseData)) {
@@ -276,9 +268,7 @@ export function getHotPosts(limit = 10) {
 
 // 获取帖子详情
 export function getPost(postId) {
-  console.log(`获取帖子详情，ID: ${postId}`);
   return api.get(`/forums/posts/${postId}/`).then(res => {
-    console.log('帖子详情响应:', res.data);
     return res.data;
   }).catch(error => {
     console.error('获取帖子详情失败:', error);
@@ -291,7 +281,6 @@ export function getPost(postId) {
 
 // 创建帖子
 export function createPost(data) {
-  console.log('准备发送的帖子数据:', JSON.stringify(data, null, 2));
   
   return api.post(`/forums/posts/`, data).then(res => res.data);
 }
@@ -387,17 +376,11 @@ export function getComments(postId, params = {}) {
     }
   });
   
-  console.log(`获取帖子 ${postIdNum} 的评论，参数:`, requestParams);
   
   return api.get(`/forums/posts/${postIdNum}/comments/`, { 
     params: requestParams
   }).then(response => {
     const data = response.data;
-    console.log('评论API响应数据:', {
-      count: data.count,
-      next: data.next,
-      results: data.results ? translate('common.totalItems', { count: data.results.length }) : translate('forum.noResult')
-    });
     
     // 确保返回标准分页格式
     return {
@@ -436,7 +419,6 @@ export function createComment(postId, data, config = {}) {
     config.headers['Authorization'] = `Token ${authStore.authToken}`;
   }
   
-  console.log(`Sending comment to /forums/posts/${postId}/comments/ with config:`, config);
   
   return api.post(`/forums/posts/${postId}/comments/`, data, config)
     .then(res => res.data)
@@ -460,12 +442,10 @@ export function createComment(postId, data, config = {}) {
 
 // 删除评论
 export function deleteComment(postId, commentId) {
-  console.log(`正在删除帖子 ${postId} 的评论，ID: ${commentId}`);
   // 契约对齐：后端 DELETE（DRF destroy）是"**仅管理员**硬删除"，
   // 普通用户删自己的评论会被 403（"只有管理员可以硬删除评论"），界面上的删除按钮等于失效。
   // 作者/版主软删除的入口是自定义 action：POST .../comments/{id}/delete/（返回 204）。
   return api.post(`/forums/posts/${postId}/comments/${commentId}/delete/`, {}).then(res => {
-    console.log('评论删除成功:', res.data);
     return res.data;
   }).catch(error => {
     console.error('删除评论失败:', error);
@@ -562,7 +542,6 @@ export function toggleLike(data) {
     },
     withCredentials: true  // 确保发送cookies
   }).then(res => {
-    console.log('点赞响应:', res.data);
     return res.data;
   }).catch(error => {
     console.error('点赞操作失败:', error);
@@ -585,7 +564,6 @@ export function getUserProfile(userId) {
   // 确保userId是数字
   const userIdNum = parseInt(userId, 10);
 
-  console.log(`正在获取用户资料，用户ID: ${userIdNum}`);
 
   // 第 23 批修复：原实现把两个请求的错误**全部吞掉**，外层 catch 还会返回一个
   // **编造出来的用户**（username = `用户{id}`），于是：
@@ -621,7 +599,6 @@ export function getUserProfile(userId) {
       like_count: userStats.data.like_count || 0,
     };
 
-    console.log('返回的用户数据:', userData);
     return userData;
   });
 }
@@ -683,7 +660,6 @@ export function getMyPosts(params = {}) {
   // 合并参数
   const requestParams = { ...defaultParams, ...params };
   
-  console.log('获取当前用户的帖子，参数:', requestParams);
   
   // 使用专门获取当前用户帖子的API
   // 注意：这里直接传递 params 对象，axios 会自动处理参数编码
@@ -697,7 +673,6 @@ export function getMyPosts(params = {}) {
     }
   })
     .then(response => {
-      console.log('当前用户帖子API响应:', response.data);
       // 处理标准分页响应
       if (response.data && (response.data.results !== undefined || response.data.count !== undefined)) {
         return {
@@ -749,12 +724,10 @@ export function getUserPosts(userId, params = {}) {
   // 合并参数
   const requestParams = { ...defaultParams, ...params };
   
-  console.log(`获取用户 ${userIdNum} 的帖子，参数:`, requestParams);
   
   // 使用论坛帖子的API，通过author参数过滤
   return axios.get('/forums/posts/', { params: requestParams })
     .then(response => {
-      console.log('用户帖子API响应:', response.data);
       // 处理标准分页响应
       if (response.data && (response.data.results !== undefined || response.data.count !== undefined)) {
         return {
@@ -796,7 +769,6 @@ export function uploadImage(formData) {
     onUploadProgress: (progressEvent) => {
       // 可以在这里添加上传进度处理
       const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-      console.log(`Upload progress: ${percentCompleted}%`);
     },
     // 必须解包：调用方（EditPostView）拿的是响应体 `{url, image_url, message}`，
     // 原来直接返回 AxiosResponse 导致 `response.url` 恒为 undefined ——

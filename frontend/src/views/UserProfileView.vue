@@ -841,15 +841,12 @@ export default {
         
         // 如果是查看自己的资料，使用 /users/me/posts/ 接口
         if (isCurrentUser.value) {
-          console.log('获取当前用户的帖子');
           response = await getMyPosts(params);
         } else {
           // 查看其他用户的资料，使用原来的接口
-          console.log(`获取用户 ${userId.value} 的帖子`);
           response = await getUserPosts(userId.value, params);
         }
         
-        console.log('获取到的帖子数据:', response);
         
         // 处理分页响应
         if (response && response.results) {
@@ -861,7 +858,6 @@ export default {
         } else {
           posts.value = Array.isArray(response) ? response : [];
         }
-        console.log('处理后帖子列表:', posts.value);
       } catch (err) {
         console.error('获取用户帖子失败:', err);
         if (err.response?.status !== 404) { // 404错误已经在fetchUserProfile中处理

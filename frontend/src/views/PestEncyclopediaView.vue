@@ -478,7 +478,6 @@ const refreshOfflineCache = async () => {
     try {
         const pack = await refreshOfflinePack();
         if (pack?.items?.length) {
-            console.log(`[offline] 资料包已就绪：${pack.count} 条（${pack.fromCache ? '来自缓存' : '已更新'}）`);
         }
     } catch (error) {
         console.warn('[offline] 资料包更新失败（不影响页面）:', error?.message || error);
@@ -514,7 +513,6 @@ const fetchCropTypes = async () => {
 const toast = useToast();
 const selectCrop = async (cropKey) => {
   try {
-    console.log('Selected crop key:', cropKey);
 
     // 更新选中状态
     selectedCrop.value = cropKey;
@@ -550,10 +548,6 @@ const selectCrop = async (cropKey) => {
 
 // 所有过滤后的病害（未分页）
 const allFilteredPests = computed(() => {
-  console.log('=== allFilteredPests 开始计算 ===');
-  console.log('当前选中的作物:', selectedCrop.value);
-  console.log('当前搜索关键词:', searchKeyword.value);
-  console.log('当前 pests 数据:', JSON.parse(JSON.stringify(pests.value)));
 
   // 过滤掉健康植物条目
   let diseasePests = pests.value.filter(pest => {
@@ -561,8 +555,6 @@ const allFilteredPests = computed(() => {
     return !pest.name.startsWith('健康');
   });
 
-  console.log('过滤后的病害数据:', diseasePests);
-  console.log('过滤健康状态后数量:', diseasePests.length);
 
   // 处理搜索关键词
   const keyword = searchKeyword.value?.trim().toLowerCase();
@@ -578,16 +570,13 @@ const allFilteredPests = computed(() => {
       ];
       return haystack.some((value) => value && String(value).toLowerCase().includes(keyword));
     });
-    console.log('搜索后数量:', diseasePests.length);
   }
 
   // 如果没有选择特定作物，返回所有病害
   if (!selectedCrop.value || selectedCrop.value === 'all') {
-    console.log('返回所有非健康病害，数量:', diseasePests.length);
     return diseasePests;
   }
 
-  console.log('按作物类型筛选:', selectedCrop.value, '原始值:', selectedCrop.value);
 
   // 获取当前选中的作物类型（支持中英文）
   let targetCrop = selectedCrop.value;
@@ -622,22 +611,18 @@ const allFilteredPests = computed(() => {
 
     const isMatch = isExactMatch || isInCropList;
 
-    console.log(`病害: ${pest.name}, 作物类型: ${pest.crop_type}, 是否匹配: ${isMatch}`);
 
     return isMatch;
   });
 
-  console.log('按作物类型筛选后数量:', filteredByCrop.length);
   return filteredByCrop;
 });
 
 // 当前页显示的病害
 const filteredPests = computed(() => {
-  console.log('计算 filteredPests, 总数量:', allFilteredPests.value.length);
   const start = (currentPage.value - 1) * pageSize.value;
   const end = start + pageSize.value;
   const result = allFilteredPests.value.slice(start, end);
-  console.log('分页结果:', result);
   return result;
 });
 
@@ -714,7 +699,6 @@ const props = defineProps({
 
 // 监听路由查询参数变化
 watch(() => props.query, async (newQuery) => {
-  console.log('Query props changed:', newQuery);
 
   try {
     // 重置到第一页
@@ -722,17 +706,14 @@ watch(() => props.query, async (newQuery) => {
 
     if (newQuery?.crop) {
       const cropValue = newQuery.crop.toLowerCase();
-      console.log('Processing crop from URL:', cropValue);
 
       // 1. 检查是否是英文作物名称（在cropTypeMap的key中）
       if (cropTypeMap[cropValue]) {
         selectedCrop.value = cropValue;
-        console.log('Using English crop name:', cropValue);
       }
       // 2. 检查是否是中文作物名称（在reverseCropTypeMap的key中）
       else if (reverseCropTypeMap[cropValue]) {
         selectedCrop.value = reverseCropTypeMap[cropValue];
-        console.log('Mapped Chinese crop to English:', cropValue, '->', selectedCrop.value);
       }
       // 3. 检查是否是中文作物名称（在cropTypeMap的value中）
       else if (Object.values(cropTypeMap).includes(cropValue)) {
@@ -740,21 +721,17 @@ watch(() => props.query, async (newQuery) => {
         const enKey = Object.entries(cropTypeMap).find(([_, zh]) => zh === cropValue)?.[0];
         if (enKey) {
           selectedCrop.value = enKey;
-          console.log('Mapped Chinese crop name to English key:', cropValue, '->', enKey);
         } else {
           selectedCrop.value = 'all';
-          console.log('No matching crop found, showing all');
         }
       }
       // 4. 其他情况，显示所有
       else {
         selectedCrop.value = 'all';
-        console.log('No matching crop found, showing all');
       }
     } else {
       // 如果crop参数是all或者不存在，显示所有作物
       selectedCrop.value = 'all';
-      console.log('No crop specified, showing all');
     }
 
     // 重新加载数据
@@ -775,7 +752,6 @@ onMounted(async () => {
   // 初始化时检查URL参数
   if (route.query.crop) {
     selectedCrop.value = route.query.crop;
-    console.log('Initial crop from URL:', route.query.crop);
   } else {
     selectedCrop.value = 'all';
   }
@@ -786,7 +762,6 @@ onMounted(async () => {
   // 第 50 批：顺手更新离线资料包（失败不影响页面）
   refreshOfflineCache();
 
-  console.log('Component mounted with crop:', selectedCrop.value);
 });
 
 </script>

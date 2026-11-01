@@ -412,7 +412,6 @@ const handleCurrentChange = (val) => {
 };
 
 const fetchPreventionData = async () => {
-  console.log('开始获取防治数据...');
   isLoading.value = true;
   error.value = null;
   
@@ -433,14 +432,11 @@ const fetchPreventionData = async () => {
       params.category = selectedCategory.value;
     }
     
-    console.log('请求参数:', params);
     
     // 发送请求
     const response = await api.get('preventions/', { params });
-    console.log('收到响应:', response);
     
     if (response && response.data) {
-      console.log('响应数据:', response.data);
       
       // 更新总条数
       if (response.data.total) {
@@ -458,10 +454,7 @@ const fetchPreventionData = async () => {
       }
       
       // 打印接收到的数据格式
-      console.log('防治分类数量:', preventionData.value.categories.length);
-      console.log('涉及病害数量:', formattedData.displayPestCount);
       preventionData.value.categories.forEach((category, index) => {
-        console.log(`分类 ${index + 1}: ${category.category}, 措施数量: ${category.measures ? category.measures.length : 0}, 涉及病害: ${category.displayPestCount}`);
       });
       
       // 初始化展开状态
@@ -472,7 +465,6 @@ const fetchPreventionData = async () => {
           [0]: true
         };
         activeIndex.value = 0;
-        console.log('默认展开第一个分类');
       } else {
         console.warn('未找到防治数据');
       }
@@ -496,7 +488,6 @@ const fetchPreventionData = async () => {
     error.value = err;
   } finally {
     isLoading.value = false;
-    console.log('获取防治数据完成');
   }
 };
 
@@ -625,7 +616,6 @@ const formatPreventionData = (data) => {
     displayPestCount: totalUniquePests
   };
   
-  console.log('格式化后的防治数据:', result);
   return result;
 };
 
