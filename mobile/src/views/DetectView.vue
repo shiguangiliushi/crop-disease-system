@@ -120,6 +120,7 @@ import { useRouter } from 'vue-router';
 import { showDialog, showFailToast, showToast } from 'vant';
 import CameraCapture from '@/components/CameraCapture.vue';
 import { detectDisease } from '@/api/detection';
+import { tap as hapticTap } from '@/utils/haptic';
 import { formatApiError } from '@/api/http';
 import { compressImage, fileToDataUrl, UPLOAD_LIMIT } from '@/utils/image';
 import { hasInAppCamera } from '@/utils/camera';
@@ -157,6 +158,7 @@ const toggleLocale = () => setLocale(locale.value === 'en' ? 'zh-CN' : 'en');
  * 唤起系统相机。**不要静默失败**：农户只会以为"按钮坏了"。
  * ------------------------------------------------------------------------- */
 const openCamera = () => {
+  hapticTap();
   if (hasInAppCamera()) {
     cameraVisible.value = true;
     return;
@@ -168,7 +170,10 @@ const openCamera = () => {
   cameraInput.value?.click();
 };
 
-const openGallery = () => galleryInput.value?.click();
+const openGallery = () => {
+  hapticTap();
+  galleryInput.value?.click();
+};
 
 const onCameraFallback = () => {
   cameraVisible.value = false;
@@ -227,6 +232,7 @@ const startProgressTimer = () => {
 };
 
 const startDetect = async () => {
+  hapticTap();
   if (!selectedFile.value) {
     showFailToast(t('detect.selectFirst'));
     return;
