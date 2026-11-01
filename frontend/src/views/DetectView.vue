@@ -2259,6 +2259,37 @@ textarea.form-control {
   margin-top: 10px;
 }
 
+/* 第 329 批：窄屏下追问建议**横排滚动**，不要每个 chip 独占一行。
+   实测（375px）：3 个 chip 各占一行，把操作区从 3 行顶到 7 行。
+   用 nowrap + overflow-x 后压成 1 行；标题固定在左侧不参与滚动。 */
+@media (max-width: 600px) {
+  .ask-suggestions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .ask-suggestions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ask-suggestions-title {
+    flex: none;
+    position: sticky;
+    left: 0;
+    background: var(--surface, #fff);
+    padding-right: 4px;
+    z-index: 1;
+  }
+
+  .ask-suggestion-chip {
+    flex: none;
+    white-space: nowrap;
+  }
+}
+
 .ask-suggestions-title {
   color: #8b9a91;
   font-size: 13px;
