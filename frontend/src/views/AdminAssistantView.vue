@@ -144,6 +144,14 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column :label="t('assistantAdmin.uselessColPest')" width="180">
+          <template #default="{ row }">
+            <router-link v-if="row.pest_id" :to="`/pests/${row.pest_id}`" class="pest-link">
+              {{ row.pest_name || `#${row.pest_id}` }}
+            </router-link>
+            <span v-else class="muted">{{ t('assistantAdmin.pestUnknown') }}</span>
+          </template>
+        </el-table-column>
         <el-table-column :label="t('assistantAdmin.uselessColTime')" width="170">
           <template #default="{ row }">{{ formatTime(row.feedback_at, 'YYYY-MM-DD HH:mm') }}</template>
         </el-table-column>
@@ -265,6 +273,14 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* 第 313 批：无用反馈 → 词条跳转 */
+.pest-link {
+  color: var(--brand-500, #3d9a68);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+.pest-link:hover { text-decoration: underline; }
+
 .assistant-admin {
   display: flex;
   flex-direction: column;

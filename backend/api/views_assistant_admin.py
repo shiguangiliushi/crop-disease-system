@@ -198,6 +198,13 @@ def _useless_feedback(answers) -> list[dict]:
             'degraded': bool(answer.degraded),
             'degrade_reason': answer.degrade_reason,
             'lang': answer.lang,
+            # 第 313 批：带上**这条回答锚定的词条**，管理端可一键跳到百科编辑页改它。
+            # 没有 pest 的会话（用户直接问通用问题）这里就是空，前端据此不显示跳转。
+            'pest_id': (answer.session.pest_id if answer.session else None),
+            'pest_name': (
+                (answer.session.pest.name_en or answer.session.pest.name)
+                if answer.session and answer.session.pest else ''
+            ),
             'feedback_at': (answer.feedback_at or answer.created_at).isoformat(),
         }
         for answer in recent
