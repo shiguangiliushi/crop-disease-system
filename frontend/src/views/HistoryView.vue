@@ -172,7 +172,22 @@
           </div>
 
           <div v-else-if="history.length === 0" class="status-message">
-            <i class="fas fa-box-open fa-3x text-muted mb-3"></i>
+            <!-- 第 327 批：FontAwesome 的盒子图标在空态里显得"报错"，换成叶子线性插画 -->
+            <svg
+              class="empty-illustration"
+              viewBox="0 0 120 96"
+              width="110"
+              height="88"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M96 14C58 14 34 30 34 52a20 20 0 0 0 20 20c22 0 42-24 42-58z" />
+              <path d="M14 84c12-20 28-32 52-40" />
+            </svg>
             <h3>{{ t('history.emptyTitle') }}</h3>
             <!-- ⚠️ 第 213 批：**区分"一条都没有"与"筛选后为空"**。
                  新用户没设过任何条件，却被告诉"没有符合条件" —— 会让人以为是自己筛错了。
@@ -1425,6 +1440,13 @@ const clearAllHistory = async () => {
 </script>
 
 <style scoped>
+/* 第 327 批：空态插画 */
+.empty-illustration {
+  display: block;
+  margin: 0 auto 6px;
+  color: var(--ink-300, #b7c2bd);
+}
+
 /* 基础样式重置 */
 .history-view {
   padding: 1.5rem 0;
