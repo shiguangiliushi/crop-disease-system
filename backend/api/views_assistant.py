@@ -188,6 +188,49 @@ class AssistantAskView(APIView):
         return Response(result)
 
 
+def _inject_suggestions_into_stream(stream, question: str, lang: str = 'zh'):
+    """在 SSE 的 `done` 事件里补 `suggestions`（第 310 批）。
+
+    ## 为什么在这一层做
+
+    `orchestrator.ask_stream()` 里有多处 `yield _sse('done', ...)`（空问题 / 闸门拦截 / 正常），
+    在那边挂字段很容易挂到不执行的分支上 —— 实测就是如此（SSE 原文里始终没有 suggestions）。
+    视图这层是**唯一出口**：不管内部走哪条分支，事件都要从这里经过。
+    """
+    import json as _json
+
+    collected_citations: list = []
+    for chunk in stream:
+        try:
+            raw = chunk.decode('utf-8') if isinstance(chunk, bytes) else str(chunk)
+        except Exception:  # noqa: BLE001
+            yield chunk
+            continue
+
+        if 'event: citations' in raw:
+            try:
+                data_line = next(line for line in raw.splitlines() if line.startswith('data:'))
+                collected_citations = _json.loads(data_line[5:].strip()).get('citations') or []
+            except Exception:  # noqa: BLE001
+                collected_citations = []
+            yield chunk
+            continue
+
+        if 'event: done' in raw:
+            try:
+                data_line = next(line for line in raw.splitlines() if line.startswith('data:'))
+                payload = _json.loads(data_line[5:].strip())
+                payload['suggestions'] = _suggest_followups(
+                    {'citations': collected_citations}, question, lang)
+                yield ('event: done\ndata: ' + _json.dumps(payload, ensure_ascii=False) + '\n\n').encode('utf-8')
+                continue
+            except Exception:  # noqa: BLE001
+                yield chunk
+                continue
+
+        yield chunk
+
+
 class AssistantAskStreamView(APIView):
     """问一个问题（SSE 逐字返回）。
 
