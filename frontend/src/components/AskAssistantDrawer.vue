@@ -69,6 +69,11 @@
           </p>
 
           <!-- 来源引用 -->
+          <!-- 第 303 批：可信度标注（避免把推测当医嘱） -->
+          <p v-if="msg.role === 'assistant' && msg.confidenceNote" class="confidence-note">
+            {{ msg.confidenceNote }}
+          </p>
+
           <div v-if="msg.citations && msg.citations.length" class="assistant-citations">
             <span class="assistant-citations-label">{{ t('assistant.sources') }}</span>
             <el-tooltip
@@ -399,6 +404,11 @@ const submit = async (presetText) => {
       if (data?.answer && data.answer !== target.content) target.content = data.answer;
       target.citations = Array.isArray(data?.citations) ? data.citations : [];
       target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
+      // 第 303 批：可信度标注 —— 有来源就说"基于 N 条词条"，降级就明说"没查到"
+      const citedCount = Array.isArray(data?.citations) ? data.citations.length : 0;
+      target.confidenceNote = data?.degraded
+        ? t('assistant.confidenceDegraded')
+        : (citedCount > 0 ? t('assistant.confidenceCited', { count: citedCount }) : '');
       target.hasPesticide = hasPesticideText(target.content);
       // 第 204 批：被长度上限截断时提示（否则用户看到"半句话 + 好像答完了"）
       target.truncated = Boolean(data?.truncated);
@@ -427,6 +437,14 @@ defineExpose({ submit });
 </script>
 
 <style scoped>
+/* 第 303 批：可信度标注 */
+.confidence-note {
+  margin: 4px 0 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-400, #9dada5);
+}
+
 .assistant-body {
   display: flex;
   flex-direction: column;

@@ -2460,6 +2460,8 @@ export const zhCN = {
     sendHint: 'Enter 发送 · Shift+Enter 换行',
     thinking: '正在查找词条并组织回答…',
     sources: '来源：',
+    confidenceCited: '基于 {count} 条知识库词条回答',
+    confidenceDegraded: '未在知识库找到相关内容，以下是通用建议',
     askFailed: '提问失败，请稍后重试',
     // 降级说明（都不是错误，而是"这次答得保守"的原因）
     hintArchiveOnly: 'AI 暂不可用，以上为该病害的档案原文。',
@@ -5631,6 +5633,8 @@ export const en = {
     sendHint: 'Enter to send · Shift+Enter for a new line',
     thinking: 'Looking up entries and composing an answer…',
     sources: 'Sources:',
+    confidenceCited: 'Answered from {count} knowledge entries',
+    confidenceDegraded: 'No matching entry — general advice below',
     askFailed: 'Failed to send the question, please try again later',
     hintArchiveOnly: 'The AI is temporarily unavailable; the archive text above is shown instead.',
     hintNoSource: 'This question is not covered by the site entries; please consult your local plant protection station.',
