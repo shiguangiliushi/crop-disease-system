@@ -106,6 +106,55 @@ def _parse_request(request):
     }, None
 
 
+#: 追问建议模板（第 305 批）。后端统一出，前端只渲染 —— 两套规则必然长歪。
+_FOLLOWUP_TEMPLATES = {
+    'symptom': {'zh': '{name}有哪些典型症状？', 'en': 'What are the typical symptoms of {name}?'},
+    'chemical': {'zh': '{name}该用什么药？', 'en': 'Which pesticide should I use for {name}?'},
+    'prevention': {'zh': '{name}怎么预防？', 'en': 'How do I prevent {name}?'},
+    'cause': {'zh': '为什么会得{name}？', 'en': 'What causes {name}?'},
+}
+
+
+def _guess_intent(question: str) -> str:
+    """从问题里粗判意图（只用于"跳过当前意图"，判错也只影响推荐顺序）。"""
+    text = question or ''
+    if any(word in text for word in ('药', '农药', '喷', 'pesticide', 'spray')):
+        return 'chemical'
+    if any(word in text for word in ('症状', '什么样', '表现', 'symptom')):
+        return 'symptom'
+    if any(word in text for word in ('预防', '防', 'prevent')):
+        return 'prevention'
+    if any(word in text for word in ('为什么', '原因', 'cause', 'why')):
+        return 'cause'
+    return 'general'
+
+
+def _suggest_followups(result: dict, question: str, lang: str = 'zh') -> list[dict]:
+    """从 citations 里取第一条词条名，给出 3 条"还能问什么"。
+
+    没有 citation（降级/未命中）时返回空列表 —— 没词条时推荐问题等于乱猜。
+    """
+    citations = result.get('citations') or []
+    if not citations:
+        return []
+    first = citations[0] or {}
+    # ⚠️ 引用条目的键是 `label`（第 305 批实测：pest_id / prevention_id / label / snippet），
+    # 不是 pest_name —— 照前端那种猜法会永远取不到名字，建议列表恒为空。
+    name = first.get('label') or first.get('pest_name') or first.get('name') or ''
+    if not name:
+        return []
+    current = _guess_intent(question)
+    english = str(lang).startswith('en')
+    out = []
+    for intent, templates in _FOLLOWUP_TEMPLATES.items():
+        if intent == current:
+            continue
+        out.append({'intent': intent, 'question': templates['en' if english else 'zh'].format(name=name)})
+        if len(out) == 3:
+            break
+    return out
+
+
 class AssistantAskView(APIView):
     """问一个问题（一次返回完整答案）。"""
 
@@ -124,6 +173,16 @@ class AssistantAskView(APIView):
             lang=payload['lang'],
             image=payload['image'],
         )
+        # 第 305 批：基于 citations 里的词条 + 当前意图，给出 3 条追问建议
+        try:
+            import re as _re
+
+            _lang = 'en' if 'en' in str(request.META.get('HTTP_ACCEPT_LANGUAGE', '')).lower() else 'zh'
+            result['suggestions'] = _suggest_followups(
+                result, payload.get('question', ''), _lang)
+        except Exception:  # noqa: BLE001 —— 推荐失败不能影响回答
+            result['suggestions'] = []
+
         return Response(result)
 
 
