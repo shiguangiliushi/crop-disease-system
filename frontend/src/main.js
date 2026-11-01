@@ -38,6 +38,27 @@ import { useAuthStore } from './stores/auth'
 // 身份的读写统一走适配器（sessionStorage 优先），不要在组件/入口里直接碰 localStorage
 import { getToken, clearIdentity } from './utils/authStorage'
 
+// ============================================================================
+// 生产构建里关掉 console.log（第 335 批）
+//
+// 项目里累计有 180+ 条调试日志（HistoryView / DiseaseStatistics / PestEncyclopediaView
+// 等），开发时有用，但生产环境会一直刷控制台，也把内部数据打到浏览器里。
+//
+// 为什么用"运行时打补丁"而不是逐条删：
+//   1. 180 多条里不少是多行模板字符串，机械删除容易把语法删坏；
+//   2. 开发期还需要这些日志来排查问题；
+//   3. `console.warn` / `console.error` **保留** —— 真出错时运维要靠它们。
+//
+// 逐条清理仍值得做，但那需要一轮专门的“日志审计”，不是顺手能完成的。
+// ============================================================================
+if (import.meta.env.PROD) {
+  // eslint-disable-next-line no-console
+  console.log = () => {};
+  console.info = () => {};
+  console.debug = () => {};
+}
+
+
 // 配置 WebSocket 重连机制
 // 配置 WebSocket 连接
 const setupWebSocket = () => {
