@@ -699,6 +699,20 @@ const openCamera = () => {
 const openGallery = () => fileInput.value?.click();
 
 /** 页面内拍到的照片：复用原有压缩/校验/预览流程 */
+/**
+ * 页面内取景失败时的降级（第 334 批）
+ *
+ * `CameraCapture` 在 `getUserMedia` 不可用（http 下、iOS 老版本、权限被拒）时
+ * emit 一个 i18n key；这里把它提示出来，然后**自动打开系统文件选择器** ——
+ * 否则用户看到"打不开相机"就卡住了。
+ */
+const onCameraFallback = (reasonKey) => {
+  ElMessage.warning(t(reasonKey || 'camera.unsupported'));
+  cameraVisible.value = false;
+  // 延迟一拍再触发 input：等弹层关闭动画结束，避免 iOS 忽略 click
+  setTimeout(() => galleryInput.value?.click(), 120);
+};
+
 const onCameraCaptured = (file) => {
   handleFile(file);
 };

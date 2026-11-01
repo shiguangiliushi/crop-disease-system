@@ -126,6 +126,7 @@ export const zhCN = {
     pests: '病害百科',
     alerts: '病害预警',
     calendar: '种植日历',
+    reminders: '农事提醒',
     forum: '论坛交流',
     consult: '专家咨询',
     history: '历史记录',
@@ -164,6 +165,7 @@ export const zhCN = {
   // 文案与各路由原来的 meta.title 保持一致，只是改成跟随语言。
   docTitle: {
     home: '首页',
+    'task-reminders': '农事提醒',
     login: '登录',
     register: '注册',
     // 第 116 批：管理端登录单独一页（key = 路由名 admin-login）
@@ -3419,6 +3421,7 @@ export const en = {
     pests: 'Disease wiki',
     alerts: 'Outbreak Alerts',
     calendar: 'Farming Calendar',
+    reminders: 'Reminders',
     forum: 'Forum',
     consult: 'Expert Q&A',
     history: 'History',
@@ -3447,6 +3450,7 @@ export const en = {
   // 第 77 批：浏览器标签页标题（按路由名取值）
   docTitle: {
     home: 'Home',
+    'task-reminders': 'Reminders',
     login: 'Sign in',
     register: 'Sign up',
     // 第 116 批：管理端登录单独一页（key = 路由名 admin-login）
