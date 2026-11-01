@@ -153,20 +153,42 @@
             在此之前他得**记住病名 → 切到发帖页 → 手打一遍**，还要自己把照片传上去。
             现在点一下就把病名、识别图片、症状带进发帖页，他补两句就能发。
           -->
+          <!-- 第 330 批：窄屏下把"发帖求助 / 下载报告"收进「…」，
+               主操作只留「重新识别」—— 实测 375px 时这三个按钮各占一行。 -->
           <button
             v-if="filteredDiseases.length && !detectionResult.healthy"
             @click="askInForum(filteredDiseases[0])"
-            class="btn btn-outline-success"
+            class="btn btn-outline-success action-secondary"
             :title="t('detect.askForumHint')"
           >
             <i class="bi bi-people me-1"></i>{{ t('detect.askForum') }}
           </button>
-          <button @click="downloadReport" class="btn btn-success">
+          <button @click="downloadReport" class="btn btn-success action-secondary">
             <i class="bi bi-download me-1"></i>{{ t('detect.downloadReport') }}
           </button>
           <button @click="resetDetection" class="btn btn-primary">
             <i class="bi bi-arrow-repeat me-1"></i>{{ t('detect.retry') }}
           </button>
+
+          <!-- 窄屏下替代上面两个次要按钮 -->
+          <el-dropdown class="action-more" trigger="click" @command="onMoreAction">
+            <button class="btn btn-outline-secondary" type="button">
+              <i class="bi bi-three-dots"></i>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-if="filteredDiseases.length && !detectionResult.healthy"
+                  command="ask"
+                >
+                  <i class="bi bi-people me-2"></i>{{ t('detect.askForum') }}
+                </el-dropdown-item>
+                <el-dropdown-item command="report">
+                  <i class="bi bi-download me-2"></i>{{ t('detect.downloadReport') }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
 
@@ -1443,6 +1465,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 第 330 批：窄屏用「…」收次要操作 */
+.action-more { display: none; }
+
+@media (max-width: 600px) {
+  .action-secondary { display: none; }
+  .action-more { display: inline-flex; }
+}
+
 .disease-result {
   font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
