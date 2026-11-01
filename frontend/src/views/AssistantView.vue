@@ -185,6 +185,17 @@
           </p>
 
           <!-- 反馈闭环（与抽屉走同一套接口） -->
+          <!-- 第 307 批：追问建议（后端按词条+意图给出，点了直接发问） -->
+          <div v-if="msg.role === 'assistant' && msg.suggestions?.length && !isStreaming(msg)" class="followup-chips">
+            <button
+              v-for="(sug, si) in msg.suggestions"
+              :key="si"
+              type="button"
+              class="followup-chip"
+              @click="submit(sug.question)"
+            >{{ sug.question }}</button>
+          </div>
+
           <div v-if="msg.role === 'assistant' && msg.messageId && !isStreaming(msg)" class="assistant-feedback">
             <template v-if="msg.verdict">
               <span class="assistant-feedback-done">
@@ -497,6 +508,8 @@ const applySession = (data) => {
     // 历史里的回答也可能当初就被截断过 —— 要一直提示，不能只在刚生成时提示
     truncated: Boolean(item.truncated),
     hasPesticide: item.role === 'assistant' && hasPesticideText(item.content),
+    // 历史消息不带推荐（后端只在当次回答返回），刷新后 chips 自然消失
+    suggestions: [],
     // 只有助手消息能评价；历史里的 id 就是真实消息 id
     messageId: item.role === 'assistant' ? item.id : null,
     verdict: item.verdict || '',
@@ -601,6 +614,7 @@ const submit = async (presetText) => {
         ? t('assistant.confidenceCited', { count: data.citations.length })
         : '');
     target.citations = Array.isArray(data?.citations) ? data.citations : [];
+    target.suggestions = Array.isArray(data?.suggestions) ? data.suggestions : [];
     target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
     target.hasPesticide = hasPesticideText(target.content);
     target.messageId = data?.message_id || null;
@@ -674,6 +688,29 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 307 批：追问建议 chips */
+.followup-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.followup-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-300, #a6d9bd);
+  background: #f6fbf8;
+  color: #2f6b4f;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.followup-chip:hover {
+  background: #e8f5ee;
+}
+
 /* 第 304 批：可信度标注 */
 .confidence-note {
   margin: 4px 0 6px;
