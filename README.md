@@ -65,7 +65,6 @@ cd frontend   && npm install && npm run dev        # :5173
 cd mobile     && npm install && npm run dev        # :5174
 cd mobile-uni && npm install && npm run dev:h5     # :5175
 ```
-
 - 开发环境约定为 conda `crop_env`（Python 3.11）；生产依赖另装 `requirements-prod.txt`，
   启动与环境变量见 [`docs/部署与运维.md`](docs/部署与运维.md)。
 - 移动端上线前按 [`docs/移动端真机自测清单.md`](docs/移动端真机自测清单.md) 在真机过一遍。
