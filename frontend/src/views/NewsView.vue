@@ -67,7 +67,18 @@
       </div>
     </div>
 
-    <div v-loading="loading" class="news-list-container">
+    <div class="news-list-container">
+      <!-- 第 321 批：加载中给卡片骨架（与真实卡片同尺寸，加载完不跳动） -->
+      <div v-if="loading && newsList.length === 0" class="news-skeleton">
+        <div v-for="i in 3" :key="i" class="skeleton-card">
+          <el-skeleton-item variant="image" class="skeleton-cover" />
+          <div class="skeleton-body">
+            <el-skeleton-item variant="h3" style="width: 62%" />
+            <el-skeleton-item variant="text" style="width: 100%" />
+            <el-skeleton-item variant="text" style="width: 80%" />
+          </div>
+        </div>
+      </div>
       <!-- News List -->
       <div class="news-list">
         <div class="news-grid">
@@ -1024,6 +1035,33 @@ watch(() => route.name, (newVal) => {
 </script>
 
 <style scoped>
+/* 第 321 批：新闻卡片骨架 */
+.news-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+  padding: 8px 0;
+}
+.skeleton-card {
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+  background: #fff;
+  border-radius: 12px;
+}
+.skeleton-cover {
+  width: 96px;
+  height: 72px;
+  border-radius: 8px;
+  flex: none;
+}
+.skeleton-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .news-container {
   max-width: 1400px;
   margin: 0 auto;
