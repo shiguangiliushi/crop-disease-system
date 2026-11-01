@@ -152,6 +152,11 @@
           </div>
 
           <!-- 引用来源 -->
+          <!-- 第 304 批：可信度标注（避免把推测当医嘱） -->
+          <p v-if="msg.role === 'assistant' && msg.confidenceNote" class="confidence-note">
+            {{ msg.confidenceNote }}
+          </p>
+
           <div v-if="msg.citations?.length" class="assistant-cites">
             <span class="assistant-cites-label">{{ t('assistant.citations') }}</span>
             <el-tooltip
@@ -589,6 +594,12 @@ const submit = async (presetText) => {
       loadSessions(true);
     }
     if (data?.answer && data.answer !== target.content) target.content = data.answer;
+    // 第 304 批：可信度标注（有来源 / 降级）
+    target.confidenceNote = data?.degraded
+      ? t('assistant.confidenceDegraded')
+      : ((Array.isArray(data?.citations) ? data.citations.length : 0) > 0
+        ? t('assistant.confidenceCited', { count: data.citations.length })
+        : '');
     target.citations = Array.isArray(data?.citations) ? data.citations : [];
     target.degradeHint = data?.degraded ? degradeHintOf(data.degrade_reason) : '';
     target.hasPesticide = hasPesticideText(target.content);
@@ -663,6 +674,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 304 批：可信度标注 */
+.confidence-note {
+  margin: 4px 0 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-400, #9dada5);
+}
+
 .assistant-page {
   display: flex;
   gap: 1rem;
