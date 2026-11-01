@@ -254,6 +254,12 @@ const router = createRouter({
     },
     // 第 49 批：专家咨询
     {
+      path: '/reminders',
+      name: 'task-reminders',
+      component: () => import('@/views/TaskRemindersView.vue'),
+      meta: { requiresAuth: true, title: '农事提醒', breadcrumb: ['农事提醒'] }
+    },
+    {
       path: '/consult',
       name: 'consult',
       component: () => import('@/views/ConsultView.vue'),
