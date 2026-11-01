@@ -181,6 +181,8 @@ class AssistantAskView(APIView):
             result['suggestions'] = _suggest_followups(
                 result, payload.get('question', ''), _lang)
         except Exception:  # noqa: BLE001 —— 推荐失败不能影响回答
+            # 第 306 批：原来这里静默吞掉，导致"suggestions 恒为空"查不出原因。
+            logger.exception('生成追问建议失败')
             result['suggestions'] = []
 
         return Response(result)
