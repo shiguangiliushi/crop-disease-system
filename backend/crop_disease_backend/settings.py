@@ -980,3 +980,44 @@ if _IS_TESTING:
 #    实现与理由见 `api/test_runner.py`。
 # ----------------------------------------------------------------------------
 TEST_RUNNER = 'api.test_runner.MediaIsolatedTestRunner'
+
+# ============================================================================
+# 生产启动自检（第 338 批）
+#
+# ## 为什么放在 settings 里，而不是只做 `manage.py prod_check`
+#
+# `prod_check` 是**手动命令** —— 没人跑就等于没有。而下面这三个配置错一个，
+# 线上就是致命问题：
+#
+#   1. `DEBUG=True` → 报错页会暴露源码路径、环境变量、SQL 语句；
+#   2. `SECRET_KEY` 还是默认值 → 别人可以伪造 session / token；
+#   3. `ALLOWED_HOSTS='*'` → 任意 Host 头都能进，配合缓存投毒可劫持页面。
+#
+# 这里在**导入 settings 时就拒绝启动**，让错误在部署阶段暴露，而不是在线上被利用。
+#
+# ## 三个豁免
+#
+#   · `_IS_TESTING` —— Django 测试默认 `DEBUG=False`，测试环境用默认密钥是合理的；
+#   · `DJANGO_ALLOW_INSECURE=1` —— 内网演示/临时环境显式放行（**必须显式**）；
+#   · `DJANGO_DEBUG` 未设时 DEBUG 默认 True，走的不是这条分支。
+# ============================================================================
+_allow_insecure = _env_bool('DJANGO_ALLOW_INSECURE', False)
+
+if not DEBUG and not _IS_TESTING and not _allow_insecure:  # PROD_GUARD
+    from django.core.exceptions import ImproperlyConfigured
+
+    _problems = []
+    if SECRET_KEY == _INSECURE_SECRET_KEY:
+        _problems.append(
+            'DJANGO_SECRET_KEY 仍是默认值（django-insecure-!your_secret_key_here!），'
+            '攻击者可据此伪造会话与 token'
+        )
+    if '*' in ALLOWED_HOSTS:
+        _problems.append(
+            'DJANGO_ALLOWED_HOSTS 仍包含 "*"，应显式列出生效域名'
+        )
+    if _problems:
+        raise ImproperlyConfigured(
+            '生产环境配置不安全，已拒绝启动：\n  · ' + '\n  · '.join(_problems) + '\n'
+            '（如确需在非生产环境跳过，可设置 DJANGO_ALLOW_INSECURE=1）'
+        )
