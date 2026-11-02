@@ -47,7 +47,7 @@ from unittest.mock import patch  # 第 85 批：翻译服务用桩替换，测�
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
-from django.test import TestCase, TransactionTestCase, override_settings  # 第 102 批：备份测试要改连接
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings  # 第 102 批；SimpleTestCase 于第 342 批补
 from django.conf import settings  # 第 159 批：识别测试要读测试图路径
 from django.core.files.uploadedfile import SimpleUploadedFile  # 第 159 批：识别测试要传图
 from django.core.management import call_command  # 第 154 批：备份恢复演练命令的测试
@@ -16280,3 +16280,61 @@ class ReportCreateTests(APITestCase):
             {'target_type': 'post', 'target_id': self.post.id, 'reason': 'abuse'}, self.reporter)
         self.assertIn(response.status_code, (200, 201), response.content)
         self.assertEqual(Report.objects.count(), before + 1)
+
+
+class UploadValidatorTests(SimpleTestCase):
+    """统一上传校验（第 342 批）。
+
+    ⚠️ 用 `SimpleTestCase`：只测纯函数，不碰数据库，跑得快。
+    """
+
+    def _upload(self, content: bytes, content_type='image/jpeg', name='x.jpg'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return SimpleUploadedFile(name, content, content_type=content_type)
+
+    def test_accepts_real_jpeg(self):
+        from api.validators import validate_image_upload
+
+        upload = self._upload(b'\xff\xd8\xff\xe0' + b'0' * 64)
+        validate_image_upload(upload)  # 不抛即通过
+
+    def test_accepts_real_png(self):
+        from api.validators import validate_image_upload
+
+        upload = self._upload(b'\x89PNG\r\n\x1a\n' + b'0' * 64, 'image/png', 'x.png')
+        validate_image_upload(upload)
+
+    def test_rejects_fake_image_with_jpg_extension(self):
+        """扩展名是 .jpg、content_type 是 image/jpeg，但内容是文本 → 必须拒绝。"""
+        from django.core.exceptions import ValidationError
+
+        from api.validators import validate_image_upload
+
+        upload = self._upload(b'hello, i am not an image at all', 'image/jpeg', 'evil.jpg')
+        with self.assertRaises(ValidationError):
+            validate_image_upload(upload)
+
+    def test_rejects_oversize(self):
+        from django.core.exceptions import ValidationError
+
+        from api.validators import validate_image_upload
+
+        upload = self._upload(b'\xff\xd8\xff' + b'0' * 64)
+        with self.assertRaises(ValidationError):
+            validate_image_upload(upload, max_mb=0)
+
+    def test_rejects_non_image_content_type(self):
+        from django.core.exceptions import ValidationError
+
+        from api.validators import validate_image_upload
+
+        upload = self._upload(b'\xff\xd8\xff' + b'0' * 64, 'application/pdf', 'x.pdf')
+        with self.assertRaises(ValidationError):
+            validate_image_upload(upload)
+
+    def test_none_is_allowed(self):
+        """没传图不是错误 —— 助手允许纯文字提问。"""
+        from api.validators import validate_image_upload
+
+        validate_image_upload(None)
