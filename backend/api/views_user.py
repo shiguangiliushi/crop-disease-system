@@ -360,6 +360,25 @@ class UserAvatarView(APIView):
         upload = request.FILES.get('avatar') or request.FILES.get('image')
         if upload is None:
             return Response({'detail': '未提供头像文件'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 第 343 批：**补文件头校验**。
+        # 原来只用 `content_type` + `size` 判断，而 `content_type` 由客户端上报，
+        # 把一段文本改名成 logo.jpg 并声明 image/jpeg 就能存进头像字段（随后被当图片渲染）。
+        # 复用已有的 `image_validation.validate_image_upload`：它会嗅探真实文件头，
+        # 顺手得到安全后缀与文件名（避免 `x.jpg.php` 这类双后缀）。
+        from .image_validation import ImageValidationError, validate_image_upload
+
+        try:
+            # 用模块默认的 ALLOWED_FORMATS（dict，形如 {'JPEG': 'jpg', ...}）——
+            # 传 set 会 TypeError：内部按 llowed[key] 取后缀。
+            checked = validate_image_upload(
+                upload, max_size=self.MAX_SIZE, prefix='avatar_',
+            )
+        except ImageValidationError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        upload.name = checked['filename']
+
         if upload.content_type not in self.ALLOWED_TYPES:
             return Response(
                 {'detail': '头像仅支持 JPEG / PNG / WebP / GIF 格式'},
