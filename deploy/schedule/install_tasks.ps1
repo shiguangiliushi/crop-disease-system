@@ -37,7 +37,8 @@ $jobs = @(
     @{ Name = 'verify';         Cmd = 'backup_verify';           Schedule = 'DAILY'; At = '03:10' },
     @{ Name = 'health';         Cmd = 'health_snapshot';         Schedule = 'DAILY'; At = '03:40' },
     @{ Name = 'media-cleanup';  Cmd = 'cleanup_media';           Schedule = 'DAILY'; At = '04:10' },
-    @{ Name = 'deletions';      Cmd = 'process_deletions';       Schedule = 'HOURLY'; At = '' }
+    @{ Name = 'deletions';      Cmd = 'process_deletions';       Schedule = 'HOURLY'; At = '' },
+    @{ Name = 'restore-drill';  Cmd = 'restore-drill';           Schedule = 'DAILY'; At = '04:40' }
 )
 
 foreach ($job in $jobs) {
@@ -48,16 +49,24 @@ foreach ($job in $jobs) {
         continue
     }
 
-    $logFile = Join-Path $logDir "$($job.Name).log"
-    # 用 cmd /c 串起来：切目录 → 跑命令 → 追加日志（PowerShell 直接写会让引号转义很麻烦）
-    $command = "cmd /c cd /d `"$backendDir`" ^&^& `"$Python`" manage.py $($job.Cmd) >> `"$logFile`" 2>&1"
+    # 第 352 批：**改用 .bat 包装脚本**。
+    # 原来把 `cmd /c cd /d ... ^&^& ...` 整条塞进 /TR，而 `^&^&` 是 cmd 交互式的转义，
+    # schtasks 存进去后不按 cmd 规则解释 → 运行时报
+    # "The filename, directory name, or volume label syntax is incorrect."，
+    # 任务显示 Ready 却一次都没真正执行。现在 /TR 只指向 .bat，无 cd、无引号嵌套。
+    $bat = Join-Path $PSScriptRoot ("run_{0}.bat" -f $job.Name)
+    if (-not (Test-Path $bat)) {
+        Write-Warning "缺少包装脚本：$bat（跳过 $taskName）"
+        continue
+    }
+    $command = '"' + $bat + '"'
 
     if ($job.Schedule -eq 'HOURLY') {
         schtasks /Create /TN $taskName /TR $command /SC HOURLY /MO 1 /F | Out-Null
     } else {
         schtasks /Create /TN $taskName /TR $command /SC DAILY /ST $job.At /F | Out-Null
     }
-    Write-Host "已注册 $taskName（$($job.Schedule) $($job.At)）→ $logFile"
+    Write-Host "已注册 $taskName"
 }
 
 Write-Host ''
