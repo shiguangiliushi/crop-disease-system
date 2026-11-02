@@ -864,7 +864,11 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     yield _sse('done', {'usage': usage, 'degraded': bool(reason), 'degrade_reason': reason,
                         'model': actual_model, 'latency_ms': latency_ms,
                         # 第 308 批：追问建议（与视图层同一套规则，不复制）
-                        'suggestions': _followups_for(citations, question, code),
+                        # 第 346 批：这里原来写的是 `code`，而 `ask_stream` 作用域里没有这个变量 →
+                        # 每次流式回答到最后一条 done 事件就抛 NameError，整条流被中断
+                        # （前端表现为「回答显示一半、没有引用/建议」，测试则是 5 条 stream 用例 ERROR）。
+                        'suggestions': _followups_for(
+                            citations, question, getattr(prepared, 'lang', 'zh') or 'zh'),
                         # 前端据此在气泡下方提示"回答可能不完整"
                         'truncated': truncated,
                         # 第 212 批：带上**最终正文**（可能与逐字增量略有不同 ——
