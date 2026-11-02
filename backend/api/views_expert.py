@@ -248,6 +248,22 @@ class QuestionListView(APIView):
                 return Response({'detail': '只支持 JPG / PNG / WebP / GIF 格式的图片'},
                                 status=status.HTTP_400_BAD_REQUEST)
 
+            # 第 344 批：**补文件头校验**。上面那两行只信客户端上报的 `content_type`，
+            # 把一段文本改名成 `leaf.jpg` 并声明 image/jpeg 就能存进 ImageField
+            # （随后渲染成破图，或落到 Nginx 直出时被当静态资源）。
+            # 复用已有的 `image_validation.validate_image_upload`：嗅探真实文件头，
+            # 同时得到安全后缀名，避免 `x.jpg.php` 这类双后缀。
+            from .image_validation import ImageValidationError, validate_image_upload
+
+            try:
+                checked = validate_image_upload(
+                    image, max_size=CONSULT_IMAGE_MAX_BYTES, prefix='consult_',
+                )
+            except ImageValidationError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+            image.name = checked['filename']
+
         question = ConsultQuestion.objects.create(
             asker=request.user, crop_type=crop_type, title=title, content=content,
             image=image,
