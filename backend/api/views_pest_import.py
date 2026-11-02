@@ -111,6 +111,26 @@ class PestImportView(APIView):
         if not upload:
             return Response({'detail': '请选择要导入的文件（.xlsx 或 .csv）'}, status=400)
 
+        # 第 350 批：**入库前先验文件本身**（原来只凭文件名交给解析器）。
+        # 三个检查，成本几乎为零：
+        #   1. 扩展名白名单 —— 挡住 .exe/.php 之类被当模板上传；
+        #   2. 体积上限 —— 批量导入是管理员操作，10MB 足够装几万行；
+        #   3. xlsx 的**文件头**（ZIP 的 `PK\x03\x04`）—— 改名的非表格文件在这里就断掉，
+        #      不让它进到 openpyxl 里（那里解析畸形文件既慢又容易抛怪异常）。
+        name_lower = (upload.name or '').lower()
+        if not name_lower.endswith(('.xlsx', '.csv')):
+            return Response({'detail': '只支持 .xlsx 或 .csv 文件'}, status=400)
+
+        if upload.size and upload.size > 10 * 1024 * 1024:
+            return Response({'detail': '文件不能超过 10MB'}, status=400)
+
+        if name_lower.endswith('.xlsx'):
+            head = upload.read(4)
+            upload.seek(0)
+            if head != b'PK\x03\x04':
+                return Response({'detail': '.xlsx 文件格式不正确（不是有效的 Excel 文件）'},
+                                status=400)
+
         mode = (request.POST.get('mode') or 'upsert').strip()
         if mode not in ('upsert', 'create_only'):
             return Response({'detail': '导入模式不合法'}, status=400)
