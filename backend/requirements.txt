@@ -17,8 +17,8 @@
 # ============================================================================
 
 # ── Web 框架 ────────────────────────────────────────────────────────────────
-Django==5.2.4
-djangorestframework==3.16.0
+Django==5.2.18  # 第 345 批：5.2.4 低于最新补丁版，pip-audit 报多枚 CVE
+djangorestframework==3.18.3  # 第 345 批
 # CORS：移动端/桌面端跨域访问（settings.INSTALLED_APPS 里有 corsheaders）
 django-cors-headers==4.7.0
 # DRF 的 DjangoFilterBackend（views_user.py、views_forum.py 等在用）
@@ -34,14 +34,14 @@ ultralytics==8.3.163
 opencv-python==4.12.0.88
 
 # ── 图像 / 数值 / 报表 ──────────────────────────────────────────────────────
-Pillow==11.3.0
+Pillow==13.0.0  # 第 345 批：11.3.0 有 20+ 条 CVE，pip-audit 建议 >=13.0.0
 numpy==2.2.6
 # 识别报告 PDF（views.py 的 DetectionReportView / 导出 PDF）
 reportlab==4.4.3
 
 # ── 其它 ────────────────────────────────────────────────────────────────────
 # 译文 provider 的 HTTP 调用（services_translate.py；mymemory/deepl/openai 都走它）
-requests==2.32.4
+requests==2.34.2  # 第 345 批：2.32.4 命中 PYSEC-2026-2275
 
 
 # ============================================================================
