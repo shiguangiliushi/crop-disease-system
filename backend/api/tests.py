@@ -6460,11 +6460,29 @@ class HealthEndpointTests(TestCase):
         self.assertIn('uptime_seconds', response.data)
 
     def test_deep_health_reports_migrations_and_model(self):
-        response = APIClient().get('/api/health/?deep=true')
+        """深度检查**只给管理员**（第 354 批收紧了权限）。
+
+        原来匿名 `?deep=true` 就能拿到迁移状态、模型权重路径与体积、uptime ——
+        这些对排障有用，但没必要给匿名访客（可据此判断实例新旧、文件位置）。
+        """
+        from api.models import CustomUser
+
+        admin = CustomUser.objects.filter(role='ADMIN').first() or CustomUser.objects.create_user(
+            username='zz_health_admin', password='pw12345678', role='ADMIN')
+        client = APIClient()
+        client.force_authenticate(user=admin)
+        response = client.get('/api/health/?deep=true')
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data['checks']['migrations']['ok'])
         # 模型文件在开发库里是有的；若将来被删，这条断言会提醒（比"识别接口 503"更早）
         self.assertIn('model', response.data['checks'])
+
+    def test_deep_health_is_ignored_for_anonymous(self):
+        """匿名带 deep=true 只能拿到浅层结果（多出的键不该出现）。"""
+        response = APIClient().get('/api/health/?deep=true')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('migrations', response.data['checks'])
+        self.assertNotIn('model', response.data['checks'])
 
     def test_health_does_not_require_token(self):
         """带一个**无效** token 也必须能拿到结果（探针不该被鉴权挡住）"""

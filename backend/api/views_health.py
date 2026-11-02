@@ -102,8 +102,24 @@ class HealthView(APIView):
     #: 健康检查本来也不该被限流（探针是机器，固定频率）。
     throttle_classes = []
 
+    @staticmethod
+    def _is_staff(request) -> bool:
+        """是否是管理员（用于放行 deep 检查）。匿名请求一律 False。"""
+        user = getattr(request, "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+        return bool(getattr(user, "is_staff", False)
+                    or getattr(user, "is_superuser", False)
+                    or getattr(user, "role", "") == "ADMIN")
+
     def get(self, request):
-        deep = str(request.query_params.get('deep', '')).lower() in ('1', 'true', 'yes')
+        # 第 354 批：**深度检查只给管理员**。
+        # `deep=1` 会额外暴露：迁移是否落后（哪条没跑）、模型权重路径与体积、
+        # 以及 uptime。这些对排障有用，但没必要让匿名访客拿到 ——
+        # 攻击者据此可以判断"这个实例多久没重启、模型文件放在哪、有没有漏迁移"。
+        # 浅层检查（DB / 缓存 / 存活）仍然匿名可用，探针不受影响。
+        requested_deep = str(request.query_params.get('deep', '')).lower() in ('1', 'true', 'yes')
+        deep = requested_deep and self._is_staff(request)
         started = time.perf_counter()
 
         checks = {}
