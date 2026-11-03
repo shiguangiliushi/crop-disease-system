@@ -123,7 +123,14 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
 - **禁止**使用 `#` 标题、`##` 小标题、`*斜体*`、`- ` 以外的列表符号、
   `` `代码` ``、`[链接]()`、`![图片]()`、`>` 引用、表格、分隔线 `---`；
 - **禁止**把 `**` 和 `【序号】` 挨着写（`**病名**** 【1】` 会连成一片，看起来像乱码）；
-- 段落之间用空行分隔，每段一个要点。"""
+- 段落之间用空行分隔，每段一个要点。
+
+【资料不足时怎么说】
+如果下面的资料没有覆盖用户问的点，**先明确说"现有资料没写这部分"**，
+再给一条通用建议，并标明这是通用经验而不是本系统资料。
+不要用资料里没出现过的具体药名、剂量、稀释倍数或间隔期去填空 ——
+种错药比说"不知道"代价大得多。
+"""
 
 SYSTEM_PROMPT_EN = """You are the agronomy assistant built into a crop-disease diagnosis system.
 Your users are growers. Your knowledge comes **only** from the entries inside the
@@ -204,7 +211,14 @@ shown literally.
 - **Do not** use `#`/`##` headings, `*italics*`, code spans, `[links]()`, `![images]()`,
   `>` quotes, tables or `---` rules;
 - **Do not** put `**` immediately next to `【number】` (it runs together and looks broken);
-- Separate paragraphs with a blank line; one point per paragraph."""
+- Separate paragraphs with a blank line; one point per paragraph.
+
+[When the material does not cover the question]
+Say explicitly that the provided entries do not cover this point, then give ONE
+general suggestion and label it as general practice rather than system material.
+Never invent specific pesticide names, dosages, dilution ratios or intervals
+that do not appear in the material — a wrong chemical costs more than "I do not know".
+"""
 
 SYSTEM_PROMPTS = {'zh': SYSTEM_PROMPT_ZH, 'en': SYSTEM_PROMPT_EN}
 
