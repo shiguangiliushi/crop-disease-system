@@ -69,9 +69,8 @@ DISEASE_ALIASES = {
     '炭疽': '炭疽病', '凹陷病斑': '炭疽病',
     # 锈病
     '黄粉': '锈病', '叶片有粉末': '锈病',
-    # 蚜虫 / 红蜘蛛（虫害）
-    '小绿虫': '蚜虫', '腻虫': '蚜虫',
-    '红蜘蛛': '红蜘蛛', '叶子背面有网': '红蜘蛛',
+    # 虫害：别名要指向**词条名里真实存在的片段**（'二斑叶螨' 才能命中「番茄二斑叶螨」）
+    '红蜘蛛': '二斑叶螨', '叶螨': '二斑叶螨', '叶子背面有网': '二斑叶螨',
 }
 
 #: 作物别名 —— 用户口语与库中 `crop_type` 不一致时靠它兜住
@@ -183,6 +182,15 @@ def search(question: str, *, pest_identifier: str = '', top_k: int = 5) -> list[
             why.append('识别结果直连')
 
         name = pest.name or ''
+
+        # 第 367 批：**词条名完整出现在问题里** → 强加分。
+        # 基线里「番茄叶片上有白色霉层」被「番茄晚疫病」压过「番茄叶霉病」，
+        # 但用户如果直接说"番茄叶霉病"，那就是确定信号，不该被症状词翻盘。
+        if name and name in question:
+            score += 60
+            why.append(f'词条名完整命中（{name}）')
+            matched.append(name)
+
         name_hit = [t for t in tokens if t in name]
         if name_hit:
             score += 10 * len(name_hit) + len(max(name_hit, key=len))
