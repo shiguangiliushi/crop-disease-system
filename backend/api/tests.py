@@ -16384,3 +16384,88 @@ class IdorAccessTests(TestCase):
             f'/api/assistant/sessions/{self.session.pk}/',
         ):
             self.assertIn(anonymous.get(url).status_code, (401, 403, 404), url)
+
+
+class IdorAccessTestsPart2(TestCase):
+    """IDOR 第二批：反馈 / 通知 / 专家咨询。
+
+    与第一批同样的两段式断言：**他人 404** + **记录没被改动**。
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        from api.models import Feedback
+        from api.models_expert import ConsultQuestion
+
+        User = get_user_model()
+        self.owner = User.objects.create_user(username='zz_idor2_owner', password='pw12345678')
+        self.other = User.objects.create_user(username='zz_idor2_other', password='pw12345678')
+
+        self.feedback = Feedback.objects.create(
+            user=self.owner, suggestion='只有本人可见的反馈',
+        )
+        self.question = ConsultQuestion.objects.create(
+            asker=self.owner, title='只有本人可见的咨询', content='详情内容',
+        )
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    # ── 反馈 ──────────────────────────────────────────────────
+    def test_feedback_detail_is_owner_only(self):
+        response = self._client(self.other).get(f'/api/feedback/{self.feedback.pk}/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_feedback_detail_owner_can_read(self):
+        response = self._client(self.owner).get(f'/api/feedback/{self.feedback.pk}/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_feedback_delete_is_owner_only(self):
+        response = self._client(self.other).delete(f'/api/feedback/{self.feedback.pk}/')
+        self.assertEqual(response.status_code, 404)
+        from api.models import Feedback
+        self.assertTrue(Feedback.objects.filter(pk=self.feedback.pk).exists())
+
+    # ── 专家咨询 ──────────────────────────────────────────────
+    def test_consult_question_detail_is_public_to_logged_in_users(self):
+        """咨询问题是**公开问答板**：任何登录用户都能看（专家要能浏览并回答）。
+
+        这里刻意断言"他人**可以**读到 200"，把它和识别记录/反馈那种私有资源区分开。
+        真正需要限制的是写操作（关闭问题），见下一条。
+        """
+        response = self._client(self.other).get(f'/api/consult/questions/{self.question.pk}/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_consult_question_close_is_owner_only(self):
+        """关闭问题只有提问者能操作。"""
+        response = self._client(self.other).post(f'/api/consult/questions/{self.question.pk}/')
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_consult_question_owner_can_read(self):
+        response = self._client(self.owner).get(f'/api/consult/questions/{self.question.pk}/')
+        self.assertEqual(response.status_code, 200)
+
+    # ── 通知 ──────────────────────────────────────────────────
+    def test_notification_delete_is_owner_only(self):
+        from api.models_notify import Notification
+
+        notification = Notification.objects.create(
+            recipient=self.owner, title='只有本人能看到',
+        )
+        response = self._client(self.other).delete(f'/api/notifications/{notification.pk}/')
+        self.assertIn(response.status_code, (403, 404))
+        self.assertTrue(Notification.objects.filter(pk=notification.pk).exists())
+
+    def test_notification_mark_read_is_owner_only(self):
+        from api.models_notify import Notification
+
+        notification = Notification.objects.create(
+            recipient=self.owner, title='未读通知',
+        )
+        response = self._client(self.other).post(f'/api/notifications/{notification.pk}/read/')
+        self.assertIn(response.status_code, (403, 404))
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_read, '别人不能替我把通知标为已读')
