@@ -121,7 +121,10 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
 
     if max_tokens is None:
         try:
-            max_tokens = int(_cfg('LLM_MAX_TOKENS', 800))
+            # 第 359 批：默认值从 800 提到 2000。
+            # 本项目回答带 7 维度上下文，常 1400+ 字；800 在小模型上会频繁截断
+            # （前端显示"回答可能不完整"）。换模型时尤其明显。
+            max_tokens = int(_cfg('LLM_MAX_TOKENS', 2000))
         except (TypeError, ValueError):
             max_tokens = 800
 

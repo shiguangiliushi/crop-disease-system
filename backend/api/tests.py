@@ -47,7 +47,7 @@ from unittest.mock import patch  # 第 85 批：翻译服务用桩替换，测�
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
-from django.test import TestCase, TransactionTestCase, override_settings  # 第 102 批；SimpleTestCase 于第 342 批补
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings  # SimpleTestCase：第 359 批  # 第 102 批；SimpleTestCase 于第 342 批补
 from django.conf import settings  # 第 159 批：识别测试要读测试图路径
 from django.core.files.uploadedfile import SimpleUploadedFile  # 第 159 批：识别测试要传图
 from django.core.management import call_command  # 第 154 批：备份恢复演练命令的测试
