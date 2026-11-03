@@ -196,6 +196,17 @@
           </p>
 
           <!-- 反馈闭环（与抽屉走同一套接口） -->
+          <!-- 第 369 批：同作物的其他病害，点了去百科 -->
+          <div v-if="msg.role === 'assistant' && msg.related?.length" class="related-pests">
+            <span class="related-label">{{ t('assistant.relatedTitle') }}</span>
+            <router-link
+              v-for="item in msg.related"
+              :key="item.id"
+              :to="`/pests/${item.id}`"
+              class="related-link"
+            >{{ item.name }}</router-link>
+          </div>
+
           <!-- 第 307 批：追问建议（后端按词条+意图给出，点了直接发问） -->
           <div v-if="msg.role === 'assistant' && msg.suggestions?.length && !isStreaming(msg)" class="followup-chips">
             <button
@@ -546,6 +557,7 @@ const applySession = (data) => {
     hasPesticide: item.role === 'assistant' && hasPesticideText(item.content),
     // 历史消息不带推荐（后端只在当次回答返回），刷新后 chips 自然消失
     suggestions: [],
+    related: [],
     // 只有助手消息能评价；历史里的 id 就是真实消息 id
     messageId: item.role === 'assistant' ? item.id : null,
     verdict: item.verdict || '',
@@ -766,6 +778,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 369 批：相关词条 */
+.related-pests { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 12.5px; }
+.related-label { color: var(--ink-400, #8a8f8c); }
+.related-link { color: #2f6b4f; text-decoration: none; border-bottom: 1px dashed rgba(47,107,79,.4); }
+.related-link:hover { border-bottom-style: solid; }
+
 /* 第 361 批：降级提示里的「问专家」入口 */
 .degrade-escalate {
   margin-left: 6px;

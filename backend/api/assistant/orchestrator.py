@@ -554,6 +554,37 @@ def _persist(session, question: str, *, answer: str, reason: str, model: str = '
     return message
 
 
+def _related_pests(prepared, limit: int = 3) -> list[dict]:
+    """回答后推荐 2~3 条**同作物的其他病害**（第 369 批）。
+
+    ## 为什么只按作物推
+
+    按"症状相似"推需要向量或人工标注，38 条语料下收益不抵成本；
+    而"同作物的其他常见病"是最自然的下一步 —— 农户看完番茄晚疫病，
+    很可能也想看番茄早疫病/叶霉病（它们常被混淆）。
+
+    只返回 id/name/english_identifier，前端拼链接，避免多传字段。
+    """
+    hits = getattr(prepared, 'hits', None) or []
+    if not hits:
+        return []
+    from ..models import PestInfo
+
+    base = hits[0].pest
+    used = {hit.pest.pk for hit in hits}
+    queryset = (
+        PestInfo.objects
+        .filter(crop_type=base.crop_type)
+        .exclude(pk__in=used)
+        # 排除"健康XXX"词条：用户问的是病害，推荐"健康番茄"没有意义
+        .exclude(english_identifier__endswith='_healthy')
+    )
+    return [
+        {'id': pest.pk, 'name': pest.name, 'identifier': pest.english_identifier or ''}
+        for pest in queryset[:limit]
+    ]
+
+
 def ask(*, user, question: str, session: AssistantSession | None = None,
         pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None) -> dict:
     """问一个问题，返回结构化结果。**永不抛异常给调用方**（见模块 docstring）。"""
@@ -885,6 +916,7 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
                         # （前端表现为「回答显示一半、没有引用/建议」，测试则是 5 条 stream 用例 ERROR）。
                         'suggestions': _followups_for(
                             citations, question, getattr(prepared, 'lang', 'zh') or 'zh'),
+                        'related': _related_pests(prepared),
                         # 前端据此在气泡下方提示"回答可能不完整"
                         'truncated': truncated,
                         # 第 212 批：带上**最终正文**（可能与逐字增量略有不同 ——
