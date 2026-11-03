@@ -122,6 +122,21 @@
         </el-table-column>
       </el-table>
       <p v-else class="empty-line">{{ t('assistantAdmin.gapEmpty') }}</p>
+
+      <!-- 第 365 批：把上面那堆原始问题聚成"建议补哪条词条" -->
+      <div v-if="suggestedEntries.length" class="suggested-block">
+        <h3 class="suggested-title">{{ t('assistantAdmin.suggestedTitle') }}</h3>
+        <p class="panel-hint">{{ t('assistantAdmin.suggestedHint') }}</p>
+        <ul class="suggested-list">
+          <li v-for="item in suggestedEntries" :key="item.keyword" class="suggested-item">
+            <span class="suggested-keyword">{{ item.keyword }}</span>
+            <el-tag size="small" type="warning" effect="plain" class="suggested-count">
+              {{ item.count }}
+            </el-tag>
+            <span class="suggested-example">{{ item.examples?.[0] || '' }}</span>
+          </li>
+        </ul>
+      </div>
     </section>
 
     <!-- 四、用户说"没用"：note 是最有价值的信号 -->
@@ -211,6 +226,8 @@ const totals = computed(() => data.value?.totals ?? {
 });
 const trend = computed(() => data.value?.trend ?? []);
 const gaps = computed(() => data.value?.gaps?.no_source_questions ?? []);
+// 第 365 批：把缺口问题聚成"该补什么"的结论（后端 _suggested_entries）
+const suggestedEntries = computed(() => data.value?.gaps?.suggested_entries ?? []);
 const useless = computed(() => data.value?.gaps?.useless ?? []);
 const sources = computed(() => data.value?.top_sources ?? []);
 const tokenTotal = computed(() => totals.value.tokens.prompt + totals.value.tokens.completion);
@@ -273,6 +290,26 @@ onMounted(load);
 </script>
 
 <style scoped>
+/* 第 365 批：建议补充的词条 */
+.suggested-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line-200, #e6ece9);
+}
+.suggested-title { font-size: 0.95rem; margin: 0 0 6px; }
+.suggested-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.suggested-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-100, #f2f5f3);
+}
+.suggested-item:last-child { border-bottom: none; }
+.suggested-keyword { font-weight: 600; color: #2f6b4f; min-width: 90px; }
+.suggested-count { flex: none; }
+.suggested-example { color: var(--ink-400, #8a8f8c); font-size: 0.84rem; }
+
 /* 第 313 批：无用反馈 → 词条跳转 */
 .pest-link {
   color: var(--brand-500, #3d9a68);
