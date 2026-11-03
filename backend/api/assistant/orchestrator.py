@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 
 from django.db import transaction
 
+from ..sensitive import mask_text  # 第 362 批：输出侧敏感词兜底
 from ..models_assistant import AssistantMessage, AssistantSession
 from . import context as context_builder
 from . import guard, llm, prompts, vision
@@ -629,6 +630,11 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                     citations = list(prepared.citations) if reason else []
                     usage['citation_marked'] = False
                 answer = (result.text or '').strip()
+                # 第 362 批：**输出侧**敏感词兜底。
+                # 输入侧（帖子/评论/私信）早就过滤了，但助手回答直接来自模型，
+                # 模型完全可能复述出违规内容 —— 那一屏就是直接展示给用户的。
+                # 这里用遮罩而不是拒答：拒答等于把已经生成的好答案也丢掉。
+                answer = mask_text(answer)
                 # 第 212 批：只有一个来源时，正文里的 `【1】` 只留一次
                 answer, collapsed = _collapse_single_source(answer, citations)
                 if collapsed:
@@ -814,6 +820,7 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
             error_reason = 'llm_error_partial'
 
     answer = ''.join(pieces).strip()
+    answer = mask_text(answer)  # 第 362 批：流式输出同样兜底（见非流式的说明）
     latency_ms = int((time.time() - started) * 1000)
     reason = error_reason
     # 第 207 批：降级成"档案原文"时，出处是**重新检索到的那些命中**，
