@@ -157,6 +157,73 @@ def _trend(questions, answers, days: int, today) -> list[dict]:
     return trend
 
 
+#: 缺口问题里出现频率高、但**不是病害名**的词 —— 聚类时要排除，否则会建议"怎么""叶子"
+_GAP_NOISE = {
+    '怎么', '怎样', '如何', '什么', '哪些', '可以', '需要', '应该', '要不要',
+    '这个', '这种', '一下', '请问', '我的', '我家', '现在', '还有', '就是',
+    '叶子', '叶片', '果实', '根部', '植株', '问题', '方法', '情况', '治疗', '防治',
+}
+
+#: 片段里只要含这些字，就说明它是疑问/虚词组合，不能当词条主题
+_GAP_NOISE_CHARS = ('怎么', '怎样', '如何', '什么', '哪些', '吗', '呢', '怎么办', '了怎', '么治', '么办')
+
+
+def _suggested_entries(gaps: list[dict]) -> list[dict]:
+    """把"答不上来的问题"聚成**待补词条建议**（第 364 批）。
+
+    ## 为什么需要它
+
+    `_gap_questions` 给的是"原问题 + 次数"，管理员看完仍然不知道该做什么：
+    是补一条"番茄黄化曲叶病毒"词条，还是给现有词条加一段症状描述？
+
+    这里做**关键词聚类**：把每个问题切成 2~4 字中文片段（不引分词库，
+    38 条语料规模下手写 n-gram 足够），统计高频片段，再把含该片段的问题归成一组。
+
+    输出每项：`keyword`（建议补的词条/段落主题）、`count`、`examples`（原问题，最多 3 条）。
+    """
+    from collections import Counter as _Counter
+
+    counter: _Counter = _Counter()
+    for gap in gaps:
+        question = gap.get('question') or ''
+        # 只取中文片段，丢掉数字/标点/英文
+        chars = ''.join(ch for ch in question if '\u4e00' <= ch <= '\u9fff')
+        for size in (4, 3, 2):
+            for start in range(0, max(0, len(chars) - size + 1)):
+                piece = chars[start:start + size]
+                if piece in _GAP_NOISE:
+                    continue
+                if any(bad in piece for bad in _GAP_NOISE_CHARS):
+                    continue
+                counter[piece] += max(1, gap.get('count') or 1)
+
+    # 只保留"看起来像病害/症状"的片段：长度 ≥2 且出现 ≥2 次
+    candidates = [(kw, n) for kw, n in counter.most_common(60) if len(kw) >= 2 and n >= 2]
+
+    # 去重：短片段若被长片段包含且频次接近，只留长的（"晚疫" vs "晚疫病"）
+    picked: list[tuple[str, int]] = []
+    for kw, n in candidates:
+        if any(kw in longer and n <= longer_n for longer, longer_n in picked):
+            continue
+        picked.append((kw, n))
+        if len(picked) >= 8:
+            break
+
+    # ③ 同一批问题会被滑窗切出多个重叠片段（"番茄黄化"/"茄黄化曲"/"黄化曲叶"）。
+    #    按"命中的问题集合"去重，同一组问题只留**最长**的那个片段当主题。
+    by_examples: dict[tuple, dict] = {}
+    for keyword, count in picked:
+        examples = [g['question'] for g in gaps if keyword in (g.get('question') or '')][:3]
+        if not examples:
+            continue
+        signature = tuple(sorted(examples))
+        current = by_examples.get(signature)
+        if current is None or len(keyword) > len(current['keyword']):
+            by_examples[signature] = {'keyword': keyword, 'count': count, 'examples': examples}
+
+    return list(by_examples.values())
+
+
 def _gap_questions(answers) -> list[dict]:
     """知识库缺口：`no_source` 回答对应的原始问题（归一后按次数排序）。"""
     recent = list(answers.order_by('-id')[:GAP_SCAN_LIMIT])
@@ -315,6 +382,10 @@ class AdminAssistantStatsView(APIView):
             'gaps': {
                 'no_source_questions': _gap_questions(answers.filter(degrade_reason='no_source')),
                 'useless': _useless_feedback(answers),
+                # 第 364 批：把"答不上来的问题"聚成"该补什么"的结论，
+                # 否则管理员看完原始问题列表仍然不知道该动手做什么。
+                'suggested_entries': _suggested_entries(
+                    _gap_questions(answers.filter(degrade_reason='no_source'))),
             },
             'top_sources': _top_sources(answers),
         }
