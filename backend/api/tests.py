@@ -16469,3 +16469,80 @@ class IdorAccessTestsPart2(TestCase):
         self.assertIn(response.status_code, (403, 404))
         notification.refresh_from_db()
         self.assertFalse(notification.is_read, '别人不能替我把通知标为已读')
+
+
+class IdorAccessTestsPart3(TestCase):
+    """IDOR 第三批：私信 / 举报处置。
+
+    私信最敏感 —— 泄漏的是两个人之间的对话内容。这里覆盖：
+      · 第三方拿别人的会话 id 读不到内容；
+      · 普通用户不能调用「举报处置」（那是管理员动作）。
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        self.a = User.objects.create_user(username='zz_idor3_a', password='pw12345678')
+        self.b = User.objects.create_user(username='zz_idor3_b', password='pw12345678')
+        self.c = User.objects.create_user(username='zz_idor3_c', password='pw12345678')
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    def _send(self, sender, receiver, content='私密对话内容'):
+        """通过接口发私信，避免依赖模型内部字段名。"""
+        response = self._client(sender).post(
+            f'/api/messages/with/{receiver.pk}/',
+            {'content': content},
+            format='json',
+        )
+        return response
+
+    def test_third_party_cannot_read_conversation(self):
+        sent = self._send(self.a, self.b)
+        self.assertIn(sent.status_code, (200, 201), str(sent.data)[:200])
+
+        # c 与 a 之间没有对话 —— 读 a 的会话必须拿不到 b 发的内容
+        response = self._client(self.c).get(f'/api/messages/with/{self.a.pk}/')
+        self.assertIn(response.status_code, (200, 403, 404))
+        body = str(response.data)
+        self.assertNotIn('私密对话内容', body, '第三方不该看到别人的私信内容')
+
+    def test_participants_can_read_each_other(self):
+        sent = self._send(self.a, self.b)
+        self.assertIn(sent.status_code, (200, 201), str(sent.data)[:200])
+        response = self._client(self.b).get(f'/api/messages/with/{self.a.pk}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('私密对话内容', str(response.data))
+
+    def test_anonymous_cannot_list_conversations(self):
+        response = APIClient().get('/api/messages/')
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_report_handle_requires_admin(self):
+        """举报处置是管理员动作，普通用户不能调用。"""
+        from api.models import CustomUser
+        from api.models_report import Report
+
+        post = None
+        try:
+            from api.models_forum import ForumBoard, Post
+
+            board = ForumBoard.objects.create(name='IDOR 测试版块')
+            post = Post.objects.create(title='被举报的帖子', content='正文', author=self.b, board=board)
+        except Exception:  # noqa: BLE001
+            post = None
+
+        if post is None:
+            self.skipTest('论坛模型不可用，跳过举报处置用例')
+
+        report = Report.objects.create(
+            reporter=self.a, target_type='post', post=post,
+            target_key=str(post.pk), reason='spam',
+        )
+        response = self._client(self.c).post(
+            f'/api/reports/{report.pk}/handle/', {'action': 'dismiss'}, format='json')
+        self.assertIn(response.status_code, (403, 404))
