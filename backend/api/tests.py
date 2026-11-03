@@ -16299,3 +16299,88 @@ class ReportCreateTests(APITestCase):
         self.assertIn(response.status_code, (200, 201), response.content)
         self.assertEqual(Report.objects.count(), before + 1)
 
+
+
+class IdorAccessTests(TestCase):
+    """越权访问（IDOR）回归：A 用户拿 B 用户的 id 必须拿不到东西。
+
+    ## 为什么单独立一类
+
+    这类漏洞的特点是"功能全对、只是少了一个 `filter(user=...)`"——
+    测试写得再全，只要没人专门试"别人的 id"，就永远发现不了。
+
+    ## 判定标准
+
+    返回 **404 而不是 403**：403 等于告诉对方"这个 id 存在，只是你没权限"，
+    等于免费提供了资源存在性探测。项目里各接口已经是 404 口径，这里把它钉住。
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        from api.models import DetectionHistory, PestInfo
+        from api.models_assistant import AssistantSession
+        from api.models_calendar import UserTaskReminder
+
+        User = get_user_model()
+        self.owner = User.objects.create_user(username='zz_idor_owner', password='pw12345678')
+        self.other = User.objects.create_user(username='zz_idor_other', password='pw12345678')
+
+        self.pest = PestInfo.objects.first()
+        self.detection = DetectionHistory.objects.create(
+            user=self.owner, image='detection_history/idor.png',
+            detection_result='测试病害', pest_info=self.pest, confidence=0.9,
+        )
+        self.session = AssistantSession.objects.create(user=self.owner, title='泄露测试会话')
+        self.reminder = UserTaskReminder.objects.create(
+            user=self.owner, title='泄露测试提醒', detail='只有本人可见',
+        )
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    # ── 识别记录 ──────────────────────────────────────────────
+    def test_detection_detail_is_owner_only(self):
+        response = self._client(self.other).get(f'/api/detection-history/{self.detection.pk}/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_detection_detail_owner_can_read(self):
+        response = self._client(self.owner).get(f'/api/detection-history/{self.detection.pk}/')
+        self.assertEqual(response.status_code, 200)
+
+    # ── 助手会话 ──────────────────────────────────────────────
+    def test_assistant_session_detail_is_owner_only(self):
+        response = self._client(self.other).get(f'/api/assistant/sessions/{self.session.pk}/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_assistant_session_delete_is_owner_only(self):
+        response = self._client(self.other).delete(f'/api/assistant/sessions/{self.session.pk}/')
+        self.assertEqual(response.status_code, 404)
+        from api.models_assistant import AssistantSession
+        self.assertTrue(AssistantSession.objects.filter(pk=self.session.pk).exists(),
+                        '别人的会话不能被删掉')
+
+    # ── 农事提醒 ──────────────────────────────────────────────
+    def test_reminder_patch_is_owner_only(self):
+        response = self._client(self.other).patch(
+            f'/api/calendar/reminders/{self.reminder.pk}/', {'is_done': True}, format='json')
+        self.assertEqual(response.status_code, 404)
+        from api.models_calendar import UserTaskReminder
+        self.assertFalse(UserTaskReminder.objects.get(pk=self.reminder.pk).is_done)
+
+    def test_reminder_delete_is_owner_only(self):
+        response = self._client(self.other).delete(f'/api/calendar/reminders/{self.reminder.pk}/')
+        self.assertEqual(response.status_code, 404)
+        from api.models_calendar import UserTaskReminder
+        self.assertTrue(UserTaskReminder.objects.filter(pk=self.reminder.pk).exists())
+
+    # ── 匿名 ──────────────────────────────────────────────────
+    def test_anonymous_cannot_read_resources(self):
+        anonymous = APIClient()
+        for url in (
+            f'/api/detection-history/{self.detection.pk}/',
+            f'/api/assistant/sessions/{self.session.pk}/',
+        ):
+            self.assertIn(anonymous.get(url).status_code, (401, 403, 404), url)
