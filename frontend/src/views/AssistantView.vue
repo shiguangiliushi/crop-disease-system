@@ -177,6 +177,17 @@
 
           <p v-if="msg.degradeHint" class="assistant-degrade-hint">
             <i class="bi bi-info-circle me-1"></i>{{ msg.degradeHint }}
+            <!-- 第 361 批：降级说明后面紧跟一个「问专家」入口。
+                 原来用户看到"没把握"之后只能自己去找咨询页，路径断了。 -->
+            <el-button
+              v-if="!msg.escalated"
+              link
+              type="primary"
+              size="small"
+              class="degrade-escalate"
+              :loading="escalating"
+              @click="escalate(msg)"
+            >{{ t('assistant.askExpert') }}</el-button>
           </p>
 
           <!-- 回答被长度上限截断（与"降级"是两件事：降级=没调用模型，截断=模型没说完） -->
@@ -755,6 +766,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 361 批：降级提示里的「问专家」入口 */
+.degrade-escalate {
+  margin-left: 6px;
+  font-size: 12.5px;
+}
+
 /* 第 318 批：流式输出的打字光标（纯 CSS，不碰数据流） */
 .typing-caret {
   display: inline-block;

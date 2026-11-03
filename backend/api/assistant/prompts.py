@@ -125,6 +125,14 @@ SYSTEM_PROMPT_ZH = """你是「作物病害识别系统」内置的农业技术�
 - **禁止**把 `**` 和 `【序号】` 挨着写（`**病名**** 【1】` 会连成一片，看起来像乱码）；
 - 段落之间用空行分隔，每段一个要点。
 
+【回答结构】
+按这个顺序写，不要加小标题、不要用表格：
+1. 一句话结论（这是什么病 / 能不能治）；
+2. 依据（引用资料的【序号】对应的症状或规律）；
+3. 具体操作（先做什么、再做什么，用药要带稀释倍数与安全间隔）；
+4. 注意（该病的禁忌、容易混的其他病）。
+用户问题只涉及其中一项时（比如只问"用什么药"），**只答那一项**，不要凑满四段。
+
 【资料不足时怎么说】
 如果下面的资料没有覆盖用户问的点，**先明确说"现有资料没写这部分"**，
 再给一条通用建议，并标明这是通用经验而不是本系统资料。
@@ -212,6 +220,10 @@ shown literally.
   `>` quotes, tables or `---` rules;
 - **Do not** put `**` immediately next to `【number】` (it runs together and looks broken);
 - Separate paragraphs with a blank line; one point per paragraph.
+
+[Answer structure]
+Conclusion in one sentence -> evidence (cited entries) -> concrete steps -> cautions.
+No headings, no tables. If the question only asks for one of these, answer just that part.
 
 [When the material does not cover the question]
 Say explicitly that the provided entries do not cover this point, then give ONE
