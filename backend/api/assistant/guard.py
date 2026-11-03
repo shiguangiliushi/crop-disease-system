@@ -21,6 +21,21 @@ from ..sensitive import find_sensitive_words
 
 logger = logging.getLogger(__name__)
 
+#: 提示注入（prompt injection）特征。
+#:
+#: 第 363 批：助手把用户问题直接拼进提示，用户可以让模型"忽略上面的规则"。
+#: 这类输入**不拒答**（可能只是用户在描述"叶片枯了别忽略"这种正常句），
+#: 而是在提示里补一句防御说明，并记日志 —— 拒答的误伤成本比注入高。
+INJECTION_PATTERNS = (
+    # 「忽略以上所有指令」中间可能夹任意修饰："忽略{0,10 任意字符}{指令/规则/…}"
+    r'忽略[\s\S]{0,10}?(指令|规则|设定|要求|限制|提示|prompt)',
+    r'(你|您)(现在)?(是|扮演|充当)(一个|一名)?',
+    r'(输出|显示|打印|重复|告诉我|展示)[\s\S]{0,6}?(系统)?(提示词|提示语|提示|prompt|system)',
+    r'(system\s*prompt|ignore\s+(all\s+)?(previous|above)?\s*instructions?)',
+    r'(开发者模式|越狱|jailbreak|DAN\s*模式)',
+    r'你现在(不是|不再)',
+)
+
 #: 问题长度上限（字符）。够写一段话，又不至于把上下文预算挤爆。
 MAX_QUESTION_CHARS = 500
 #: 每分钟最大提问次数（配置项 ASSISTANT_RATE_PER_MINUTE 优先）
@@ -33,6 +48,15 @@ class GuardResult:
     reason: str = ''      # empty / too_long / sensitive / rate_limited
     detail: str = ''      # 给用户看的细节（如命中的词）
     question: str = ''    # 归一化后的问题（去空白）
+    injection: bool = False  # 是否疑似提示注入（**不阻断**，只做防御提示）
+
+
+def looks_like_injection(text: str) -> bool:
+    """是否疑似提示注入。宽松匹配，宁可多标记也不误拒。"""
+    import re as _re
+
+    lowered = (text or '').lower()
+    return any(_re.search(pattern, lowered) for pattern in INJECTION_PATTERNS)
 
 
 def check(question: str, *, user=None, rate_per_minute: int | None = None) -> GuardResult:
@@ -62,4 +86,5 @@ def check(question: str, *, user=None, rate_per_minute: int | None = None) -> Gu
             return GuardResult(ok=False, reason='rate_limited', detail=str(limit_per_min),
                                question=text)
 
-    return GuardResult(ok=True, question=text)
+    return GuardResult(ok=True, question=text,
+                       injection=looks_like_injection(text))
