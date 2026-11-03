@@ -165,7 +165,12 @@ _GAP_NOISE = {
 }
 
 #: 片段里只要含这些字，就说明它是疑问/虚词组合，不能当词条主题
-_GAP_NOISE_CHARS = ('怎么', '怎样', '如何', '什么', '哪些', '吗', '呢', '怎么办', '了怎', '么治', '么办')
+_GAP_NOISE_CHARS = (
+    '怎么', '怎样', '如何', '什么', '哪些', '吗', '呢', '怎么办', '了怎', '么治', '么办',
+    # 第 372 批：代词/空指 —— 用户从识别结果页进来常问「这个病用什么药」，
+    # 这类问题里的"这个病"没有实体信息，聚成词条建议毫无意义。
+    '这个病', '这个虫', '什么药', '用什么', '该用', '咋办', '咋整', '一种病',
+)
 
 
 def _suggested_entries(gaps: list[dict]) -> list[dict]:
@@ -194,6 +199,13 @@ def _suggested_entries(gaps: list[dict]) -> list[dict]:
                 if piece in _GAP_NOISE:
                     continue
                 if any(bad in piece for bad in _GAP_NOISE_CHARS):
+                    continue
+                # 第 372 批：**必须以病/虫/症状词结尾**才算候选主题。
+                # 否则会产出「个病用什」这种由"这个病用什么"切出来的垃圾片段。
+                if not piece.endswith(('病', '虫', '螨', '霉', '斑', '腐', '锈', '疫', '萎', '枯', '化')):
+                    continue
+                # 第 372 批：含代词/疑问字的一律不要 —— 「个病」「这病」不是词条主题。
+                if any(bad in piece for bad in ('这', '那', '个', '用', '什', '么', '吗', '呢', '我', '你', '的')):
                     continue
                 counter[piece] += max(1, gap.get('count') or 1)
 
