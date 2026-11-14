@@ -250,6 +250,7 @@ export const messages = {
       send: '发送',
       asking: '正在查证…',
       sources: '来源',
+      related: '相关病害：',
       failed: '没问到答案，请稍后再试',
     },
     pestWiki: {
@@ -551,6 +552,7 @@ export const messages = {
       send: 'Send',
       asking: 'Looking it up…',
       sources: 'Sources',
+      related: 'Related:',
       failed: 'No answer right now — please try again later',
     },
     pestWiki: {

@@ -206,6 +206,18 @@
               <p v-if="askCitations.length" class="ask-sources">
                 {{ t('assistantAsk.sources') }}：{{ askCitations.map((c) => c.pest_name || c.name || '词条').join('、') }}
               </p>
+              <!-- 第 375 批：同作物的其他病害（后端 related）。手机上"再点开一个病害"比在桌面难，
+                   所以这里把下一步直接摆出来。 -->
+              <div v-if="askRelated.length" class="ask-related">
+                <span class="ask-related-label">{{ t('assistantAsk.related') }}</span>
+                <button
+                  v-for="item in askRelated"
+                  :key="item.id"
+                  type="button"
+                  class="ask-related-link"
+                  @click="openRelated(item)"
+                >{{ item.name }}</button>
+              </div>
             </div>
           </div>
 
@@ -291,6 +303,7 @@ const askDraft = ref('');
 const askedQuestion = ref('');
 const askAnswer = ref('');
 const askCitations = ref([]);
+const askRelated = ref([]); // 第 375 批：同作物其他病害
 const askLoading = ref(false);
 
 function openAsk() {
@@ -301,12 +314,20 @@ function openAsk() {
   }
 }
 
+// 移动端的病害详情路由是 /pests/:keyword（用名称搜），不是 /pests/:id
+const openRelated = (item) => {
+  if (!item?.name) return;
+  askVisible.value = false;
+  router.push(`/pests/${encodeURIComponent(item.name)}`);
+};
+
 async function submitAsk() {
   const question = askDraft.value.trim();
   if (!question || askLoading.value) return;
   askedQuestion.value = question;
   askAnswer.value = '';
   askCitations.value = [];
+  askRelated.value = [];
   askLoading.value = true;
   try {
     const data = await askAssistant({
@@ -315,6 +336,7 @@ async function submitAsk() {
     });
     askAnswer.value = data.answer || t('assistantAsk.failed');
     askCitations.value = data.citations || [];
+    askRelated.value = Array.isArray(data.related) ? data.related : [];  // 第 375 批
     if (data.degraded) {
       // 降级（如词条未收录）也会给出可读回答，这里只提示一下
       console.info('[assistant] degraded:', data.degradeReason);
@@ -578,6 +600,25 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 375 批：相关病害（同作物的其他病） */
+.ask-related {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.ask-related-label { color: var(--ink-400, #8a8f8c); }
+.ask-related-link {
+  border: 1px solid rgba(47, 107, 79, 0.35);
+  border-radius: 999px;
+  background: #f6fbf8;
+  color: #2f6b4f;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+
 /* 第 260 批：百科入口 */
 .disease-name {
   cursor: pointer;
