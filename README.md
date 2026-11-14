@@ -54,6 +54,11 @@ docs/       设计与运维文档、README 配图、工具脚本；tools/ 开发
 > 换模型后先跑 `python manage.py check_model_labels`：**权重里的类名是唯一权威**，
 > 与词条错位会"框上 A、详情 B"且全程静默。
 
+> **模型训练代码**单独放在 [shiguangliushi/crop-disease-training](https://github.com/shiguangliushi/crop-disease-training)：
+> 标签清洗 → 数据集切分 → 训练（Ultralytics 8.3.143）。
+> 线上权重实测 **P 87.8% / R 89.6% / mAP50 91.5%**（39 类，val 4528 张）；
+> 评估方式、以及"这份数据的检测其实是整图单框分类"这一关键前提，见该仓库的 `docs/评估方法.md`。
+
 ## 快速开始
 
 ```bash
