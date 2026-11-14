@@ -7,8 +7,8 @@
       1. backend_backup        每日备份数据库与 media
       2. backup_verify         每日校验最新备份可解压、可读
       3. health_snapshot       每日记录一条健康快照（管理端"14 天趋势"靠它）
-      4. cleanup_media        每日清理孤儿图片
-      5. process_deletions    每小时执行注销冷静期到期的账号
+      4. prune_media        每日清理孤儿图片
+      5. purge_deletion_requests    每小时执行注销冷静期到期的账号
 
 .USAGE
     # 以【管理员身份】运行（注册计划任务需要）
@@ -36,8 +36,8 @@ $jobs = @(
     @{ Name = 'backup';         Cmd = 'backend_backup';          Schedule = 'DAILY'; At = '02:30' },
     @{ Name = 'verify';         Cmd = 'backup_verify';           Schedule = 'DAILY'; At = '03:10' },
     @{ Name = 'health';         Cmd = 'health_snapshot';         Schedule = 'DAILY'; At = '03:40' },
-    @{ Name = 'media-cleanup';  Cmd = 'cleanup_media';           Schedule = 'DAILY'; At = '04:10' },
-    @{ Name = 'deletions';      Cmd = 'process_deletions';       Schedule = 'HOURLY'; At = '' },
+    @{ Name = 'media-cleanup';  Cmd = 'prune_media';           Schedule = 'DAILY'; At = '04:10' },
+    @{ Name = 'deletions';      Cmd = 'purge_deletion_requests';       Schedule = 'HOURLY'; At = '' },
     @{ Name = 'restore-drill';  Cmd = 'restore-drill';           Schedule = 'DAILY'; At = '04:40' }
 )
 

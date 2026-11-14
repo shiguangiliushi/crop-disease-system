@@ -1,0 +1,388 @@
+# ============================================================================
+# Nginx 站点样例 —— Linux 单机生产部署（Gunicorn + 前端 dist）
+# 仓库位置：deploy/nginx/crop-disease.conf.example
+# 配套文件：deploy/systemd/crop-disease.service.example、docs/生产部署样板.md
+# ----------------------------------------------------------------------------
+# 怎么用：
+#   sudo cp deploy/nginx/crop-disease.conf.example /etc/nginx/conf.d/crop-disease.conf
+#   sudo vim /etc/nginx/conf.d/crop-disease.conf       # 改域名、证书路径（占位符已标出）
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# 为什么后缀是 .conf.example 而不是 .conf：
+#   主配置里通常有 `include /etc/nginx/conf.d/*.conf;`，叫 .conf 的文件会被**自动加载**。
+#   一个域名/证书路径还是占位符的样例被加载，`nginx -t` 会直接失败（打不开证书文件），
+#   而人的第一反应往往是"证书坏了"，排查方向直接跑偏。加 .example 就不会被误加载。
+#
+# 本文件负责四件事（每段上面都写了"为什么"）：
+#   · 前端静态产物 frontend/dist + SPA history 回退；
+#   · /api/ 反代到 gunicorn（127.0.0.1:8000）；
+#   · /api/assistant/ask/stream/ 单独关缓冲（本项目助手是 SSE 逐字返回）；
+#   · /media/ 与 /static/ 的分流：公开文件 Nginx 直发，私有目录回源给 Django 鉴权。
+#
+# 路径约定：项目根 /srv/crop-disease-system（Linux 生产路径）。
+# 这份配置**不适用于 Windows 开发机**：开发时前端跑 vite dev server、后端跑 runserver，
+# 两者直接对话，不需要 Nginx。
+# ============================================================================
+
+upstream crop_backend {
+    # 只监听本机的 gunicorn（见 systemd 样例的 --bind 127.0.0.1:8000）。
+    # 不要把这里改成公网 IP：那等于绕过 Nginx（TLS、限流、静态分发全失效）。
+    server 127.0.0.1:8000;
+}
+
+# ============================================================================
+# ① 80 端口：只做两件事 —— 给证书续期留校验路径，其余请求跳到 https
+# ============================================================================
+server {
+    listen 80;
+    # 服务器禁用 IPv6 时，打开下面这行会让 nginx 起不来（socket() [::]:80 failed）。
+    # listen [::]:80;
+    server_name example.com www.example.com;   # ← 换成真实域名；只按 IP 访问可写 _
+
+    # certbot 的 webroot 校验路径。用
+    #   sudo certbot certonly --webroot -w /var/www/certbot -d example.com
+    # 时必须保留这一段，否则续期会 404 失败（certbot 默认的 --nginx 插件不需要）。
+    # 目录要先建：sudo mkdir -p /var/www/certbot
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    # 其余一律 301 到 https。用 $host 而不是写死域名，www / 裸域都能正确跳。
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ============================================================================
+# ② HTTPS 站点（真正干活的部分）
+# ============================================================================
+server {
+    listen 443 ssl http2;
+    # nginx >= 1.25.1 的推荐写法是 `listen 443 ssl;` + 单独的 `http2 on;`。
+    # 这里用兼容写法：老发行版（Debian 12 / Ubuntu 24.04）能跑，新版本只会打一条
+    # deprecated 警告 —— 宁可多一行警告，也不要因为版本差异起不来。
+    # listen [::]:443 ssl http2;
+    server_name example.com www.example.com;
+
+    # ── 证书（占位符！换成实际路径）──────────────────────────────────────
+    # Let's Encrypt（certbot 默认位置）：/etc/letsencrypt/live/<域名>/
+    # 商业证书：换成 .crt / .key 的实际位置；fullchain 必须是"站点证书 + 中间证书"。
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    ssl_protocols        TLSv1.2 TLSv1.3;
+    ssl_ciphers          HIGH:!aNULL:!MD5;
+    ssl_session_cache    shared:SSL:10m;
+    ssl_session_timeout  1d;
+    ssl_prefer_server_ciphers off;
+
+    # ── 上传体积上限 ────────────────────────────────────────────────────
+    # **Nginx 默认只有 1m**：超过就在反代层直接 413，请求根本到不了 Django，
+    # 所以前端拿不到后端那句"图片不能超过 5MB"，只能看到一句通用错误。
+    #
+    # 本项目真实上限（逐个从代码核对，不是猜的）：
+    #   · 识别图 / 新闻图 / 帖子插图 / 助手提问图：5MB
+    #     —— api/image_validation.py 的 MAX_IMAGE_SIZE = 5 * 1024 * 1024
+    #   · 头像：2MB —— api/views_user.py 的 UserAvatarView.MAX_SIZE
+    #   · Django 请求体：DATA_UPLOAD_MAX_MEMORY_SIZE 20MB、FILE_UPLOAD_MAX_MEMORY_SIZE 10MB
+    #     （settings.py 默认值，可用 DJANGO_* 覆盖）
+    #     ⚠️ 这两个都不是"硬上限"：FILE_UPLOAD_MAX_MEMORY_SIZE 只决定"超过多大就落临时文件"，
+    #        真正拒绝超大文件的还是上面那两处业务校验。
+    #
+    # 取 12m 的理由：5MB 图片 + multipart 边界/表单字段的余量足够；又比 Django 的 20MB 小，
+    # 让明显超限的请求在 Nginx 就止步（省一个 Python 进程去接垃圾）。
+    # 改了业务上限（比如允许 10MB 图片）时，**这里和 Django 变量要一起改**。
+    client_max_body_size 12m;
+
+    # ── 压缩 ────────────────────────────────────────────────────────────
+    # 只压文本（前端 JS/CSS/HTML、SVG）。图片/字体本身已压缩，再 gzip 只费 CPU。
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    # 注：gzip_proxied 默认 off —— 反代来的响应（/api 的 JSON）不压缩，这是对的；
+    #     SSE 更不该经过任何压缩层（见 ③ 里的 gzip off）。
+
+    # 前端产物的根目录（`npm run build-only` / `npm run build` 生成）。
+    # ⚠️ dist/index.html 引用的是**绝对路径** /assets/xxx.js，所以 dist 只能挂在域名根下；
+    #    想放到 /app/ 子路径，必须构建时改 vite 的 base，否则资源全部 404。
+    root /srv/crop-disease-system/frontend/dist;
+
+    # ========================================================================
+    # ③ SSE：助手流式问答（前缀比 /api/ 长，自动优先命中）
+    # ------------------------------------------------------------------------
+    # 接口：POST /api/assistant/ask/stream/
+    # 前端：frontend/src/api/assistant.js 用 fetch + response.body.getReader() 逐帧读
+    #
+    # 为什么单开一段、为什么必须关缓冲：
+    #   Nginx 默认 `proxy_buffering on` —— 它先把上游响应攒在自己的缓冲区里，攒够（或
+    #   上游结束）才往客户端发。对普通 JSON 这是优化，对 SSE 是**灭顶之灾**：
+    #   每一帧 `data: ...` 都被攒住，用户看到的是"转圈很久 → 整段答案一次性蹦出来"，
+    #   前端逐字动画完全失效（代码没问题，是链路上有一层在攒）。
+    #
+    #   视图其实已经发了响应头 `X-Accel-Buffering: no`（api/views_assistant.py），
+    #   Nginx 认这个头，理论上够了。这里**仍然显式写死**，原因有三：
+    #     · 中间再挂一层网关/云 LB 时，那个响应头不一定被透传；
+    #     · 以后有人改视图，不会想到"去掉这个头会弄坏生产"；
+    #     · 显式配置本身就是文档 —— 出问题能一眼看出"这里关过缓冲"。
+    #
+    # 超时：proxy_read_timeout 管的是"两次读到数据之间的最长等待"，**不是总时长**。
+    #   首字要等模型吐出第一块（LLM 超时 30s，见 settings.LLM_TIMEOUT），慢链路下给
+    #   300s 是留余量。**真正的总时长上限在 gunicorn 的 --timeout 120**（见 systemd 样例）：
+    #   流超过 120s 会被 worker 杀掉，所以这里写 300s 不代表"能流 5 分钟"。
+    # ========================================================================
+    location ^~ /api/assistant/ask/stream/ {
+        proxy_pass http://crop_backend;
+        proxy_http_version 1.1;
+
+        # Host 要透传：不传时 Nginx 默认发 `Host: 127.0.0.1:8000`，
+        # 会被 Django 的 ALLOWED_HOSTS 拒掉（400），生成的绝对 URL 也会错。
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # SSE 的鉴权走 Authorization 头（Token <...>），Nginx 默认就透传，无需额外设置。
+        # 请求是 https 时 Django 才不会把它当成 http（详见 ④ 里 X-Forwarded-Proto 的说明）。
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # ⚠️ 路径**必须带尾斜杠**：Django 路由就是 `assistant/ask/stream/`，
+        #    少个斜杠会落到 ④ 的 /api/（不关缓冲），表现是"又变回一次性蹦出来了"。
+
+        proxy_buffering off;          # ← 逐字返回的关键
+        proxy_cache off;              # 流式响应不该有任何缓存语义
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        gzip off;                     # 兜底：任何压缩层都可能攒包
+    }
+
+    # ========================================================================
+    # ④ 普通接口反代
+    # ========================================================================
+    location /api/ {
+        proxy_pass http://crop_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # 应用要拿真实 IP 做限流与"登录失败锁定"，别让所有请求都显示成 127.0.0.1。
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # settings.py 里 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')，
+        # 且生产默认 SECURE_SSL_REDIRECT=True：不传这个头，Django 会认为"这是 http" →
+        # 再 301 一次 → 浏览器走 https 又被判断成 http → **无限重定向**（浏览器报
+        # ERR_TOO_MANY_REDIRECTS）。这一行不是可选项。
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 识别接口是 CPU 密集的（YOLO 推理，一张大图十几秒），gunicorn 的 timeout 是 120s ——
+        # Nginx 必须比它长，否则 504 会先于 worker 返回，日志里看像是"后端没响应"。
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+
+    # ========================================================================
+    # ⑤ Django admin
+    # ------------------------------------------------------------------------
+    # **一定要单独写**：不写的话 /admin/ 会落进下面的 SPA 回退，打开的是前端页面，
+    # 而且看起来"很正常"（一个 200 的网页），查起来很费劲。
+    # admin 的样式来自 ⑥ 的 /static/，两段要一起存在。
+    # ========================================================================
+    location /admin/ {
+        proxy_pass http://crop_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # `/admin`（不带尾斜杠）不在 `location /admin/` 的匹配范围里，会被 SPA 回退接住。
+    # 这里显式补一个跳转，否则用户手输 `https://example.com/admin` 会看到前端页面。
+    location = /admin {
+        return 301 /admin/;
+    }
+
+    # ========================================================================
+    # ⑥ Django 静态文件（collectstatic 产物）
+    # ------------------------------------------------------------------------
+    # STATIC_ROOT = BASE_DIR / 'staticfiles'，BASE_DIR 是 backend/（settings.py），
+    # 所以生产路径是 /srv/crop-disease-system/backend/staticfiles/。
+    # 上线前必须跑过 `manage.py collectstatic --noinput`，否则 admin 页面**裸奔**
+    # （HTML 在、CSS/JS 全 404，页面看起来像坏了，实际是没收集静态文件）。
+    #
+    # 装了 whitenoise（requirements-prod.txt）也不冲突：请求在这一层就被 Nginx 接住，
+    # 根本到不了 Django。WhiteNoise 是"没 Nginx 时"的兜底，不是必须。
+    # ========================================================================
+    location /static/ {
+        alias /srv/crop-disease-system/backend/staticfiles/;
+        access_log off;
+        expires 30d;
+    }
+
+    # ========================================================================
+    # ⑦ 私有媒体：**必须回源给 Django 鉴权**（不能直发！）
+    # ------------------------------------------------------------------------
+    # 这四个前缀来自 api/media_sign.py 的 PRIVATE_PREFIXES：
+    #   assistant_uploads/   助手提问图片
+    #   detection_history/   识别历史图片
+    #   consult_images/      专家咨询配图
+    #   feedback_images/     意见反馈附图
+    #
+    # 应用侧规则（api/views_media.py 的 MediaView）：
+    #   · 优先认签名 URL（?sig=…&exp=…，HMAC + 过期时间，默认 1 小时）；
+    #   · 其次认登录态：本人或管理员才给，其余一律 404（不是 403 —— 避免泄露"路径存在"）。
+    #   签名只对"这一个路径 + 这一段时限"有效，所以可以安全地放进 <img src>。
+    #
+    # ⚠️ 这一段不能省。省掉后请求会落到 ⑧ 的 /media/ 直发 ——
+    #    任何人拿到 URL 就能看别人的叶片照片/反馈附图，而且**不会报任何错**，很难发现。
+    #
+    # 正则 location 的优先级高于普通前缀 /media/，所以书写顺序不影响正确性。
+    # 若代码里给 PRIVATE_PREFIXES 加了新目录，**这里要同步加**，否则那个目录直接公开。
+    # 查当前清单：grep -A8 'PRIVATE_PREFIXES' backend/api/media_sign.py
+    # ========================================================================
+    location ~ ^/media/(assistant_uploads|detection_history|consult_images|feedback_images)/ {
+        proxy_pass http://crop_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # 浏览器 <img> 带不了 Authorization，所以私有图靠 ?sig=&exp=（签名 URL）放行；
+        # 走 API 客户端时也可能带 Token —— 两种情况都由 Django 判断，Nginx 只管转发。
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # 鉴权结果不要进缓存
+        proxy_cache off;
+    }
+
+    # ========================================================================
+    # ⑧ 公开媒体：Nginx 直接按路径发文件
+    # ------------------------------------------------------------------------
+    # 「能不能看」由应用决定：能公开的目录（头像、新闻配图、识别上传原图、百科图）本身就是
+    # 公开文件，Nginx 只负责按路径把文件发出去 —— 不做鉴权，也不该做。
+    # 私有目录在 ⑦ 已经拦走了，这里只剩公开路径。
+    #
+    # 路径：MEDIA_ROOT = BASE_DIR / 'media'（settings.py）→
+    #       /srv/crop-disease-system/backend/media/
+    # ⚠️ 这个目录是**用户数据**，必须进备份（deploy/schedule 的 backend_backup 已包含）。
+    # ========================================================================
+    location /media/ {
+        alias /srv/crop-disease-system/backend/media/;
+        autoindex off;
+        access_log off;
+        # 文件名基本不变（上传时带随机串），可以让浏览器缓存几天
+        expires 7d;
+    }
+
+    # ========================================================================
+    # ⑨ 前端单页应用（SPA）
+    # ------------------------------------------------------------------------
+    # 前端是 vue-router 的 history 模式：/detection/history、/forum/post/12 这类地址
+    # 在服务器上**没有对应文件**，只在浏览器里由 JS 路由渲染。
+    # 不写 try_files 回退的话：从首页点进去能用，一刷新就 404 —— 用户第一反应是"网站挂了"。
+    #
+    # try_files 顺序：先找文件 → 再找目录 → 都没有就交给 index.html 让前端路由处理。
+    # ========================================================================
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 构建产物带内容 hash（index-_g0Z5FGP.js 这种）：内容变了文件名就变，
+    # 所以可以缓存一年且 immutable（浏览器连问都不问服务器）。
+    location /assets/ {
+        access_log off;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # index.html 是"入口壳"：它引用哪个 hash 的 JS 决定了用户拿到哪个版本。
+    # 把它缓存住 = 发版后用户还在跑旧壳（新 JS 根本不会被请求）。必须每次回源。
+    location = /index.html {
+        expires -1;                   # → Cache-Control: no-cache
+    }
+
+    # PWA 的 Service Worker（frontend/dist/sw.js，第 51 批）：**绝不能长缓存**。
+    # 浏览器对 sw.js 有自己的更新检查，但一个 Cache-Control: max-age=31536000 会让
+    # 用户长期停在旧 SW 上，表现是"发版后部分页面还是老样子，清缓存才好"。
+    location = /sw.js {
+        expires -1;
+    }
+
+    location = /manifest.webmanifest {
+        expires 1h;
+    }
+
+    # ========================================================================
+    # ⑩【可选】移动端 H5（mobile/dist）
+    # ------------------------------------------------------------------------
+    # 本项目有三端：桌面 web（frontend/dist）、移动 H5（mobile/dist）、uni-app。
+    # 如果也构建了 mobile/dist，取消注释即可挂到 /m/（与 docker-compose.yml 里
+    # `/usr/share/nginx/html-mobile` 的挂载对应）。
+    #
+    # ⚠️ 这一块**本次未实测**（本次只核对了 frontend/dist）：启用后请打开 /m/ 逐页点一遍，
+    #    确认产物里的资源路径没有按根路径写死。
+    #
+    # location /m/ {
+    #     alias /srv/crop-disease-system/mobile/dist/;
+    #     try_files $uri $uri/ /m/index.html;
+    # }
+    # ========================================================================
+
+    # ========================================================================
+    # ⑪【可选】"应用决定、Nginx 发文件"：X-Accel-Redirect
+    # ------------------------------------------------------------------------
+    # 好处：鉴权/审计留在 Django，真正的文件传输交给 Nginx（大文件、断点续传更稳，
+    #       也省一个 Python 进程）。
+    # 做法：Django 返回 `X-Accel-Redirect: /_protected/media/...`，Nginx 识别后内部改发文件。
+    # 为什么默认注释掉：api/views_media.py 现在直接返回 FileResponse，**不发这个头**，
+    #       照抄这段也不会有任何效果；等改成 X-Accel 模式时，再把 ⑦ 整段换成下面这个。
+    #
+    # location /_protected/ {
+    #     internal;                     # 只允许 Nginx 内部重定向访问；外部直接请求 404
+    #     alias /srv/crop-disease-system/backend/;
+    # }
+    # ========================================================================
+}
+
+# ============================================================================
+# 内网 http 部署（没有证书）怎么写 —— 公网请跳过这一段
+# ----------------------------------------------------------------------------
+# 1) 把 ② 里 443 server 块的 location 段整体搬进 ① 的 80 server 块，删掉 `return 301` 那行；
+# 2) 后端 .env 里设 DJANGO_SECURE_SSL_REDIRECT=False、DJANGO_COOKIE_SECURE=False
+#    （DEBUG=False 时这两项默认是"安全的那一侧"= True；内网 http 下会表现为
+#     登录不上 / 无限重定向，而且报错信息不会告诉你原因）。
+#
+# ============================================================================
+# 证书还没申请时（首次上线必经的一步，别等 Nginx 起不来才发现）
+# ----------------------------------------------------------------------------
+# ② 引用了 fullchain.pem / privkey.pem —— **文件不存在时 `nginx -t` 直接失败**
+# （cannot load certificate ... No such file or directory），整个 Nginx 都起不来，
+# 连带 ① 的 80 端口也没了，certbot 的 webroot 校验自然也没法做。
+# 首次上线按这个顺序：
+#   1) 先把 ② 整段注释掉，只留 ①：sudo mkdir -p /var/www/certbot
+#      sudo nginx -t && sudo systemctl reload nginx
+#   2) 申请证书（会自动用上 ① 里那条 acme-challenge location）：
+#      sudo certbot certonly --webroot -w /var/www/certbot -d example.com -d www.example.com
+#   3) 放开 ②，确认证书路径/域名对得上，再 sudo nginx -t && sudo systemctl reload nginx
+# 用云厂商/DNS 服务商签发的证书同理：把 .crt（含中间证书）+ .key 放到 ② 的路径即可。
+# ============================================================================
+# 部署后自检（照顺序抄）
+# ----------------------------------------------------------------------------
+#   sudo nginx -t
+#   curl -fsS http://127.0.0.1:8000/api/health/                 # 后端活着（绕过 Nginx）
+#   curl -fsS https://example.com/api/health/                   # Nginx → 后端
+#   curl -I  https://example.com/                               # 200，返回 index.html
+#   curl -I  https://example.com/detection/history              # 200，仍返回 index.html（SPA 回退）
+#   curl -I  https://example.com/static/admin/css/base.css      # 200（collectstatic 跑过）
+#   curl -I  https://example.com/admin/                         # 302 到登录页（不是前端 200）
+#   curl -N  -X POST https://example.com/api/assistant/ask/stream/ \
+#        -H 'Authorization: Token <你的 token>' \
+#        -H 'Content-Type: application/json' \
+#        -d '{"question":"番茄叶霉病怎么防治"}'                  # 应**逐块**打印，而不是最后一次性吐出
+#
+# ============================================================================
+# 常见状态码该往哪查（先分清是谁返回的）
+# ----------------------------------------------------------------------------
+#   413 → client_max_body_size 太小（Nginx 直接拒，Django 日志里什么都不会有）
+#   400 → Host 头没透传 / ALLOWED_HOSTS 没含这个域名
+#   502 → gunicorn 没起来或端口不对：systemctl status crop-disease && journalctl -u crop-disease
+#   504 → Nginx 的 proxy_read_timeout 比 gunicorn --timeout 短（识别/流式接口）
+#   404 但看到的是前端页面 → 该路径被 ⑨ 的 SPA 回退吃了，需要单独加 location
+#   403 但文件明明在 → Nginx worker 用户读不了；RHEL 系还要看 SELinux：
+#         chcon -R -t httpd_sys_content_t /srv/crop-disease-system/{frontend/dist,backend/media,backend/staticfiles}
+#         setsebool -P httpd_can_network_connect 1     # 允许 Nginx 反代到 127.0.0.1:8000
+# ============================================================================

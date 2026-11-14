@@ -1,0 +1,152 @@
+# ============================================================================
+# systemd 单元样例 —— Linux 生产环境（Debian / Ubuntu / RHEL 系列通用）
+# 仓库位置：deploy/systemd/crop-disease.service.example
+# 配套文件：deploy/nginx/crop-disease.conf.example、docs/生产部署样板.md
+# ----------------------------------------------------------------------------
+# ⚠️ **Windows 开发环境不要用这个**：Windows 没有 systemd。
+#    开发机上照旧用 run_debug_server.bat 或 `python manage.py runserver`；
+#    本文件只用于"Linux 服务器开机自启 + 崩溃自动拉起 gunicorn"。
+#
+# 安装：
+#   sudo useradd --system --home /srv/crop-disease-system --shell /usr/sbin/nologin crop
+#   sudo cp deploy/systemd/crop-disease.service.example /etc/systemd/system/crop-disease.service
+#   sudoedit /etc/systemd/system/crop-disease.service     # 改 User/Group/路径（占位处已标注）
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now crop-disease
+#   systemctl status crop-disease --no-pager
+#   journalctl -u crop-disease -f                          # 实时日志（journald，不需要额外配 rsyslog）
+#
+# 验证：
+#   curl -fsS http://127.0.0.1:8000/api/health/            # 期望 {"status": "ok", ...}
+#
+# 为什么后缀是 .example：systemd 只加载 /etc/systemd/system 下的 *.service，
+# 仓库里这份不会被任何东西自动启用；加 .example 是为了避免"拷了代码就以为装好了"。
+# ============================================================================
+[Unit]
+Description=Crop Disease System backend (Gunicorn + Django)
+# 等网络就绪再起（Redis / PostgreSQL 在别的机器上时尤其需要）
+After=network-online.target
+Wants=network-online.target
+
+# 本机同时跑 Redis / PostgreSQL 时，把服务名加进来（单元名按实际发行版改）：
+# After=redis-server.service postgresql.service
+# Wants=redis-server.service
+
+[Service]
+# gunicorn 在前台跑 master 进程，systemd 直接管它就是 —— 所以 Type=simple。
+# 不写 Type=notify：gunicorn 各版本对 sd_notify 的支持不一致，写错的表现是
+# 服务卡在 activating 直到超时，比 simple 更难排查。
+Type=simple
+
+# ⚠️ 按实际改：不要用 root 跑业务进程。
+#    用户不存在就先建（命令见文件头）。
+User=crop
+Group=crop
+
+# 必须是 backend/（manage.py 所在目录）：gunicorn 的 `crop_disease_backend.wsgi`
+# 以它为 sys.path 起点才能 import 到；换成项目根会让启动直接 ModuleNotFoundError。
+WorkingDirectory=/srv/crop-disease-system/backend
+
+# 环境变量。两件事要理解：
+#   1) 这里的变量是**真实环境变量**，优先于 backend/.env 里的同名项
+#      （settings.py 的 _load_env_file 只在 os.environ 没有这个键时才写入）。
+#      两边写的不一样时以 EnvironmentFile 为准 —— 排查"改了 .env 没生效"先想这条。
+#   2) 格式是纯 KEY=VALUE：不展开 $VAR，`#` 只有出现在行首才是注释。
+#      所以 .env 里 `DJANGO_BACKUP_DIR=/data/backups` 写原样即可，别加引号。
+EnvironmentFile=/srv/crop-disease-system/backend/.env
+
+# 让 Python 的 print/warning 不被缓冲，日志能立刻进 journald
+Environment=PYTHONUNBUFFERED=1
+
+# 写 media 文件时的 umask：022 → 644，Nginx 的 worker 用户（nginx/www-data）
+# 才读得到并直接发文件（目录本身要 755）。调成 077 的后果是"图片全 403"。
+UMask=0022
+
+# ── 启动命令 ────────────────────────────────────────────────────────────────
+# --workers 3          ：见文件末尾「worker 数与内存」，内存小于 4GB 请改 2。
+# --bind 127.0.0.1:8000：只监听本机，由 Nginx 反代。**不要**绑 0.0.0.0，
+#                        否则绕过 Nginx 也能直连 8000（TLS、限流、静态分发全部失效）。
+# --timeout 120        ：见文件末尾「为什么 120 必须大于 LLM 的 30s」。
+# 日志用 `-` = stdout/stderr → systemd 收进 journald（journalctl -u crop-disease）。
+ExecStart=/srv/crop-disease-system/venv/bin/gunicorn \
+    --bind 127.0.0.1:8000 \
+    --workers 3 \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
+    crop_disease_backend.wsgi:application
+
+# 想复用仓库里统一的那份配置（日志格式、max_requests、worker 内存调参）：
+# ExecStart=/srv/crop-disease-system/venv/bin/gunicorn -c gunicorn.conf.py crop_disease_backend.wsgi:application
+# ⚠️ 同一份 unit 里**只能启用一条 ExecStart**（systemd 在 Type=simple 下不接受重复的 ExecStart）：
+#    用下面这条就把上面那条注释掉。
+# ⚠️ 命令行参数会**覆盖**配置文件里的同名项：例如两条都写 --workers 3，
+#    就盖掉了 config 里的 2。仓库的 backend/gunicorn.conf.py 默认 workers=2、timeout=120
+#    （注释里写了"每 worker 一份 YOLO、约 700MB"的实测原因）。
+
+# 单机小规模部署，想把"先迁移、后起服务"也交给 systemd（多副本部署时不要这么做）：
+# ExecStartPre=/srv/crop-disease-system/venv/bin/python manage.py migrate --noinput
+# ExecStartPre=/srv/crop-disease-system/venv/bin/python manage.py collectstatic --noinput
+
+# gunicorn 的 HUP = 优雅重启（不丢正在处理的请求）：
+#   systemctl reload crop-disease   ← 发版用这个，比 restart 少一次 502
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# 崩溃自动拉起。用 always 而不是 on-failure：正常退出也拉起来（误 kill 能自愈）。
+Restart=always
+RestartSec=3
+
+# KillMode=mixed：停止时先只给 master 发 SIGTERM，让它把 worker 优雅收掉；
+# 超时后再对整组 SIGKILL。默认的 control-group 会同时 SIGTERM 所有进程，
+# 正在跑的流式回答/识别请求会被直接掐断。
+KillMode=mixed
+TimeoutStopSec=30
+
+# 每个请求一条连接，句柄别卡在默认的 1024
+LimitNOFILE=65535
+
+# 日志：显式落到 journald（默认就是，写出来是给"以为日志在文件里"的人看的）。
+# 查看：journalctl -u crop-disease -n 200 --no-pager
+StandardOutput=journal
+StandardError=journal
+# journalctl 里的名字（否则全显示成 python/gunicorn，多服务时混成一团）
+SyslogIdentifier=crop-disease
+
+[Install]
+WantedBy=multi-user.target
+
+# ============================================================================
+# 为什么 --timeout 120 必须大于 LLM 的 30 秒
+# ----------------------------------------------------------------------------
+# gunicorn 的 timeout 是"worker 沉默太久就杀掉重启"。同步 worker 从收到请求到
+# 返回响应全程占着同一个进程，所以 120 就是**单个请求**的硬上限。
+#
+# 助手的一次请求里不止"调模型"这一步：
+#   检索词条 → 拼上下文 → 调模型（settings.LLM_TIMEOUT 默认 30s）→
+#   把 token 逐块通过 SSE 吐给 Nginx。
+#
+# 如果把 timeout 也设成 30s（或更小）：模型在边界上慢慢返回时，
+# **worker 会先被 gunicorn 杀掉**，而不是应用自己超时降级 ——
+# 前端看到的是一条被掐断的连接（502 / 流中断），
+# 而不是设计好的"助手暂时不可用，先把词条原文给你"。
+# 120s 给足了"30s 模型超时 + 检索 + 首字等待 + 收尾"的余量；
+# 识别接口在 CPU 上跑 YOLO 也可能十几秒，同样吃这条 timeout。
+#
+# ⚠️ 反过来：120s 也是**流式回答的总时长上限**。超过 120s 的 SSE 会被杀，
+#    所以 Nginx 那边写 300s 只是"别比后端先断"，不代表能流 5 分钟。
+# ============================================================================
+# worker 数与内存（`--workers 3` 不是拍脑袋，但也不是通用真理）
+# ----------------------------------------------------------------------------
+# 本项目每个 worker 都会**各加载一份 YOLO 模型 + torch 运行时**，实测单进程常驻 ~700MB。
+#   3 个 worker ≈ 2GB+，还要留给数据库/缓存/系统。
+# 所以仓库自带的 backend/gunicorn.conf.py 默认是 **2**（源码注释里写了这个实测值）；
+# 这里按通用样板给 3，**内存小于 4GB 请改回 2** —— 否则会被 OOM killer 挑中，
+# 表现为"服务偶发重启、日志里却没有 Python 报错"。
+# 别照抄 `2*CPU+1`：那是没有重内存模型时的经验值。
+# ============================================================================
+# 明确不用这个文件的两类环境
+# ----------------------------------------------------------------------------
+#   · Windows 开发/演示：run_debug_server.bat 或 `python manage.py runserver`；
+#   · Docker：docker-compose.yml + backend/Dockerfile（容器里直接跑 gunicorn）。
+# 本文件只服务"Linux 单机 + Nginx 反代"这一种形态。
+# ============================================================================

@@ -24,7 +24,7 @@ LOG=/var/log/crop-disease
 40 3 * * * cd $APP && $PY manage.py health_snapshot >> $LOG/health.log 2>&1
 
 # 4) 每日清理孤儿图片（04:10）
-10 4 * * * cd $APP && $PY manage.py cleanup_media >> $LOG/media.log 2>&1
+10 4 * * * cd $APP && $PY manage.py prune_media >> $LOG/media.log 2>&1
 
 # 5) 每小时执行注销冷静期到期（整点后 5 分）
-5 * * * * cd $APP && $PY manage.py process_deletions >> $LOG/deletions.log 2>&1
+5 * * * * cd $APP && $PY manage.py purge_deletion_requests >> $LOG/deletions.log 2>&1

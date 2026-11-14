@@ -8,8 +8,8 @@
 | `backend_backup` | 每日 02:30 | 备份数据库与 media |
 | `backup_verify` | 每日 03:10 | 校验最新备份可解压、可读（备份没验证过 = 没备份） |
 | `health_snapshot` | 每日 03:40 | 记一条健康快照，管理端「14 天趋势」靠它；缺的那天会画灰格 |
-| `cleanup_media` | 每日 04:10 | 清理孤儿图片 |
-| `process_deletions` | 每小时 | 执行注销冷静期到期的账号 |
+| `prune_media` | 每日 04:10 | 清理孤儿图片 |
+| `purge_deletion_requests` | 每小时 | 执行注销冷静期到期的账号 |
 
 ## Windows
 
