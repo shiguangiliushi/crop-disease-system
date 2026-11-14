@@ -1219,7 +1219,9 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         
         if recent_comments >= 3:  # 限制每分钟最多3条评论
             raise serializers.ValidationError({
-                'detail': render_for(request, 'forum.rate_limited'),
+                # 第 374 批：这里原来写的是 `request`，而类里只有 `self.request` ——
+                # 于是**每分钟第 4 条评论**不是被友好限流，而是 NameError 500。
+                'detail': render_for(self.request, 'forum.rate_limited'),
                 'code': 'too_many_requests'
             })
             

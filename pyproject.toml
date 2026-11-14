@@ -1,0 +1,50 @@
+# Ruff 配置（第 374 批）
+#
+# 为什么现在才加：后端一直没有静态检查 —— 前端有 eslint/oxlint + 6 个自定义检查脚本，
+# 后端只有 `manage.py check`（它只管 Django 配置，不查未定义名字、未用变量、裸 except）。
+#
+# 选规则的原则：**只选真 bug 类，不选风格类**。
+# 这个项目已经有统一的写法习惯，一次引入 import 排序/引号风格会产生几百条噪声，
+# 结果必然是被 `--fix` 一把梭，反而引入风险。
+#
+# 用法：
+#   python -m ruff check backend/api          # 检查
+#   python -m ruff check backend/api --statistics   # 按规则统计
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+exclude = [
+    ".git",
+    "backend/venv",
+    "backend/staticfiles",
+    "**/migrations/**",
+    "node_modules",
+    "dist",
+    "dsh-shots",
+    "backups",
+]
+
+[tool.ruff.lint]
+# E9   语法级错误（未定义名字、非法语法）
+# F    pyflakes：未定义/未使用、重复定义、f-string 缺参数
+# B    bugbear：可变默认值、裸 except 元组、循环内闭包
+# S105/S106/S107  硬编码密码/密钥（安全）
+select = ["E9", "F", "B", "S105", "S106", "S107"]
+
+ignore = [
+    # 未使用导入**不自动修**：本项目有大量为"注册信号 / 兼容导入 / 类型标注"而存在的导入，
+    # 一刀切删掉会静默改变运行时行为（Django 的 app 加载、receiver 注册都靠导入副作用）。
+    "F401",
+    # 裸 except Exception 带 noqa 注释的写法已在本项目统一使用，交给代码评审。
+    "BLE001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里大量 `with self.assertRaises(...)` / 故意触发异常，B 类规则噪声高
+"**/tests.py" = ["B", "S"]
+"**/tests/**" = ["B", "S"]
+# 设置文件里的默认密钥是**有意保留的开发默认值**（生产由启动自检拦截）
+"**/settings.py" = ["S105", "S106"]
+"**/management/commands/**" = ["S"]

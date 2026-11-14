@@ -28,6 +28,7 @@ from rest_framework.parsers import MultiPartParser, FormParser  # 第23批：头
 # 第 231 批：改密码/停用时要吊销**所有设备**的凭证（含新的 DeviceToken）；
 # 轮换后给当前设备补发一张 —— 不再直接用 DRF 的 Token
 from .models_token import DeviceToken, device_of, revoke_all
+from django.db import IntegrityError  # 第 374 批
 from django.contrib.auth import get_user_model  # 导入获取用户模型的函数
 from .audit import log_admin_action  # 第 146 批：管理操作日志
 from django.contrib.auth import logout  # 第 95 批：注销账号时清掉当前会话

@@ -441,6 +441,8 @@ class Command(BaseCommand):
                 age_hours = None
                 if created:
                     from datetime import datetime
+
+                    from django.utils import timezone  # 第 374 批：原来漏了，跑到这行会 NameError
                     try:
                         parsed = datetime.fromisoformat(created.replace('Z', '+00:00'))
                         age_hours = (timezone.now() - parsed).total_seconds() / 3600

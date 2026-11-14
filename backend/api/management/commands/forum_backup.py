@@ -19,6 +19,7 @@
 import os
 import json
 from datetime import datetime
+from django.utils import timezone  # 第 374 批：原来漏了，用到时会 NameError
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.db import transaction
