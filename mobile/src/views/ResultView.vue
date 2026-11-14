@@ -221,6 +221,12 @@
             </div>
           </div>
 
+          <!-- 第 376 批：隐私提示 + 开关（关掉后只返回词条原文，不调用外部模型） -->
+          <div class="ask-privacy">
+            <span class="ask-privacy-text">{{ t('assistantAsk.privacyNotice') }}</span>
+            <van-switch v-model="allowLlm" size="20px" />
+          </div>
+
           <div class="ask-sheet-input">
             <van-field
               v-model="askDraft"
@@ -265,7 +271,7 @@
  *   · 从识别记录点进来 → /result/:id，走接口取详情
  * 两条路的数据都被 utils/detectionResult.js 整形过，所以模板只认一种结构。
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { showFailToast, showImagePreview, showSuccessToast } from 'vant';
 import { fetchHistoryDetail } from '@/api/history';
@@ -306,6 +312,30 @@ const askCitations = ref([]);
 const askRelated = ref([]); // 第 375 批：同作物其他病害
 const askLoading = ref(false);
 
+/**
+ * 第 376 批：隐私开关 —— 是否允许把问题发送到外部 AI 模型。
+ *
+ * 默认**开**（关掉后只能拿到词条原文，观感是"答非所问"），但"不告知就外发"
+ * 不合适，所以输入区上方常驻提示 + 开关。选择存 localStorage
+ * `assistant_allow_llm`（'0' = 关），与桌面端共用同一个 key；
+ * 关闭后后端走 `user_opt_out` 降级，不产生任何外部请求。
+ */
+function readAllowLlm() {
+  try {
+    return localStorage.getItem('assistant_allow_llm') !== '0';
+  } catch {
+    return true; // 隐私模式下 localStorage 不可用：保持默认开
+  }
+}
+const allowLlm = ref(readAllowLlm());
+watch(allowLlm, (value) => {
+  try {
+    localStorage.setItem('assistant_allow_llm', value ? '1' : '0');
+  } catch {
+    /* 存不了就算了，本次会话仍生效 */
+  }
+});
+
 function openAsk() {
   askVisible.value = true;
   if (!askedQuestion.value && result.value?.disease?.name) {
@@ -333,6 +363,7 @@ async function submitAsk() {
     const data = await askAssistant({
       question,
       pestIdentifier: result.value?.identifier || result.value?.pestIdentifier || '',
+      allowLlm: allowLlm.value,  // 第 376 批：隐私开关关掉时后端只返回词条原文
     });
     askAnswer.value = data.answer || t('assistantAsk.failed');
     askCitations.value = data.citations || [];
@@ -691,6 +722,25 @@ onMounted(async () => {
   color: #8b9a91;
   font-size: 13px;
   padding: 8px 0;
+}
+
+/* 第 376 批：隐私提示 + 开关（一行灰字 + 右侧开关，紧凑，不挤压输入框） */
+.ask-privacy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f6f8f7;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a8f8c;
+}
+
+.ask-privacy-text {
+  flex: 1;
 }
 
 .ask-sheet-input {

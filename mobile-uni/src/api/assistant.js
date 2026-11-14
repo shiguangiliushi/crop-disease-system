@@ -10,11 +10,15 @@
  */
 import { request } from '../utils/request'
 
-export async function askAssistant({ question, pestIdentifier = '' }) {
+export async function askAssistant({ question, pestIdentifier = '', allowLlm = true }) {
   const body = await request({
     url: '/assistant/ask/',
     method: 'POST',
-    data: { question, pest_identifier: pestIdentifier || '' },
+    data: {
+      question,
+      pest_identifier: pestIdentifier || '',
+      allow_llm: allowLlm !== false,  // 第 382 批：与桌面/Vant 端一致的隐私开关
+    },
   })
   return {
     answer: body.answer || '',
@@ -22,6 +26,8 @@ export async function askAssistant({ question, pestIdentifier = '' }) {
     degraded: Boolean(body.degraded),
     degradeReason: body.degrade_reason || '',
     sessionId: body.session_id || '',
-    related: data.related || [],  // 第 377 批：移动端也要拿到同作物其他病害
+    // 第 382 批：原来写的是 `data.related`，而本函数的变量名是 `body` ——
+    // 每次追问都会抛 ReferenceError（Vant 端同一处已由子任务发现并修正）。
+    related: body.related || [],
   }
 }

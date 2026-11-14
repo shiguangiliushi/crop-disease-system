@@ -72,7 +72,7 @@
            列表只有 fetchNews() 一个数据源，newsList 在请求返回前恒为空，
            因此这里就是"首屏加载中"的完整画面；加载完成后由下方真实列表 / 空态接管。 -->
       <div
-        v-if="loading && newsList.length === 0"
+        v-if="listLoading && newsList.length === 0"
         class="news-skeleton"
         role="status"
         :aria-label="t('common.loading')"
@@ -190,7 +190,7 @@
           </el-card>
         </div>
 
-        <el-empty v-if="!loading && newsList.length === 0" :description="t('news.noNews')" />
+        <el-empty v-if="!listLoading && newsList.length === 0" :description="t('news.noNews')" />
 
         <div class="pagination" v-if="total > 0">
           <el-pagination
@@ -397,7 +397,8 @@
           </span>
           <span>
             <el-button @click="showAddDialog = false">{{ t('common.cancel') }}</el-button>
-            <el-button type="primary" @click="submitNews">
+            <!-- 第 380 批：提交有自己的状态，保存中禁用按钮，且不影响列表骨架屏 -->
+            <el-button type="primary" :loading="submitLoading" @click="submitNews">
               <i class="fas fa-check"></i>
               {{ editingNews ? t('news.saveChanges') : t('news.createNews') }}
             </el-button>
@@ -470,7 +471,17 @@ const isAdmin = computed(() => authStore.isAdmin);
 
 // 新闻列表相关
 const newsList = ref([]);
-const loading = ref(false);
+// 第 380 批：`loading` 原来被**三处复用** —— 列表加载、详情加载、表单提交。
+// 并发 fetchNews（加载中切筛选/翻页/搜索）时，**先返回的那一次**在 finally 里
+// 把 loading 置 false，后发的请求还在途、页面却已经认为"加载完成"：
+// 骨架屏提前消失、空态"暂无新闻"提前冒出来。这里拆成三个语义独立的状态。
+const listLoading = ref(false);    // 列表加载：骨架屏 / 空态的唯一依据
+const detailLoading = ref(false);  // 详情加载：编辑前拉单条，绝不碰列表状态
+const submitLoading = ref(false);  // 表单提交：保存中禁用按钮，同样不碰列表状态
+// 请求序号：每次 fetchNews 领一个号，只有"仍是最新号"的请求才允许落状态。
+// 只拆状态还不够 —— 两个 fetchNews 并发时改的是同一个 listLoading，
+// 序号才能保证先返回的旧请求不替还在途的新请求收尾。
+let listRequestSeq = 0;
 const currentPage = ref(1);
 const pageSize = ref(10);
 const total = ref(0);
@@ -610,7 +621,7 @@ const handleCurrentChange = (val) => {
 // 加载新闻详情
 const loadNewsDetail = async (id) => {
   try {
-    loading.value = true;
+    detailLoading.value = true;
     // 注意：vite.config.ts 中已经配置了 /api 代理，所以这里不需要再加 /api
     const url = `/news/${id}/`;
 
@@ -684,14 +695,16 @@ const loadNewsDetail = async (id) => {
     // router.push({ name: 'news' });
     throw error; // 重新抛出错误，让调用者处理
   } finally {
-    loading.value = false;
+    detailLoading.value = false;
   }
 };
 
 // 获取新闻列表
 const fetchNews = async () => {
+  // 第 380 批：发请求前先领序号（见 listRequestSeq 的说明）
+  const requestId = ++listRequestSeq;
   try {
-    loading.value = true;
+    listLoading.value = true;
 
     // 构建查询参数
     const params = {
@@ -744,15 +757,19 @@ const fetchNews = async () => {
 
     
     if (!response.ok) {
-      let errorData;
+      // 第 380 批：响应体**只能读一次**。原来先 `response.json()`，解析失败再在
+      // catch 里 `response.text()` —— 同一个 body 读第二遍时浏览器直接抛
+      // `Failed to execute 'text' on 'Response': body stream already read`，
+      // 把真正的错误信息盖掉（后端返回非 JSON 错误页时必现）。
+      // 现在只读一次文本，再自己尝试解析：JSON 错误体拿到对象，非 JSON 拿到原文。
+      const raw = await response.text();
+      let errorData = raw;
       try {
-        errorData = await response.json();
-        console.error('Error response data:', errorData);
+        errorData = raw ? JSON.parse(raw) : null;
       } catch (e) {
-        console.error('Failed to parse error response:', e);
-        errorData = await response.text();
-        console.error('Raw error response:', errorData);
+        console.error('Failed to parse error response as JSON, keep raw text:', e);
       }
+      console.error('Error response data:', errorData);
       
       const error = new Error(`HTTP error! status: ${response.status}`);
       error.response = {
@@ -764,6 +781,12 @@ const fetchNews = async () => {
     }
     
     const data = await response.json();
+
+    // 旧请求（已被更新的筛选/翻页/搜索取代）迟到：整包丢弃 ——
+    // 既不覆盖新请求的列表，也不替还在途的新请求收掉骨架屏。
+    if (requestId !== listRequestSeq) {
+      return data;
+    }
 
     // 处理响应数据
     if (data.results) {
@@ -781,6 +804,12 @@ const fetchNews = async () => {
       message: error.message,
       response: error.response
     });
+
+    // 旧请求的错误不打扰用户：不弹 toast、也不清空当前列表
+    // （并发时会连弹好几个错误框，还会把新请求正在用的数据清掉）
+    if (requestId !== listRequestSeq) {
+      return null;
+    }
 
     newsList.value = [];
     total.value = 0;
@@ -807,7 +836,11 @@ const fetchNews = async () => {
     // 重新抛出错误，以便调用方可以处理
     throw error;
   } finally {
-    loading.value = false;
+    // 只有"最新请求"有权收尾：旧请求结束时新请求可能还在途，
+    // 这时置 false 就会出现"页面说加载完了、其实还在转"。
+    if (requestId === listRequestSeq) {
+      listLoading.value = false;
+    }
   }
 };
 
@@ -820,7 +853,7 @@ const submitNews = async () => {
     return;
   }
 
-  loading.value = true;
+  submitLoading.value = true;
   try {
     // 只提交后端认识的字段，并且复用「新闻管理」页同一套组装逻辑（api/news.js）。
     //
@@ -866,7 +899,7 @@ const submitNews = async () => {
     // 这里复用统一文案工具，把后端返回的字段错误展示出来。
     ElMessage.error(formatNewsError(error, t('msg.savingFailedRetry')));
   } finally {
-    loading.value = false;
+    submitLoading.value = false;
   }
 };
 
