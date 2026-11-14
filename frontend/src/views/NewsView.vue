@@ -111,9 +111,11 @@
                   style="width: 100%; height: 200px; cursor: pointer;"
                   @click="$event.stopPropagation()"
                 >
-                  <div slot="error" class="image-slot">
-                    <i class="fas fa-image"></i>
-                  </div>
+                  <template #error>
+                    <div class="image-slot">
+                      <i class="fas fa-image"></i>
+                    </div>
+                  </template>
                 </el-image>
                 <div v-else class="no-image">
                   <el-icon><Picture /></el-icon>
@@ -651,7 +653,7 @@ const loadNewsDetail = async (id) => {
     }
 
     // 处理图片URL
-    let imageUrl = data.image || data.image_url;
+    const imageUrl = data.image || data.image_url;
 
     // 更新表单数据
     newsForm.value = {
