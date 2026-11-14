@@ -1,27 +1,20 @@
-"""drf-spectacular 扩展：让**自定义认证类**在 schema 里有对应的 securityScheme（第 386 批）。
+"""drf-spectacular 扩展（第 386 批）。
 
-## 为什么需要这个文件
+本模块只做一件事：`DeviceTokenAuthenticationScheme` —— 让自定义认证类在 schema 里有
+对应的 securityScheme（否则每遇到一次就记一条 warning）。
 
-`DeviceTokenAuthentication` 用的是与 DRF 自带 `TokenAuthentication` **完全相同的
-header 形态**（`Authorization: Token <key>`），但 drf-spectacular 不认识这个类，
-于是每遇到一次就记一条 warning：
+## 为什么需要 TolerantAutoSchema
 
-    unable to guess serializer / could not resolve authenticator
-    class DeviceTokenAuthentication(authentication.BaseAuthentication)
+项目里有 80 个手写 `APIView`（管理端列表、助手问答、日历、积分……），它们没有
+`serializer_class`，drf-spectacular 遇到就记一条 error 并**跳过整条 path**：
 
-本项目的 schema 生成有 **93 条**这类 warning（去重后也占大头）。
-注册一个扩展后：schema 里多出一个 `deviceTokenAuth` scheme，warning 归零。
+    Error [AdminAuditLogListView]: unable to guess serializer.
 
-## 为什么不是直接删掉自定义类
+结果：`/api/docs/` 里看不到这些接口 —— 文档"看起来很小"，实际系统有一半接口没写进去。
 
-因为它是**主认证路径**（每设备一张 token，手机与桌面可同时在线）；
-DRF 的 `TokenAuthentication` 只是兼容老客户端。两者必须共存，见
-`api/authentication.py` 开头的说明。
-
-## 生效方式
-
-drf-spectacular 在生成 schema 时会**导入 `extensions` 模块**里声明的子类；
-这里通过 `apps.py` 的 `ready()` 显式导入一次，确保被注册（不依赖 import 顺序）。
+逐个补 `@extend_schema` 当然更准确，但那是 80 个视图的工作量，必须分批做。
+在此之前，**"接口存在、请求/响应是任意 JSON"** 远比"接口完全不存在"有用：
+前端照着能看到 URL、方法、权限、参数；准确性后续按批提升。
 """
 from __future__ import annotations
 
