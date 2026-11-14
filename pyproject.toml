@@ -10,6 +10,13 @@
 # 用法：
 #   python -m ruff check backend/api          # 检查
 #   python -m ruff check backend/api --statistics   # 按规则统计
+#
+# 第 397 批决定：**不启用 ruff format**。
+# 实测 `ruff format --check backend/api` 会重排 119 个文件（几千行纯格式 diff），
+# 后果是 git blame 与历史对比全部失效，收益却只是缩进/引号更"标准"。
+# 风险明显大于收益，故只保留 lint。
+# 若将来要统一格式：应在**独立的"只做格式化"提交**里一次完成，
+# 并把该提交 SHA 写进 .git-blame-ignore-revs，让 git blame 自动跳过它。
 
 [tool.ruff]
 target-version = "py311"
