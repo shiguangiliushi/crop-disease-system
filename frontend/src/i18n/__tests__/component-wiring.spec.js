@@ -43,7 +43,11 @@ function walk(dir) {
 /** 取出 <template>…</template> 主体 */
 function templateOf(source) {
   const m = source.match(/<template>([\s\S]*)<\/template>/);
-  return m ? m[1] : '';
+  if (!m) return '';
+  // 第 391 批：先去掉 HTML 注释再扫描。
+  // 组件 docstring 里常写用法示例（如 `<EmptyState :description="t('history.empty')" />`），
+  // 那是**注释**、不是真实模板 —— 不剥离会误报"模板用了 t() 但脚本没接 i18n"。
+  return m[1].replace(/<!--[\s\S]*?-->/g, '');
 }
 
 /** 模板里所有 v-for / slot 作用域引入的局部名，需要排除 */
