@@ -292,6 +292,10 @@ class ConversationDetailView(APIView):
             'results': serialized,
         })
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         me = request.user
         other, error = self._get_other(user_id, me)
@@ -350,6 +354,9 @@ class ConversationDetailView(APIView):
         logger.info('私信: %s → %s', me.id, other.id)
         return Response(_serialize(message, request), status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, user_id):
         """
         删除与某人的整个会话（第 114 批）。

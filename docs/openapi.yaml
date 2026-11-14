@@ -904,6 +904,28 @@ paths:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '204':
           description: No response body
   /api/admin/users/{user_id}/reset-link/:
@@ -1960,6 +1982,28 @@ paths:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '204':
           description: No response body
   /api/assistant/sessions/{id}/escalate/:
@@ -2588,11 +2632,47 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
     delete:
       operationId: api_consult_experts_destroy
@@ -2611,6 +2691,28 @@ paths:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '204':
           description: No response body
   /api/consult/experts/{user_id}/:
@@ -2678,11 +2780,47 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
     delete:
       operationId: api_consult_experts_destroy_2
@@ -2706,6 +2844,28 @@ paths:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '204':
           description: No response body
   /api/consult/questions/:
@@ -2763,11 +2923,47 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
   /api/consult/questions/{id}/:
     get:
@@ -2834,11 +3030,47 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
   /api/consult/questions/{id}/answers/:
     post:
@@ -6030,11 +6262,47 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
     delete:
       operationId: api_messages_with_destroy
@@ -6068,6 +6336,28 @@ paths:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '204':
           description: No response body
   /api/news/:
@@ -7456,11 +7746,47 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
   /api/reports/{id}/handle/:
     post:
@@ -7973,12 +8299,48 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
     patch:
       operationId: api_users_partial_update
@@ -8004,12 +8366,48 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '204':
           description: No response body
   /api/users/{user_id}/avatar/:
     post:
@@ -8106,6 +8504,28 @@ paths:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '204':
           description: No response body
   /api/users/{user_id}/comments/:

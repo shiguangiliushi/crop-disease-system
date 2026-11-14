@@ -210,6 +210,9 @@ class AssistantSessionDetailView(APIView):
             ],
         })
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, pk):
         session = self._get(request, pk)
         if session is None:

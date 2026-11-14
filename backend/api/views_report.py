@@ -156,6 +156,10 @@ class ReportViewSet(APIView):
         })
 
     # ---------- 提交 ----------
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         target_type = (request.data.get('target_type') or '').strip()
         reason = (request.data.get('reason') or 'other').strip()

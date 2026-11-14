@@ -326,6 +326,10 @@ class UserProfileView(APIView):  # 定义用户资料视图类
             serializer = UserPublicProfileSerializer(user, context={'request': request})
         return Response(serializer.data)  # 返回序列化后的数据
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def patch(self, request, user_id):  # 修改资料
         if not request.user or not request.user.is_authenticated:
             return Response({'detail': '请先登录'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -340,6 +344,10 @@ class UserProfileView(APIView):  # 定义用户资料视图类
 
         return Response(UserProfileSerializer(user, context={'request': request}).data)
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def put(self, request, user_id):  # 与 PATCH 行为一致（前端统一用 PATCH）
         return self.patch(request, user_id)
 
@@ -431,6 +439,9 @@ class UserAvatarView(APIView):
             status=status.HTTP_200_OK,
         )
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, user_id):
         target, denied = self._resolve_target(request, user_id)
         if denied is not None:
@@ -1019,6 +1030,9 @@ class AdminUserDetailView(APIView):
         user = get_object_or_404(_admin_user_queryset(), pk=user_id)
         return Response(AdminUserSerializer(user, context={'request': request}).data)
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, user_id):
         """删除（软删除）一个用户 —— 三道护栏见 `_check_delete_allowed`（批量删除共用）"""
         target = get_object_or_404(User, pk=user_id)

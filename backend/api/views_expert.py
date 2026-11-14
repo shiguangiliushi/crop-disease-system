@@ -212,6 +212,10 @@ class QuestionListView(APIView):
             'results': [_serialize_question(row, request) for row in rows],
         })
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         title = (request.data.get('title') or '').strip()
         content = (request.data.get('content') or '').strip()
@@ -312,6 +316,10 @@ class QuestionDetailView(APIView):
 
         return Response(_serialize_question(question, request, with_answers=True))
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, pk):
         """关闭问题（提问者本人或管理员）"""
         question = ConsultQuestion.objects.filter(pk=pk).first()
@@ -452,6 +460,10 @@ class ExpertListView(APIView):
         # 管理员也算可答疑的人，但列表只展示被正式授予的专家（口径清楚）
         return Response({'count': len(data), 'results': data})
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         if not _can_admin_users(request.user):
             return Response({'detail': '只有管理员可以授予专家身份'}, status=status.HTTP_403_FORBIDDEN)
@@ -482,6 +494,9 @@ class ExpertListView(APIView):
             logger.exception('通知新专家失败 user=%s', user_id)
         return Response({'detail': '已授予专家身份', 'user': _user_brief(user)}, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, user_id):
         if not _can_admin_users(request.user):
             return Response({'detail': '只有管理员可以取消专家身份'}, status=status.HTTP_403_FORBIDDEN)
