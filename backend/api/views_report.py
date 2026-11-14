@@ -24,6 +24,8 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q  # 第 124 批：举报通知收件人按完整管理员口径筛
 from django.utils import timezone
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 # 第 124 批：口径统一收口；第 189 批起举报按**三层**分权（见 _can_handle_reports 的说明）：
 #   看自己的举报 = 任何登录用户；看别人的举报并处置 = review/forum 模块；
 #   看举报人身份 + 同时下架内容 = 仅全权管理员。
@@ -117,6 +119,9 @@ class ReportViewSet(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     # ---------- 列表 ----------
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         queryset = Report.objects.select_related('reporter', 'handler', 'post', 'comment', 'target_user')
 
@@ -257,6 +262,10 @@ class ReportHandleView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, pk):
         if not _can_handle_reports(request.user):
             return Response({'detail': '只有内容编辑员或管理员可以处理举报'},

@@ -38,6 +38,8 @@ from django.db.models import Avg, Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -332,6 +334,9 @@ class AdminAssistantStatsView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         if not is_full_admin(request.user):
             return Response(

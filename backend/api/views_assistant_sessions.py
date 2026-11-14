@@ -17,6 +17,8 @@ import logging
 
 from django.db.models import Count, Max
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -89,6 +91,9 @@ class AssistantSessionListView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         try:
             page = max(1, int(request.query_params.get('page', 1)))
@@ -148,6 +153,9 @@ class AssistantSessionDetailView(APIView):
         # 只允许访问自己的会话；别人的一律 404（不泄漏存在性）
         return AssistantSession.objects.filter(pk=pk, user=request.user).select_related('pest').first()
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, pk):
         session = self._get(request, pk)
         if session is None:

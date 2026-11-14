@@ -20,6 +20,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import permissions, viewsets
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 # 第 124 批：能力判定统一收口（公告 = BROADCAST，信息编辑员不可）
 from .capabilities import CAP_BROADCAST, IsBroadcastManager, has_capability
 from rest_framework.decorators import action
@@ -188,6 +190,9 @@ class AnnouncementLatestView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         announcement = (
             Announcement.objects

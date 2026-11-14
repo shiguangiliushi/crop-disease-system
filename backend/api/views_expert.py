@@ -18,6 +18,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 # 第 124 批：统一的能力/全权管理员判定（本文件原来自己抄了一份管理员判定）
 from .capabilities import CAP_USER_ADMIN, has_capability, is_full_admin
 from rest_framework.response import Response
@@ -162,6 +164,9 @@ class QuestionListView(APIView):
     """提问列表 / 发起提问"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         queryset = ConsultQuestion.objects.select_related('asker', 'asker__expert_profile')
 
@@ -288,6 +293,9 @@ class QuestionDetailView(APIView):
     """提问详情（浏览数 +1）/ 关闭问题"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, pk):
         question = (
             ConsultQuestion.objects
@@ -322,6 +330,10 @@ class AnswerCreateView(APIView):
     """作答（仅专家或管理员）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, pk):
         question = ConsultQuestion.objects.select_related('asker').filter(pk=pk).first()
         if not question:
@@ -372,6 +384,10 @@ class AnswerAcceptView(APIView):
     """采纳回答（仅提问者本人）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, pk):
         answer = ConsultAnswer.objects.select_related('question', 'author').filter(pk=pk).first()
         if not answer:
@@ -416,6 +432,9 @@ class ExpertListView(APIView):
     """专家列表 / 授予或取消专家（仅管理员）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         profiles = ExpertProfile.objects.select_related('user').filter(is_active=True)
         data = []

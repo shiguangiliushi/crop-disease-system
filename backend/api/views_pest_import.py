@@ -23,6 +23,8 @@ import logging
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 # 第 124 批：统一的能力判定（本文件原来自己抄了一份管理员判定）
 from .capabilities import MODULE_PESTS, has_content_module
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -79,6 +81,9 @@ class PestImportTemplateView(APIView):
     """下载导入模板（仅管理员）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         if not _can_import_pests(request.user):
             return Response({'detail': '只有管理员可以下载导入模板'}, status=403)
@@ -103,6 +108,10 @@ class PestImportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         if not _can_import_pests(request.user):
             return Response({'detail': '只有管理员可以批量导入病害'}, status=403)

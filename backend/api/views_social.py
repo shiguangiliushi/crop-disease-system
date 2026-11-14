@@ -15,6 +15,8 @@ import logging
 from django.contrib.auth import get_user_model
 from django.db.models import Count
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -49,6 +51,9 @@ class FollowListView(APIView):
 
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, user_id=None, direction='followers'):
         # `/api/users/me/following/` 只传 direction（没有 user_id）→ 用当前登录用户
         if user_id is None:
@@ -103,6 +108,10 @@ class FollowToggleView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         try:
             target = User.objects.get(pk=user_id)
@@ -163,6 +172,9 @@ class MyFollowingStatsView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         following = Follow.objects.filter(follower=request.user).count()
         followers = Follow.objects.filter(following=request.user).count()
@@ -177,6 +189,9 @@ class FollowSuggestionView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         queryset = User.objects.filter(is_active=True)
         if request.user.is_authenticated:
@@ -235,6 +250,9 @@ class UserSearchView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         keyword = (request.query_params.get('q') or '').strip()
 

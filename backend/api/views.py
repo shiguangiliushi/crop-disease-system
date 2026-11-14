@@ -78,6 +78,8 @@ from reportlab.platypus import (
     PageBreak, Image as ReportLabImage
 )
 from rest_framework import status, viewsets, permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.authtoken.models import Token
 # 第 231 批：每设备一张登录凭证（手机与桌面可同时在线）
 from .models_token import DeviceToken, device_of, revoke_all
@@ -180,6 +182,9 @@ class CaptchaView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'captcha'
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         return Response(captcha.issue())
 
@@ -190,6 +195,10 @@ class RegisterView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'register'
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         # 第 233 批：先过验证码，再进序列化器。
         # 顺序很重要：序列化器的错误信息（"用户名已存在"等）不该在**没通过人机校验**时
@@ -229,6 +238,9 @@ class StatisticsView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         # 获取当前用户
         user = request.user
@@ -462,6 +474,9 @@ class CheckAuthView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         user = request.user
         return Response({
@@ -493,6 +508,10 @@ class LogoutView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         # 清除**当前这张**凭证（第 231 批：不再是"这个人的所有凭证"）。
         # `request.auth` 可能来自 DeviceToken（新）或 DRF Token（兼容旧客户端）。
@@ -826,6 +845,10 @@ class DetectView(APIView):
     parser_classes = (MultiPartParser, FormParser)
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, format=None):
         # 检查是否有文件被上传
         if 'image' not in request.FILES:
@@ -1205,6 +1228,9 @@ class PreventionDataView(APIView):
         'MONITORING': 'Monitoring',
     }
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, format=None):
         try:
             # 获取查询参数
@@ -2394,6 +2420,10 @@ class ImageUploadView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         image_file = request.FILES.get('image') or request.FILES.get('file')
 
@@ -2427,6 +2457,9 @@ class DetectionHistoryClearView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, *args, **kwargs):
         user = request.user
         is_admin_user = has_capability(user, CAP_USER_ADMIN)
@@ -2479,6 +2512,9 @@ class PestTypesView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, format=None):
         try:
             # 获取查询参数

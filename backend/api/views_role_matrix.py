@@ -11,6 +11,8 @@
 数据**不在这里重写**：直接调 `api/role_matrix.matrix_payload()`（与自查命令同一份）。
 """
 from rest_framework import permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -28,6 +30,9 @@ class AdminRoleMatrixView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         if not has_capability(request.user, CAP_USER_ADMIN):
             return Response({'detail': '只有用户管理员可以查看权限矩阵'},

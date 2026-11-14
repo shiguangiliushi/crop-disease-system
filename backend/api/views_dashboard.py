@@ -30,6 +30,8 @@ from django.db.models import Count, Q
 from django.db.models.functions import TruncDay
 from django.utils import timezone
 from rest_framework import permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 # 第 124 批：能力判定统一收口（看板 = CONTENT 只读；样本统计 = BROADCAST）
 from .capabilities import CAP_BROADCAST, CAP_CONTENT, has_capability, is_full_admin
 from rest_framework.response import Response
@@ -107,6 +109,9 @@ class AdminFeedbackDatasetStatsView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         if not _can_view_dataset_stats(request.user):
             return Response({'detail': '只有管理员可以查看样本统计'}, status=403)
@@ -172,6 +177,9 @@ class AdminDashboardView(APIView):
     """管理端数据看板（仅管理员）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         if not _can_view_dashboard(request.user):
             return Response({'detail': '只有管理员可以查看数据看板'}, status=403)

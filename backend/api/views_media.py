@@ -25,6 +25,8 @@ from __future__ import annotations
 from django.http import Http404, FileResponse
 from django.views.static import serve as media_serve
 from rest_framework.permissions import AllowAny
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.views import APIView
 
 
@@ -47,6 +49,9 @@ class MediaView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, path: str):
         from django.conf import settings
 

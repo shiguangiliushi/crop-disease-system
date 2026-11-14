@@ -40,6 +40,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -127,6 +129,9 @@ class AdminDetectionListView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         denied = _reject_non_user_admin(request, '查看识别记录')
         if denied:
@@ -234,6 +239,9 @@ class AdminDetectionDeleteView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, pk):
         if not is_full_admin(request.user):
             return Response({'detail': '只有管理员可以删除识别记录'},

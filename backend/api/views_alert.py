@@ -16,6 +16,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 # 第 124 批：统一的能力判定（本文件原来自己抄了一份管理员判定）
 from .capabilities import CAP_BROADCAST, has_capability
 from rest_framework.response import Response
@@ -76,6 +78,9 @@ class AlertListView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         try:
             days = max(3, min(30, int(request.query_params.get('days', DEFAULT_DAYS))))
@@ -118,6 +123,10 @@ class AlertNotifyView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         if not _can_push_alerts(request.user):
             return Response({'detail': '只有管理员可以推送预警'}, status=403)

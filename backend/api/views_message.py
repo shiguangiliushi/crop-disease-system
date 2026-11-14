@@ -46,6 +46,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -131,6 +133,9 @@ class ConversationListView(APIView):
     """我的会话列表（按最后一条消息时间倒序）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         me = request.user
         # 与我相关、且我没有删除的消息
@@ -191,6 +196,9 @@ class ConversationDetailView(APIView):
             .select_related('sender', 'recipient')
         )
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, user_id):
         me = request.user
         other, error = self._get_other(user_id, me)
@@ -379,6 +387,9 @@ class MessageUnreadCountView(APIView):
     """我的未读私信总数"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         count = DirectMessage.objects.filter(
             recipient=request.user, is_read=False, recipient_deleted=False,

@@ -19,6 +19,8 @@
 #     本人注销（进冷静期）、管理员单删、管理员批量删 ——
 #     三条都会走 `_check_delete_allowed`（不能删自己、不能删最后一个超管）。
 from rest_framework.views import APIView  # 导入DRF的API视图基类
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response  # 导入DRF的响应类
 from rest_framework import status, permissions  # 导入DRF的状态码和权限类
 from rest_framework.generics import get_object_or_404  # 导入获取对象或404异常的函数
@@ -150,6 +152,9 @@ class SiteConfigView(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         return Response({
             'post_require_review': bool(getattr(settings, 'POST_REQUIRE_REVIEW', False)),
@@ -168,6 +173,9 @@ class UsernameAvailabilityView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'username_check'
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         username = (request.query_params.get('username') or '').strip()
         available, message = validate_username_format(username)
@@ -195,6 +203,10 @@ class PasswordResetRequestView(APIView):
 
     GENERIC_MESSAGE = '如果该账号存在且已绑定邮箱，我们已发送重置链接，请查收邮件（含垃圾箱）。'
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         account = (request.data.get('username_or_email') or request.data.get('account') or '').strip()
         if not account:
@@ -228,6 +240,10 @@ class PasswordResetConfirmView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'password_reset'
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         uid = request.data.get('uid') or ''
         token = request.data.get('token') or ''
@@ -298,6 +314,9 @@ class UserProfileView(APIView):  # 定义用户资料视图类
             has_capability(user, CAP_USER_ADMIN)
         )
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, user_id):  # 定义GET请求处理方法
         user = get_object_or_404(User, id=user_id)  # 获取用户对象或返回404
 
@@ -353,6 +372,10 @@ class UserAvatarView(APIView):
             )
         return target, None
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         target, denied = self._resolve_target(request, user_id)
         if denied is not None:
@@ -454,6 +477,10 @@ class UserPasswordChangeView(APIView):
     # 现在要调策略只改 password_policy.py 一处。
     MIN_LENGTH = PASSWORD_MIN_LENGTH  # 仅为向后兼容保留（有测试/调用方可能读它）
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         target = get_object_or_404(User, id=user_id)
         if request.user.id != target.id:
@@ -543,6 +570,10 @@ class AccountDeleteView(APIView):
     #: 前端必须原样回传这个字面量，表示"我确认要注销"
     CONFIRM_WORD = 'DELETE'
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         user = request.user
         password = request.data.get('password') or ''
@@ -620,6 +651,10 @@ class AccountCancelDeletionView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'cancel_deletion'
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         from django.contrib.auth import get_user_model
         UserModel = get_user_model()
@@ -675,6 +710,9 @@ class UserStatsView(APIView):  # 定义用户统计信息视图类
     """
     permission_classes = [permissions.IsAuthenticated]  # 设置权限类为需要认证用户
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, user_id):  # 定义GET请求处理方法
         user = get_object_or_404(User, id=user_id)  # 获取用户对象或返回404
 
@@ -974,6 +1012,9 @@ class AdminUserDetailView(APIView):
 
     permission_classes = [IsUserAdmin]  # 第 124 批：USER_ADMIN 能力（原为 DRF IsAdminUser，只认 is_staff）
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, user_id):
         user = get_object_or_404(_admin_user_queryset(), pk=user_id)
         return Response(AdminUserSerializer(user, context={'request': request}).data)
@@ -1046,6 +1087,10 @@ class AdminUserStatusView(APIView):
 
     permission_classes = [IsUserAdmin]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         actor = request.user
         # ⚠️ 用 `_admin_user_queryset()` 而不是裸 User：已删除与注销冷静期的账号在这里
@@ -1184,6 +1229,10 @@ class AdminUserCreateEditorView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         actor = request.user
         if not actor.is_superuser:
@@ -1285,6 +1334,10 @@ class AdminUserRoleView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         actor = request.user
         target = get_object_or_404(_admin_user_queryset(), pk=user_id)
@@ -1459,6 +1512,10 @@ class AdminUserResetLinkView(APIView):
 
     permission_classes = [IsUserAdmin]  # 第 124 批：USER_ADMIN 能力（原为 DRF IsAdminUser，只认 is_staff）
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, user_id):
         target = get_object_or_404(User, pk=user_id)
         actor = request.user
@@ -1579,6 +1636,9 @@ class UserCommentsView(APIView):
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request, user_id):
         user = get_object_or_404(User, id=user_id)
 
@@ -1610,6 +1670,9 @@ class UserPostsView(APIView):  # 定义用户帖子视图类
     """
     permission_classes = [permissions.IsAuthenticated]  # 需要登录才能访问
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         """
         获取当前登录用户的所有帖子

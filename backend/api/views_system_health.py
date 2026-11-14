@@ -32,6 +32,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -164,6 +166,9 @@ class AdminHealthView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         # 与「操作日志」同档：它会暴露服务器路径、依赖版本、是否开了 HTTPS 等部署细节，
         # 不该给内容编辑员看。

@@ -8,6 +8,8 @@
 | `/api/points/levels/` | GET | 等级体系说明（公开，用于"等级怎么算"提示） |
 """
 from rest_framework import permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -19,6 +21,9 @@ class MyPointsView(APIView):
     """我的积分与等级"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         return Response(points_summary(request.user))
 
@@ -27,6 +32,9 @@ class MyPointLogsView(APIView):
     """我的积分流水"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         queryset = PointLog.objects.filter(user=request.user)
         total = queryset.count()
@@ -64,6 +72,9 @@ class PointLevelsView(APIView):
     """等级体系与加分规则（公开）"""
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         return Response({
             'levels': [

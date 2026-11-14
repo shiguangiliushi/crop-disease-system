@@ -24,6 +24,8 @@
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -100,6 +102,9 @@ class AdminCommentListView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         blocked = _reject_non_moderator(request, '查看评论管理')
         if blocked:
@@ -162,6 +167,10 @@ class AdminCommentRestoreView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, pk):
         if not (is_full_admin(request.user)
                 or request.user.groups.filter(name='Moderators').exists()):
@@ -205,6 +214,10 @@ class AdminCommentSoftDeleteView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request, pk):
         blocked = _reject_non_moderator(request, '删除评论')
         if blocked:
@@ -242,6 +255,9 @@ class AdminCommentHardDeleteView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def delete(self, request, pk):
         if not (is_full_admin(request.user)
                 or request.user.groups.filter(name='Moderators').exists()):
@@ -280,6 +296,10 @@ class AdminCommentBulkDeleteView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def post(self, request):
         blocked = _reject_non_moderator(request, '删除评论')
         if blocked:

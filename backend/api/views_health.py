@@ -27,6 +27,8 @@ import time
 from django.conf import settings
 from django.db import connection
 from rest_framework import permissions
+from drf_spectacular.types import OpenApiTypes  # 第 389 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -112,6 +114,9 @@ class HealthView(APIView):
                     or getattr(user, "is_superuser", False)
                     or getattr(user, "role", "") == "ADMIN")
 
+    @extend_schema(
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
+    )
     def get(self, request):
         # 第 354 批：**深度检查只给管理员**。
         # `deep=1` 会额外暴露：迁移是否落后（哪条没跑）、模型权重路径与体积、
