@@ -68,16 +68,27 @@
     </div>
 
     <div class="news-list-container">
-      <!-- 第 321 批：加载中给卡片骨架（与真实卡片同尺寸，加载完不跳动） -->
-      <div v-if="loading && newsList.length === 0" class="news-skeleton">
-        <div v-for="i in 3" :key="i" class="skeleton-card">
-          <el-skeleton-item variant="image" class="skeleton-cover" />
-          <div class="skeleton-body">
-            <el-skeleton-item variant="h3" style="width: 62%" />
-            <el-skeleton-item variant="text" style="width: 100%" />
-            <el-skeleton-item variant="text" style="width: 80%" />
-          </div>
-        </div>
+      <!-- 第 378 批：加载中给卡片骨架（与真实 .news-card 同列宽、同封面比例、同内边距）。
+           列表只有 fetchNews() 一个数据源，newsList 在请求返回前恒为空，
+           因此这里就是"首屏加载中"的完整画面；加载完成后由下方真实列表 / 空态接管。 -->
+      <div
+        v-if="loading && newsList.length === 0"
+        class="news-skeleton"
+        role="status"
+        :aria-label="t('common.loading')"
+      >
+        <el-skeleton v-for="i in 3" :key="i" animated class="skeleton-card">
+          <template #template>
+            <div class="skeleton-content">
+              <el-skeleton-item variant="image" class="skeleton-cover" />
+              <div class="skeleton-body">
+                <el-skeleton-item variant="h3" style="width: 78%" />
+                <el-skeleton-item variant="text" style="width: 100%" />
+                <el-skeleton-item variant="text" style="width: 62%" />
+              </div>
+            </div>
+          </template>
+        </el-skeleton>
       </div>
       <!-- News List -->
       <div class="news-list">
@@ -1024,31 +1035,49 @@ watch(() => route.name, (newVal) => {
 </script>
 
 <style scoped>
-/* 第 321 批：新闻卡片骨架 */
+/* 第 378 批：新闻卡片骨架 —— 列宽 / 封面高度 180px / 内边距 / 圆角 / 阴影都对齐真实 .news-card，
+   骨架换成真实列表时不会明显跳动 */
 .news-skeleton {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 18px;
-  padding: 8px 0;
+  gap: 22px;
+  /* 与 .news-list 的 margin-top、.news-grid 的 margin-bottom 保持一致 */
+  margin: 30px 0 20px;
 }
-.skeleton-card {
+
+.news-skeleton .skeleton-card {
   display: flex;
-  gap: 14px;
-  padding: 14px;
-  background: #fff;
-  border-radius: 12px;
+  flex-direction: column;
+  /* 真实卡片（1440 宽、4 列）实测 546px 高；锁定同高，加载完成时整页不跳动 */
+  min-height: 546px;
+  overflow: hidden;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ebeef5);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-sm, 0 2px 12px rgba(0, 0, 0, 0.05));
 }
-.skeleton-cover {
-  width: 96px;
-  height: 72px;
-  border-radius: 8px;
-  flex: none;
-}
-.skeleton-body {
+
+/* 真实卡片是 el-card__body(20px) + .news-content(20px) 两层内边距，
+   骨架合并成一层 40px，封面图位置/宽度与真实卡片一致 */
+.news-skeleton .skeleton-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  padding: 40px;
+}
+
+.news-skeleton .skeleton-cover {
+  width: 100%;
+  height: 180px; /* 真实 .news-image 固定 180px 高 */
+  margin-bottom: 16px;
+  border-radius: 4px;
+  flex: none;
+}
+
+.news-skeleton .skeleton-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .news-container {
