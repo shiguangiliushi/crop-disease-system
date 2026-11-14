@@ -14,11 +14,18 @@ import logging
 
 from django.db.models import Count, Q
 from rest_framework import permissions, status
+from drf_spectacular.types import OpenApiTypes  # 第 388 批
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 388 批：OpenAPI 标注
 # 第 124 批：统一的能力判定（本文件原来自己抄了一份管理员判定）
 from .capabilities import MODULE_PESTS, has_content_module
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .schema_serializers import (  # 第 388 批：只用于 OpenAPI 文档
+    CalendarResponseSchema,
+    TaskReminderRequestSchema,
+    TaskReminderSchema,
+)
 from .models import DetectionHistory, PestInfo
 from .models_calendar import CalendarTask, UserTaskReminder
 from .services_content_i18n import crop_en, pest_en_maps  # 第 77 批：内容数据中英对照
@@ -127,6 +134,10 @@ class CalendarView(APIView):
     """某月的种植日历"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='种植日历（当月任务 + 当季病害 + 我的历史）',
+        responses={200: CalendarResponseSchema},
+    )
     def get(self, request):
         from django.utils import timezone
         today = timezone.localdate()
@@ -317,6 +328,10 @@ class CalendarTaskListView(APIView):
     """任务列表（所有人可看）/ 新增（仅管理员）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='农事任务模板列表',
+        responses={200: OpenApiResponse(description='任务模板数组')},
+    )
     def get(self, request):
         queryset = CalendarTask.objects.all()
         crop = (request.query_params.get('crop') or '').strip()
@@ -330,6 +345,11 @@ class CalendarTaskListView(APIView):
             'results': [_serialize_task(task) for task in queryset[:500]],
         })
 
+    @extend_schema(
+        summary='新增农事任务模板（管理员）',
+        request=OpenApiTypes.OBJECT,
+        responses={201: OpenApiResponse(description='已创建')},
+    )
     def post(self, request):
         if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
@@ -374,6 +394,11 @@ class CalendarTaskDetailView(APIView):
     def _get(self, pk):
         return CalendarTask.objects.filter(pk=pk).first()
 
+    @extend_schema(
+        summary='修改农事任务模板（管理员）',
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiResponse(description='已更新')},
+    )
     def patch(self, request, pk):
         if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
@@ -404,6 +429,10 @@ class CalendarTaskDetailView(APIView):
         task.save()
         return Response(_serialize_task(task))
 
+    @extend_schema(
+        summary='删除农事任务模板（管理员）',
+        responses={204: OpenApiResponse(description='已删除')},
+    )
     def delete(self, request, pk):
         if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
@@ -418,6 +447,10 @@ class CalendarCropOptionsView(APIView):
     """可选作物（来自百科里真实存在的作物）"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='日历可选的作物列表',
+        responses={200: OpenApiResponse(description='[{value,label}] 作物选项')},
+    )
     def get(self, request):
         return Response({'crops': _crop_options()})
 
@@ -443,10 +476,19 @@ class TaskReminderListView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='我的任务提醒列表',
+        responses={200: TaskReminderSchema(many=True)},
+    )
     def get(self, request):
         queryset = UserTaskReminder.objects.filter(user=request.user)
         return Response({'items': [_serialize_reminder(item) for item in queryset[:100]]})
 
+    @extend_schema(
+        summary='新建任务提醒',
+        request=TaskReminderRequestSchema,
+        responses={201: TaskReminderSchema},
+    )
     def post(self, request):
         from .models_assistant import AssistantMessage
         from .models_calendar import UserTaskReminder
@@ -498,6 +540,11 @@ class TaskReminderDetailView(APIView):
     """标记完成 / 删除一条提醒。"""
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='修改任务提醒（完成/取消）',
+        request=TaskReminderRequestSchema,
+        responses={200: TaskReminderSchema},
+    )
     def patch(self, request, pk):
         from .models_calendar import UserTaskReminder
 
@@ -508,6 +555,10 @@ class TaskReminderDetailView(APIView):
         reminder.save(update_fields=['is_done'])
         return Response(_serialize_reminder(reminder))
 
+    @extend_schema(
+        summary='删除任务提醒',
+        responses={204: OpenApiResponse(description='已删除')},
+    )
     def delete(self, request, pk):
         from .models_calendar import UserTaskReminder
 

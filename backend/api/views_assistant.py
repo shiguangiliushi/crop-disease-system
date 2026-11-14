@@ -32,9 +32,20 @@ from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 388 批：OpenAPI 标注
 
 from .models_assistant import AssistantMessage, AssistantSession
-from .assistant import orchestrator, prompts, vision
+from .assistant import orchestrator
+from .schema_serializers import (  # 第 388 批：只用于 OpenAPI 文档
+    AssistantAskRequestSchema as AssistantAskRequestBody,
+    AssistantAskResponseSchema as AssistantAskResponseBody,
+    AssistantEscalateRequestSchema as AssistantEscalateRequestBody,
+    AssistantEscalateResponseSchema as AssistantEscalateResponseBody,
+    AssistantFeedbackRequestSchema as AssistantFeedbackRequestBody,
+    AssistantSuggestRequestSchema as AssistantSuggestRequestBody,
+    AssistantSuggestResponseSchema as AssistantSuggestResponseBody,
+)
+from .assistant import prompts, vision
 from .assistant.service import escalate
 from .image_validation import ImageValidationError, validate_image_upload
 
@@ -170,6 +181,11 @@ class AssistantAskView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='提问（一次返回完整答案）',
+        request=AssistantAskRequestBody,
+        responses={200: AssistantAskResponseBody},
+    )
     def post(self, request):
         payload, error = _parse_request(request)
         if error is not None:
@@ -208,6 +224,17 @@ class AssistantAskStreamView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='提问（SSE 流式返回）',
+        description=(
+            '事件序列：`meta` -> `delta`（多条）-> `citations` -> `done`。'
+            '响应体是 text/event-stream，不是 JSON；这里只说明事件结构。'
+        ),
+        request=AssistantAskRequestBody,
+        responses={(200, 'text/event-stream'): OpenApiResponse(
+            description='SSE 事件流：event: delta / data: {"text": "..."}',
+        )},
+    )
     def post(self, request):
         payload, error = _parse_request(request)
         if error is not None:
@@ -252,6 +279,11 @@ class AssistantSuggestView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='追问建议（纯模板，不调模型）',
+        request=AssistantSuggestRequestBody,
+        responses={200: AssistantSuggestResponseBody},
+    )
     def post(self, request):
         from .pest_lookup import find_pest_info
 
@@ -311,6 +343,11 @@ class AssistantFeedbackView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='回答反馈（有用 / 没用 + 补充说明）',
+        request=AssistantFeedbackRequestBody,
+        responses={200: OpenApiResponse(description='已记录')},
+    )
     def post(self, request, pk):
         # 只允许评价**自己的**会话里的**助手**消息（别人的一律 404，不泄漏存在性）
         message = AssistantMessage.objects.filter(
@@ -351,6 +388,11 @@ class AssistantEscalateView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='转人工（生成一条咨询问题）',
+        request=AssistantEscalateRequestBody,
+        responses={200: AssistantEscalateResponseBody},
+    )
     def post(self, request, pk):
         session = AssistantSession.objects.filter(pk=pk, user=request.user).first()
         if session is None:

@@ -1139,6 +1139,7 @@ paths:
     post:
       operationId: api_assistant_ask_create
       description: 问一个问题（一次返回完整答案）。
+      summary: 提问（一次返回完整答案）
       parameters:
       - in: query
         name: format
@@ -1149,20 +1150,37 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantAskRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssistantAskRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssistantAskRequestSchema'
+        required: true
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantAskResponseSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AssistantAskResponseSchema'
+          description: ''
   /api/assistant/ask/stream/:
     post:
       operationId: api_assistant_ask_stream_create
-      description: |-
-        问一个问题（SSE 逐字返回）。
-
-        事件序列：`meta` → `delta`（多条）→ `citations` → `done`，
-        详见 `orchestrator.ask_stream()` 的 docstring。
+      description: 事件序列：`meta` -> `delta`（多条）-> `citations` -> `done`。响应体是 text/event-stream，不是
+        JSON；这里只说明事件结构。
+      summary: 提问（SSE 流式返回）
       parameters:
       - in: query
         name: format
@@ -1173,12 +1191,24 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantAskRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssistantAskRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssistantAskRequestSchema'
+        required: true
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          description: 'SSE 事件流：event: delta / data: {"text": "..."}'
   /api/assistant/messages/{id}/feedback/:
     post:
       operationId: api_assistant_messages_feedback_create
@@ -1189,6 +1219,7 @@ paths:
         只有逐条记才能定位"哪一类问题答不好"。
 
         `useless` 时的 `note` 是最有价值的信号 —— 只统计次数无法知道该补什么内容。
+      summary: 回答反馈（有用 / 没用 + 补充说明）
       parameters:
       - in: query
         name: format
@@ -1204,12 +1235,24 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantFeedbackRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssistantFeedbackRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssistantFeedbackRequestSchema'
+        required: true
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          description: 已记录
   /api/assistant/sessions/:
     get:
       operationId: api_assistant_sessions_retrieve
@@ -1286,6 +1329,7 @@ paths:
         把这次会话转人工 —— 写进既有的专家咨询链路（`ConsultQuestion`）。
 
         **幂等**：同一会话重复调用返回同一张工单（用户多点两下不该产生三条提问）。
+      summary: 转人工（生成一条咨询问题）
       parameters:
       - in: query
         name: format
@@ -1301,12 +1345,30 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantEscalateRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssistantEscalateRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssistantEscalateRequestSchema'
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantEscalateResponseSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AssistantEscalateResponseSchema'
+          description: ''
   /api/assistant/suggestions/:
     post:
       operationId: api_assistant_suggestions_create
@@ -1323,6 +1385,7 @@ paths:
 
         请求：`POST /api/assistant/suggestions/`  `{question, pest_identifier, lang?}`
         返回：`{suggestions: [{intent, question}, …]}`
+      summary: 追问建议（纯模板，不调模型）
       parameters:
       - in: query
         name: format
@@ -1333,16 +1396,35 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantSuggestRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssistantSuggestRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssistantSuggestRequestSchema'
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantSuggestResponseSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AssistantSuggestResponseSchema'
+          description: ''
   /api/calendar/:
     get:
       operationId: api_calendar_retrieve
       description: 某月的种植日历
+      summary: 种植日历（当月任务 + 当季病害 + 我的历史）
       parameters:
       - in: query
         name: format
@@ -1358,11 +1440,19 @@ paths:
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarResponseSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/CalendarResponseSchema'
+          description: ''
   /api/calendar/crops/:
     get:
       operationId: api_calendar_crops_retrieve
       description: 可选作物（来自百科里真实存在的作物）
+      summary: 日历可选的作物列表
       parameters:
       - in: query
         name: format
@@ -1378,15 +1468,16 @@ paths:
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          description: '[{value,label}] 作物选项'
   /api/calendar/reminders/:
     get:
-      operationId: api_calendar_reminders_retrieve
+      operationId: api_calendar_reminders_list
       description: |-
         我的农事提醒（第 315 批）。
 
         ⚠️ 与 `CalendarTask` 的区别写在这：那张是**全局**农事表（管理员维护、所有人可见），
            这张是**按用户**的私人提醒。两者不要混用。
+      summary: 我的任务提醒列表
       parameters:
       - in: query
         name: format
@@ -1402,7 +1493,18 @@ paths:
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskReminderSchema'
+            text/event-stream:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskReminderSchema'
+          description: ''
     post:
       operationId: api_calendar_reminders_create
       description: |-
@@ -1410,6 +1512,7 @@ paths:
 
         ⚠️ 与 `CalendarTask` 的区别写在这：那张是**全局**农事表（管理员维护、所有人可见），
            这张是**按用户**的私人提醒。两者不要混用。
+      summary: 新建任务提醒
       parameters:
       - in: query
         name: format
@@ -1420,16 +1523,36 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskReminderRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TaskReminderRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TaskReminderRequestSchema'
+        required: true
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
-        '200':
-          description: No response body
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskReminderSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/TaskReminderSchema'
+          description: ''
   /api/calendar/reminders/{id}/:
     patch:
       operationId: api_calendar_reminders_partial_update
       description: 标记完成 / 删除一条提醒。
+      summary: 修改任务提醒（完成/取消）
       parameters:
       - in: query
         name: format
@@ -1445,15 +1568,34 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTaskReminderRequestSchema'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedTaskReminderRequestSchema'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTaskReminderRequestSchema'
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskReminderSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/TaskReminderSchema'
+          description: ''
     delete:
       operationId: api_calendar_reminders_destroy
       description: 标记完成 / 删除一条提醒。
+      summary: 删除任务提醒
       parameters:
       - in: query
         name: format
@@ -1474,11 +1616,12 @@ paths:
       - tokenAuth: []
       responses:
         '204':
-          description: No response body
+          description: 已删除
   /api/calendar/tasks/:
     get:
       operationId: api_calendar_tasks_retrieve
       description: 任务列表（所有人可看）/ 新增（仅管理员）
+      summary: 农事任务模板列表
       parameters:
       - in: query
         name: format
@@ -1494,10 +1637,11 @@ paths:
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          description: 任务模板数组
     post:
       operationId: api_calendar_tasks_create
       description: 任务列表（所有人可看）/ 新增（仅管理员）
+      summary: 新增农事任务模板（管理员）
       parameters:
       - in: query
         name: format
@@ -1508,16 +1652,31 @@ paths:
           - txt
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
-        '200':
-          description: No response body
+        '201':
+          description: 已创建
   /api/calendar/tasks/{id}/:
     patch:
       operationId: api_calendar_tasks_partial_update
       description: 修改 / 删除任务（仅管理员）
+      summary: 修改农事任务模板（管理员）
       parameters:
       - in: query
         name: format
@@ -1533,15 +1692,30 @@ paths:
         required: true
       tags:
       - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
       security:
       - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
-          description: No response body
+          description: 已更新
     delete:
       operationId: api_calendar_tasks_destroy
       description: 修改 / 删除任务（仅管理员）
+      summary: 删除农事任务模板（管理员）
       parameters:
       - in: query
         name: format
@@ -1562,7 +1736,7 @@ paths:
       - tokenAuth: []
       responses:
         '204':
-          description: No response body
+          description: 已删除
   /api/captcha/:
     get:
       operationId: api_captcha_retrieve
@@ -7188,6 +7362,224 @@ components:
       - is_visible
       - title
       - updated_at
+    AssistantAskRequestSchema:
+      type: object
+      description: '`POST /api/assistant/ask/` 的请求体（见 `views_assistant._parse_request`）。'
+      properties:
+        question:
+          type: string
+          description: 用户问题，上限 500 字
+          maxLength: 500
+        session_id:
+          type: integer
+          nullable: true
+          description: 续问时带上一轮的会话 id
+        pest_identifier:
+          type: string
+          description: 识别结果直连的病害标识，如 tomato___late_blight
+        image:
+          type: string
+          format: uri
+          nullable: true
+          description: 可选图片；给了会先用本地模型识别
+        allow_llm:
+          type: boolean
+          default: true
+          description: 隐私开关：false 时只返回词条原文，不产生任何外部模型请求
+      required:
+      - question
+    AssistantAskResponseSchema:
+      type: object
+      description: '`POST /api/assistant/ask/` 的响应（非流式）。'
+      properties:
+        session_id:
+          type: integer
+        message_id:
+          type: integer
+        answer:
+          type: string
+        degraded:
+          type: boolean
+          description: true 表示这是降级回答（非模型生成）
+        degrade_reason:
+          type: string
+          description: no_source / llm_disabled / llm_error / user_opt_out / session_full
+            等
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssistantCitationSchema'
+        related:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          description: 同作物的其他病害（可能为空）
+        usage:
+          type: object
+          additionalProperties: {}
+          description: 模型 token 用量（降级时为空）
+        truncated:
+          type: boolean
+          description: 答案是否被长度上限截断
+      required:
+      - answer
+      - citations
+      - degraded
+      - message_id
+      - related
+      - session_id
+      - truncated
+    AssistantCitationSchema:
+      type: object
+      description: 回答里引用到的词条（前端据此显示"来源"）。
+      properties:
+        pest_id:
+          type: integer
+          description: 词条主键
+        label:
+          type: string
+          description: 词条名（已按语言本地化）
+      required:
+      - label
+      - pest_id
+    AssistantEscalateRequestSchema:
+      type: object
+      description: '`POST /api/assistant/sessions/<pk>/escalate/`：转人工（问专家）。'
+      properties:
+        question:
+          type: string
+          maxLength: 500
+        contact:
+          type: string
+          maxLength: 100
+    AssistantEscalateResponseSchema:
+      type: object
+      properties:
+        question_id:
+          type: integer
+          description: 生成的咨询问题 id
+        created:
+          type: boolean
+      required:
+      - created
+      - question_id
+    AssistantFeedbackRequestSchema:
+      type: object
+      description: '`POST /api/assistant/messages/<pk>/feedback/`。'
+      properties:
+        verdict:
+          $ref: '#/components/schemas/VerdictEnum'
+        note:
+          type: string
+          maxLength: 500
+      required:
+      - verdict
+    AssistantSuggestRequestSchema:
+      type: object
+      description: '`POST /api/assistant/suggest/`：追问建议（不调模型，纯模板）。'
+      properties:
+        question:
+          type: string
+        pest_identifier:
+          type: string
+        pest_name:
+          type: string
+    AssistantSuggestResponseSchema:
+      type: object
+      properties:
+        suggestions:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          description: '[{label, text}] 形式的追问建议'
+      required:
+      - suggestions
+    CalendarDaySchema:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        count:
+          type: integer
+      required:
+      - count
+      - date
+    CalendarPestStatSchema:
+      type: object
+      properties:
+        name:
+          type: string
+        name_en:
+          type: string
+        crop_type:
+          type: string
+        crop_type_en:
+          type: string
+        count:
+          type: integer
+      required:
+      - count
+      - name
+    CalendarResponseSchema:
+      type: object
+      description: '`GET /api/calendar/`：整页数据（月份任务 + 当季病害 + 我的历史）。'
+      properties:
+        month:
+          type: integer
+        year:
+          type: integer
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarTaskSchema'
+        seasonal_pests:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarPestStatSchema'
+        my_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarPestStatSchema'
+        my_crops:
+          type: array
+          items:
+            type: string
+        my_days:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarDaySchema'
+        source_note:
+          type: string
+          description: 数据来源说明（模板 / 本站记录）
+      required:
+      - month
+      - seasonal_pests
+      - tasks
+    CalendarTaskSchema:
+      type: object
+      description: 日历里的一条农事任务。
+      properties:
+        id:
+          type: integer
+        crop_type:
+          type: string
+        month:
+          type: integer
+        task_type:
+          type: string
+        title:
+          type: string
+        detail:
+          type: string
+      required:
+      - crop_type
+      - id
+      - month
+      - task_type
+      - title
     Comment:
       type: object
       description: |-
@@ -8505,6 +8897,21 @@ components:
           format: date-time
           readOnly: true
           title: 创建时间
+    PatchedTaskReminderRequestSchema:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 100
+        crop_type:
+          type: string
+          maxLength: 20
+        remind_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+          maxLength: 500
     PestInfoDetail:
       type: object
       properties:
@@ -9105,6 +9512,45 @@ components:
         * `pending` - 待审核
         * `published` - 已发布
         * `hidden` - 隐藏
+    TaskReminderRequestSchema:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 100
+        crop_type:
+          type: string
+          maxLength: 20
+        remind_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+          maxLength: 500
+      required:
+      - remind_at
+      - title
+    TaskReminderSchema:
+      type: object
+      description: 用户自建的任务提醒（`/api/calendar/reminders/`）。
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        crop_type:
+          type: string
+        remind_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+        done:
+          type: boolean
+      required:
+      - id
+      - remind_at
+      - title
     TypeEnum:
       enum:
       - reply
@@ -9232,6 +9678,14 @@ components:
       - avatar
       - id
       - username
+    VerdictEnum:
+      enum:
+      - useful
+      - useless
+      type: string
+      description: |-
+        * `useful` - useful
+        * `useless` - useless
     VerifyStatusEnum:
       enum:
       - pending
