@@ -59,6 +59,13 @@ def _request_lang(request) -> str:
     return prompts.normalize_lang(code)
 
 
+def _as_bool(value) -> bool:
+    """宽松解析布尔值：兼容 true / "true" / 1 / "1" / "yes"（第 376 批：隐私开关）。"""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 def _parse_request(request):
     """解析并校验公共入参。返回 `(payload, error_response)`；error_response 非空时直接返回它。"""
     question = str(request.data.get('question') or '')
@@ -103,6 +110,9 @@ def _parse_request(request):
         'pest_identifier': str(request.data.get('pest_identifier') or ''),
         'lang': _request_lang(request),
         'image': image,
+        # 第 376 批：隐私开关。老客户端不传 → True（行为不变）；
+        # 传 false → 只给词条原文，不产生任何外部请求。
+        'allow_llm': _as_bool(request.data.get('allow_llm', True)),
     }, None
 
 
@@ -172,6 +182,7 @@ class AssistantAskView(APIView):
             pest_identifier=payload['pest_identifier'],
             lang=payload['lang'],
             image=payload['image'],
+        allow_llm=payload['allow_llm'],
         )
         # 第 305 批：基于 citations 里的词条 + 当前意图，给出 3 条追问建议
         try:
@@ -209,6 +220,7 @@ class AssistantAskStreamView(APIView):
             pest_identifier=payload['pest_identifier'],
             lang=payload['lang'],
             image=payload['image'],
+        allow_llm=payload['allow_llm'],
         )
         response = StreamingHttpResponse(stream, content_type='text/event-stream; charset=utf-8')
         # ① 别让 GZipMiddleware 把流攒住（见模块 docstring 第 4 条）

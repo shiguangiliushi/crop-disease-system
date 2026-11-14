@@ -34,7 +34,7 @@ export function formatAssistantError(error) {
  * @param {string} [payload.pest_identifier] 识别结果直连的病害标识（如 tomato___late_blight）
  * @returns {Promise<{session_id, message_id, answer, degraded, degrade_reason, citations, usage}>}
  */
-export async function askAssistant({ question, session_id, pest_identifier, image } = {}) {
+export async function askAssistant({ question, session_id, pest_identifier, image, allow_llm } = {}) {
   if (image) {
     // 第 229 批：图片走 multipart（同上：不要手动设 Content-Type）
     const form = new FormData();
@@ -89,7 +89,7 @@ function authToken() {
  * @returns {Promise<{session_id, message_id, answer, degraded, degrade_reason, citations, usage}>}
  */
 export async function askAssistantStream(
-  { question, session_id, pest_identifier, image } = {}, { onDelta } = {},
+  { question, session_id, pest_identifier, image, allow_llm } = {}, { onDelta } = {},
 ) {
   // 第 229 批：带图片时走 multipart（后端用 `request.FILES['image']` 取），
   // 不带图片仍然是 JSON —— 两条路径的参数名完全一致，只是编码不同。
@@ -101,7 +101,9 @@ export async function askAssistantStream(
     if (pest_identifier) body.append('pest_identifier', pest_identifier);
     body.append('image', image);
   } else {
-    body = JSON.stringify({ question, session_id, pest_identifier });
+    body = JSON.stringify({ question, session_id, pest_identifier,
+    // 第 376 批：隐私开关（false 时后端只返回词条原文，不调模型）
+    allow_llm });
   }
 
   const response = await fetch(`${BASE_URL}/assistant/ask/stream/`, {

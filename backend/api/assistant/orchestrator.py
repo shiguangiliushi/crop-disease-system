@@ -301,7 +301,7 @@ class Prepared:
 
 def _prepare(*, user, question: str, session: AssistantSession | None,
              pest_identifier: str, lang: str = prompts.DEFAULT_LANG,
-             image=None) -> Prepared | dict:
+             image=None, allow_llm: bool = True) -> Prepared | dict:
     """跑完"决策阶段"。返回 `Prepared`；对**空问题**直接返回响应字典（连会话都不建）。
 
     `image`（第 229 批）：上传的图片文件。给了就先"看图"（本地 YOLO），
@@ -408,9 +408,12 @@ def _prepare(*, user, question: str, session: AssistantSession | None,
         if vision_result is not None:
             # 图看出来了、但词库没有这条：先说清"我看到了什么"，再说"没收录"
             prepared.early_answer = f'{vision.observation_text(vision_result, code)}\n\n{prepared.early_answer}'
-    elif not llm.enabled():
+    elif not allow_llm or not llm.enabled():
+        # 第 376 批：`allow_llm=False` 是**用户自己在设置里关掉的**（隐私开关）。
+        # 与"服务端没配模型"共用同一条降级链路 —— 关掉后行为可预期：
+        # 只给词条原文，不产生任何外部请求。两者用不同的 reason 便于统计。
+        prepared.early_reason = 'user_opt_out' if not allow_llm else 'llm_disabled'
         prepared.early_answer = prompts.degrade_text('no_llm', code, body=_fallback_body(hits, code))
-        prepared.early_reason = 'llm_disabled'
         # 第 207 批：降级给的是**档案原文**，出处就是这些命中 —— 必须带上引用
         prepared.citations = _citations_from_hits(hits, code)
     else:
@@ -586,10 +589,12 @@ def _related_pests(prepared, limit: int = 3) -> list[dict]:
 
 
 def ask(*, user, question: str, session: AssistantSession | None = None,
-        pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None) -> dict:
+        pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None,
+        allow_llm: bool = True) -> dict:
     """问一个问题，返回结构化结果。**永不抛异常给调用方**（见模块 docstring）。"""
     prepared = _prepare(user=user, question=question, session=session,
-                        pest_identifier=pest_identifier, lang=lang, image=image)
+                        pest_identifier=pest_identifier, lang=lang, image=image,
+                        allow_llm=allow_llm)
     if isinstance(prepared, dict):
         return prepared
 
@@ -733,7 +738,8 @@ def _followups_for(citations: list, question: str, lang: str = 'zh') -> list[dic
 
 
 def ask_stream(*, user, question: str, session: AssistantSession | None = None,
-               pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None):
+               pest_identifier: str = '', lang: str = prompts.DEFAULT_LANG, image=None,
+               allow_llm: bool = True):
     """流式问答：yield SSE 事件字节串。
 
     事件序列（与 `docs/智能回答助手框架.md` 第五节一致）：
@@ -751,7 +757,8 @@ def ask_stream(*, user, question: str, session: AssistantSession | None = None,
     代价是"空内容的助手消息"会短暂存在 —— 但它必然被同一个请求补全。
     """
     prepared = _prepare(user=user, question=question, session=session,
-                        pest_identifier=pest_identifier, lang=lang, image=image)
+                        pest_identifier=pest_identifier, lang=lang, image=image,
+                        allow_llm=allow_llm)
     if isinstance(prepared, dict):
         # 空问题：不落库，只把同一套响应翻译成 SSE
         yield _sse('meta', {'session_id': prepared['session_id'], 'message_id': None,

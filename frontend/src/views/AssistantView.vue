@@ -30,6 +30,7 @@
       </div>
 
       <div class="assistant-side-search">
+
         <el-input
           v-model="keyword"
           size="small"
@@ -317,6 +318,12 @@
           <span class="assistant-image-hint">{{ t('assistant.imageHint') }}</span>
         </div>
 
+        <!-- 第 376 批：隐私提示 + 开关（关掉后不调用外部模型） -->
+        <div class="privacy-notice">
+          <span class="privacy-text">{{ t('assistant.privacyNotice') }}</span>
+          <el-switch v-model="allowLlm" size="small" />
+        </div>
+
         <el-input
           v-model="draft"
           type="textarea"
@@ -358,7 +365,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';  // 第 242 批：支持 ?q= 深链（结果页推荐问题）
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Search } from '@element-plus/icons-vue';
@@ -426,6 +433,18 @@ const clearPendingImage = () => {
 
 const messages = ref([]);
 const draft = ref('');
+
+/**
+ * 隐私开关（第 376 批）：是否允许把问题发送到外部 AI 模型。
+ *
+ * 默认**开** —— 关掉后只能拿到词条原文，观感是"答非所问"。
+ * 但"不告知就外发"不合适，所以输入区上方常驻提示 + 开关；
+ * 关掉后后端走 `user_opt_out` 降级，不产生任何外部请求。
+ */
+const allowLlm = ref(localStorage.getItem('assistant_allow_llm') !== '0');
+watch(allowLlm, (value) => {
+  localStorage.setItem('assistant_allow_llm', value ? '1' : '0');
+});
 const route = useRoute();  // 第 242 批：结果页推荐问题跳过来时自动提问
 const loading = ref(false);
 const streamingStarted = ref(false);
@@ -669,6 +688,7 @@ const submit = async (presetText) => {
         // 独立页面没有识别上下文：由**问题文本自己**去检索（后端按词条名匹配）；
         // 第 229 批：带了图片时后端会先跑本地识别，用结论当锚点
         image: image || undefined,
+        allow_llm: allowLlm.value,
       },
       {
         onDelta: (text, finalText) => {
@@ -778,6 +798,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 第 376 批：隐私提示 */
+.privacy-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f6f8f7;
+  font-size: 12px;
+  color: var(--ink-400, #8a8f8c);
+}
+.privacy-text { line-height: 1.5; }
+
 /* 第 369 批：相关词条 */
 .related-pests { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: 12.5px; }
 .related-label { color: var(--ink-400, #8a8f8c); }
