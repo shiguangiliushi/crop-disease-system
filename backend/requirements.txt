@@ -23,6 +23,8 @@ djangorestframework==3.18.3  # 第 345 批
 django-cors-headers==4.7.0
 # DRF 的 DjangoFilterBackend（views_user.py、views_forum.py 等在用）
 django-filter==25.1
+# OpenAPI 3 schema 自动生成 + 在线文档（Swagger UI）——接入说明见 docs/API文档.md
+drf-spectacular==0.30.0
 
 # ── 识别模型（AI） ──────────────────────────────────────────────────────────
 # CPU 版即可跑（本项目开发机就是 CPU 推理）。要 GPU 请按 PyTorch 官方选择对应源：

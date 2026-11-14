@@ -26,6 +26,11 @@ from rest_framework.routers import DefaultRouter
 from django.views.static import serve as media_serve
 from api.views_media import MediaView  # 第 257 批：媒体访问控制
 from django.contrib.staticfiles.views import serve as static_serve
+# OpenAPI 3 文档（drf-spectacular）：schema 视图 + Swagger UI 视图
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from rest_framework.authentication import SessionAuthentication, TokenAuthentication
+from rest_framework.permissions import IsAdminUser
+from api.authentication import DeviceTokenAuthentication
 
 # 动态导入视图
 import importlib
@@ -168,6 +173,18 @@ CommentViewSet = import_view('api.views_forum', 'CommentViewSet')
 LikeViewSet = import_view('api.views_forum', 'LikeViewSet')
 # 第 94 批：健康检查（匿名可访问，探针用）
 HealthView = import_view('api.views_health', 'HealthView')
+
+#: 文档视图的认证类（**只作用于下面两个文档视图**，不写进全局 REST_FRAMEWORK）：
+#:   · SessionAuthentication —— 管理员在 /admin/ 登录后，浏览器直接打开 /api/docs/
+#:     才能看到页面（本项目全局只认 Token，不加这条的话浏览器里永远是 403）；
+#:   · DeviceToken / Token —— 允许用 `Authorization: Token xxx`（curl / 脚本）拉 schema。
+#: ⚠️ 不要把它加到 REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES']：第 19 批已论证
+#:    全局 SessionAuthentication 会造成“界面显示 A、服务端按 B 执行”的身份错位。
+_DOC_AUTHENTICATION_CLASSES = [
+    SessionAuthentication,
+    DeviceTokenAuthentication,
+    TokenAuthentication,
+]
 
 # 创建主路由器
 router = DefaultRouter(trailing_slash=True)  # 确保使用斜杠结尾
@@ -494,6 +511,33 @@ api_urlpatterns = [
 # 主URL配置
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # ========================================================================
+    # OpenAPI 3 文档（drf-spectacular）—— **仅管理员**
+    # ------------------------------------------------------------------------
+    # 权限：两个视图都显式 permission_classes=[IsAdminUser]，不依赖全局默认值。
+    #   医生 / 编辑员 / 普通用户（is_staff=False）一律 403；匿名 401。
+    #   ⚠️ 不要删掉 permission_classes：缺少时 `/api/schema/`、`/api/docs/` 会落回
+    #      REST_FRAMEWORK 的 DEFAULT_PERMISSION_CLASSES（IsAuthenticated），
+    #      等于“任何登录用户都能看全部内部接口清单”。
+    # 访问：/api/schema/（YAML schema）、/api/docs/（Swagger UI）
+    # ========================================================================
+    path(
+        'api/schema/',
+        SpectacularAPIView.as_view(
+            permission_classes=[IsAdminUser],
+            authentication_classes=_DOC_AUTHENTICATION_CLASSES,
+        ),
+        name='schema',
+    ),
+    path(
+        'api/docs/',
+        SpectacularSwaggerView.as_view(
+            url_name='schema',
+            permission_classes=[IsAdminUser],
+            authentication_classes=_DOC_AUTHENTICATION_CLASSES,
+        ),
+        name='swagger-ui',
+    ),
     path('api/', include(api_urlpatterns)),
     # 添加对favicon.ico的访问支持
     re_path(r'^favicon\.ico$', static_serve, {'path': 'favicon.ico', 'document_root': settings.STATIC_ROOT}),

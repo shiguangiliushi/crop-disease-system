@@ -6599,7 +6599,18 @@ class EnvSelfCheckCommandTests(TestCase):
             'django_filters': 'django-filter',
             'rest_framework': 'djangorestframework',
             'rest_framework.authtoken': 'djangorestframework',  # authtoken 是 DRF 自带的
+            # 第 385 批：模块名 drf_spectacular，发行包名 drf-spectacular
+            'drf_spectacular': 'drf-spectacular',
         }
+
+        def _norm(name: str) -> str:
+            """按 PEP 503 归一：`-`、`_`、`.` 视为等价。
+
+            原来直接比字符串，于是 `drf_spectacular`（模块名）与
+            `drf-spectacular`（包名）被判为"缺失" —— 两者在 pip 眼里是同一个包。
+            """
+            return re.sub(r'[-_.]+', '-', name.lower())
+
         # 本地/Django 自带的跳过
         skip = {'api'}
         for app in settings.INSTALLED_APPS:
@@ -6608,7 +6619,7 @@ class EnvSelfCheckCommandTests(TestCase):
             package = mapping.get(app, app)
             with self.subTest(app=app):
                 self.assertIn(
-                    package.lower(), req,
+                    _norm(package), _norm(req),
                     f'INSTALLED_APPS 用了 {app}，但 requirements.txt 里没有 {package}',
                 )
 

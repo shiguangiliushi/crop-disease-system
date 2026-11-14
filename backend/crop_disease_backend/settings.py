@@ -156,6 +156,7 @@ INSTALLED_APPS = [  # 已安装的应用列表
     'django.contrib.staticfiles',  # 静态文件管理
     'rest_framework',  # Django REST框架
     'rest_framework.authtoken',  # REST框架Token认证
+    'drf_spectacular',  # OpenAPI 3 schema 生成 + Swagger UI（接入说明见 docs/API文档.md）
     'corsheaders',  # 添加 CORS 支持  # 跨域请求支持
     'django_filters',  # Django过滤器
     'api',  # 自定义API应用
@@ -723,6 +724,9 @@ REST_FRAMEWORK = {  # REST框架配置
     'DEFAULT_PERMISSION_CLASSES': [  # 默认权限类
         'rest_framework.permissions.IsAuthenticated',  # 需要认证
     ],
+    # OpenAPI 3 schema 生成器（drf-spectacular）。**不要**改回 DRF 默认的
+    # rest_framework.schemas.openapi.AutoSchema —— 那会让 /api/schema/ 丢字段、多出一堆告警。
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'api.pagination.CustomPagination',  # 默认分页类
     # ⚠️ 第 106 批注：这个 PAGE_SIZE **不起作用**，请不要改它来调分页。
     #
@@ -779,6 +783,32 @@ REST_FRAMEWORK = {  # REST框架配置
         # 因为"邻居把额度用完了"而恢复不了。10/min 已足以让在线撞库不可行。
         'cancel_deletion': '10/min',
     },
+}
+
+# ============================================================================
+# OpenAPI 3 文档（drf-spectacular）
+# ----------------------------------------------------------------------------
+# 生成静态 schema（在 backend/ 下执行）：
+#     python manage.py spectacular --file ../docs/openapi.yaml
+# 在线文档（**仅管理员**，权限在 urls.py 里逐个视图显式指定）：
+#     GET /api/schema/    OpenAPI 3 schema（YAML，Swagger UI 从这里加载）
+#     GET /api/docs/      Swagger UI 在线文档
+#
+# ⚠️ 关于警告：本项目有大量手写 APIView / 自定义权限类，schema 生成时会打出
+#    “unable to guess serializer” 一类 warning。**这是预期的**，不是配置错误；
+#    不要用 `--fail-on-warn` 跑 CI（会把可用的 schema 判成失败）。处理指引见
+#    docs/API文档.md。
+# ============================================================================
+SPECTACULAR_SETTINGS = {
+    'TITLE': '作物病害识别系统 API',
+    'DESCRIPTION': (
+        '作物病害识别系统的后端 REST API（Django + DRF）。'
+        '本 schema 由 drf-spectacular 从代码自动生成，可能与 docs/ 下的手写文档存在出入；'
+        '以代码与实际响应为准。'
+    ),
+    'VERSION': '1.0.0',
+    # 不让 /api/schema/ 把自己也写进接口清单
+    'SERVE_INCLUDE_SCHEMA': False,
 }
 
 # CSRF 可信任的来源
