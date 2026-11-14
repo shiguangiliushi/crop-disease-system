@@ -20,6 +20,14 @@ class ApiConfig(AppConfig):  # 定义API应用配置类，继承自AppConfig
             # 如果signals.py不存在，忽略错误
             pass  # 忽略异常
 
+        # 第 386 批：注册 drf-spectacular 的认证扩展（让自定义 DeviceTokenAuthentication
+        # 在 /api/schema/ 里有对应 securityScheme，而不是每次都被记一条 warning）。
+        # 放在**独立 try** 里：没装 drf-spectacular 时不能让整个应用起不来。
+        try:
+            import api.schema_ext  # noqa: F401  # 导入即注册
+        except ImportError:
+            pass
+
         # 确保admin.py中的模型注册代码会被执行
         try:  # 尝试导入admin配置
             import api.admin  # noqa  # 导入admin配置模块，noqa表示忽略flake8检查

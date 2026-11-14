@@ -20,6 +20,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -39,6 +40,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -58,6 +60,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -83,6 +86,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -113,6 +117,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -148,6 +153,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -172,6 +178,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -197,6 +204,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -216,6 +224,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -248,6 +257,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -278,6 +288,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -306,6 +317,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -325,6 +337,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -348,6 +361,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -392,6 +406,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -443,6 +458,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AdminUser'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -489,6 +505,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -512,6 +529,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -562,6 +580,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -609,6 +628,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -658,6 +678,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -702,6 +723,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -753,6 +775,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AdminUser'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -801,6 +824,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -840,6 +864,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -864,6 +889,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -903,6 +929,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -949,6 +976,7 @@ paths:
               $ref: '#/components/schemas/Announcement'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -988,6 +1016,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -1038,6 +1067,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedAnnouncement'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1076,6 +1106,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1098,6 +1129,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -1118,6 +1150,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1141,6 +1174,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1171,6 +1205,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1190,6 +1225,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1214,6 +1250,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1237,6 +1274,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1264,6 +1302,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1295,6 +1334,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1314,6 +1354,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1333,6 +1374,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1356,6 +1398,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1378,6 +1421,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1402,6 +1446,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1425,6 +1470,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1444,6 +1490,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1462,6 +1509,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1486,6 +1534,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1509,6 +1558,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1535,6 +1585,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -1558,6 +1609,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1582,6 +1634,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1601,6 +1654,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1619,6 +1673,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1637,6 +1692,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1661,6 +1717,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1684,6 +1741,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1707,6 +1765,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1726,6 +1785,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1744,6 +1804,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1768,6 +1829,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1791,6 +1853,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1815,6 +1878,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1837,6 +1901,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1864,6 +1929,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1892,6 +1958,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -1919,6 +1986,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -1964,6 +2032,7 @@ paths:
               $ref: '#/components/schemas/DetectionHistory'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2008,6 +2077,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedDetectionHistory'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2041,6 +2111,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -2068,6 +2139,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -2095,6 +2167,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2137,6 +2210,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2177,6 +2251,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -2212,6 +2287,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2257,6 +2333,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2295,6 +2372,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -2335,6 +2413,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2382,6 +2461,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2435,6 +2515,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2489,6 +2570,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2526,6 +2608,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Feedback'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2562,6 +2645,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2593,6 +2677,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2623,6 +2708,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -2669,6 +2755,7 @@ paths:
               $ref: '#/components/schemas/ForumBoard'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -2705,6 +2792,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -2753,6 +2841,7 @@ paths:
               $ref: '#/components/schemas/ForumBoard'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2799,6 +2888,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedForumBoard'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2834,6 +2924,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -2871,6 +2962,7 @@ paths:
               $ref: '#/components/schemas/ForumBoard'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2909,6 +3001,7 @@ paths:
               $ref: '#/components/schemas/ForumBoard'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -2951,6 +3044,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3011,6 +3105,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Like'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -3046,6 +3141,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3091,6 +3187,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Like'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3136,6 +3233,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedLike'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3172,6 +3270,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -3209,6 +3308,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -3253,6 +3353,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -3291,6 +3392,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -3341,6 +3443,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3389,6 +3492,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedPostList'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3448,6 +3552,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -3488,6 +3593,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3532,6 +3638,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3576,6 +3683,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3613,6 +3721,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -3661,6 +3770,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3705,6 +3815,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3749,6 +3860,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3805,6 +3917,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -3849,6 +3962,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -3899,6 +4013,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -3950,6 +4065,7 @@ paths:
               $ref: '#/components/schemas/CommentCreate'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -3992,6 +4108,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4044,6 +4161,7 @@ paths:
               $ref: '#/components/schemas/CommentCreate'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4096,6 +4214,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedCommentCreate'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4137,6 +4256,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -4178,6 +4298,7 @@ paths:
               $ref: '#/components/schemas/Comment'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4231,6 +4352,7 @@ paths:
               $ref: '#/components/schemas/Comment'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4267,6 +4389,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4309,6 +4432,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4358,6 +4482,7 @@ paths:
               $ref: '#/components/schemas/Comment'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4412,6 +4537,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4467,6 +4593,7 @@ paths:
               $ref: '#/components/schemas/PostList'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4493,6 +4620,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4543,6 +4671,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4586,6 +4715,7 @@ paths:
               $ref: '#/components/schemas/Login'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4616,6 +4746,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4635,6 +4766,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4654,6 +4786,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4678,6 +4811,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4701,6 +4835,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4734,6 +4869,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -4770,6 +4906,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4815,6 +4952,7 @@ paths:
               $ref: '#/components/schemas/News'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -4860,6 +4998,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -4904,6 +5043,7 @@ paths:
               $ref: '#/components/schemas/News'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4949,6 +5089,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedNews'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -4983,6 +5124,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -5020,6 +5162,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5049,6 +5192,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5087,6 +5231,7 @@ paths:
               $ref: '#/components/schemas/News'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5125,6 +5270,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5156,6 +5302,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -5191,6 +5338,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Notification'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5228,6 +5376,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Notification'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5254,6 +5403,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5292,6 +5442,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5317,6 +5468,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5354,6 +5506,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5389,6 +5542,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5430,6 +5584,7 @@ paths:
               $ref: '#/components/schemas/PestInfoWrite'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -5464,6 +5619,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5500,6 +5656,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5546,6 +5703,7 @@ paths:
               $ref: '#/components/schemas/PestInfoWrite'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5591,6 +5749,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedPestInfoWrite'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5625,6 +5784,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -5644,6 +5804,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5663,6 +5824,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5689,6 +5851,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5714,6 +5877,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5740,6 +5904,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5764,6 +5929,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5783,6 +5949,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -5803,6 +5970,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5821,6 +5989,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5854,6 +6023,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5878,6 +6048,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -5924,6 +6095,7 @@ paths:
               $ref: '#/components/schemas/SensitiveWord'
         required: true
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '201':
@@ -5971,6 +6143,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PatchedSensitiveWord'
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6006,6 +6179,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -6031,6 +6205,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6051,6 +6226,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6081,6 +6257,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6122,6 +6299,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6159,6 +6337,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6189,6 +6368,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6219,6 +6399,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6252,6 +6433,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6283,6 +6465,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '204':
@@ -6314,6 +6497,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6339,6 +6523,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6363,6 +6548,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6388,6 +6574,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6428,6 +6615,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6454,6 +6642,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6478,6 +6667,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6501,6 +6691,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6600,6 +6791,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6623,6 +6815,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6642,6 +6835,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       - {}
       responses:
@@ -6662,6 +6856,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6681,6 +6876,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6700,6 +6896,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -6751,6 +6948,7 @@ paths:
       tags:
       - api
       security:
+      - deviceTokenAuth: []
       - tokenAuth: []
       responses:
         '200':
@@ -9045,6 +9243,12 @@ components:
         * `confirmed` - 已确认
         * `rejected` - 已排除
   securitySchemes:
+    deviceTokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'DeviceToken 认证：`Authorization: Token <key>`。与 drf 自带的 tokenAuth
+        使用同一个 header —— 服务端先按 DeviceToken 查，查不到再退回 drf Token（兼容老客户端）。'
     tokenAuth:
       type: apiKey
       in: header
