@@ -20,6 +20,7 @@ export async function askAssistant({ question, pestIdentifier = '' }) {
     citations: Array.isArray(body.citations) ? body.citations : [],
     degraded: Boolean(body.degraded),
     degradeReason: body.degrade_reason || '',
+    related: data.related || [],  // 第 377 批：移动端也要拿到同作物其他病害
   };
 }
 

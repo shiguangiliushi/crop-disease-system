@@ -254,6 +254,9 @@ export const messages = {
       deleteAccountOk: '账号已注销',
       deleteAccountFailed: '注销失败，请稍后重试',
     },
+    assistantAsk: {
+      related: '相关病害：',
+    },
     pestWiki: {
       title: '病害百科',
       viewWiki: '查看病害百科',
@@ -555,6 +558,9 @@ export const messages = {
       deleteAccountPasswordRequired: 'Please enter your password',
       deleteAccountOk: 'Account deleted',
       deleteAccountFailed: 'Could not delete the account, please try again later',
+    },
+    assistantAsk: {
+      related: 'Related:',
     },
     pestWiki: {
       title: 'Disease wiki',

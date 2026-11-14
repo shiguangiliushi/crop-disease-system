@@ -86,3 +86,6 @@ backups/
 # media/            用户上传与示例图片；若不想入库请自行放开下面这行
 #   media/
 # frontend/public/  PWA 图标与 manifest（应用外壳，需要入库）
+
+# 截图证据目录（第 377 批）：验证用的截图，不入库，避免仓库膨胀
+dsh-shots/

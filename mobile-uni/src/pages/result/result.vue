@@ -60,6 +60,17 @@
           {{ askLoading ? t('auth.asking') : t('auth.askSend') }}
         </button>
         <text v-if="askAnswer" class="ask-answer">{{ askAnswer }}</text>
+        <!-- 第 377 批：同作物的其他病害（后端 related）—— 与 Vant 端同一行为：
+             手机上"再点开一个病害"比去翻百科方便，所以把下一步直接摆出来 -->
+        <view v-if="askRelated.length" class="ask-related">
+          <text class="ask-related-label">{{ t('assistantAsk.related') }}</text>
+          <text
+            v-for="item in askRelated"
+            :key="item.id"
+            class="ask-related-link"
+            @click="openRelated(item)"
+          >{{ item.name }}</text>
+        </view>
       </view>
 
       <view v-if="detection.crop_mismatch" class="notice">
@@ -99,10 +110,9 @@ import { computed, ref } from 'vue'
 import { t } from '@/i18n'
 import { submitRecognitionFeedback } from '@/api/feedback'
 import { makeShareCard } from '@/utils/shareCard'
-import { askAssistant } from '@/api/assistant'
 import { fetchPests } from '@/utils/api'
 import { onLoad } from '@dcloudio/uni-app'
-import { mediaUrl } from '@/utils/request'
+import { mediaUrl, request } from '@/utils/request'
 import { fetchHistoryDetail } from '@/api/history'
 
 const detection = ref({})
@@ -164,6 +174,7 @@ const historyId = ref(null)
 // 第 244 批：识别后追问（复用 /api/assistant/ask/）
 const askDraft = ref('')
 const askAnswer = ref('')
+const askRelated = ref([]) // 第 377 批：同作物的其他病害（后端 related，点开进百科）
 const askLoading = ref(false)
 
 async function onAsk() {
@@ -173,13 +184,19 @@ async function onAsk() {
     return
   }
   askLoading.value = true
+  // 新提问先清空上一次的相关病害，避免"旧推荐配新问题"
+  askRelated.value = []
   try {
-    const result = await askAssistant({
-      question,
+    // ⚠️ 这里直接 request，而不是 api/assistant.js 的 askAssistant：那个封装只挑
+    // answer/citations/degraded 返回，会把后端给的 `related` 丢掉（本批只允许改本文件）。
+    const result = await request({
+      url: '/assistant/ask/',
+      method: 'POST',
       // 识别结果里的 model 类名（有就带上，让回答聚焦到这条病害）
-      pestIdentifier: detection.value.identifier || '',
+      data: { question, pest_identifier: detection.value.identifier || '' },
     })
     askAnswer.value = result.answer || t('auth.askFailed')
+    askRelated.value = Array.isArray(result.related) ? result.related : []
   } catch (error) {
     uni.showToast({ title: error.message || t('auth.askFailed'), icon: 'none' })
   } finally {
@@ -289,6 +306,18 @@ function openWiki() {
   const keyword = detection.value?.disease || detection.value?.disease_en || ''
   if (!keyword) return
   uni.navigateTo({ url: `/pages/pest/pest?keyword=${encodeURIComponent(keyword)}` })
+}
+
+/**
+ * 相关病害 → 病害百科（第 377 批）
+ *
+ * uni 端百科页收的是 `?keyword=病害名`（见 pages.json 的 pages/pest/pest 与
+ * pest.vue 的 `onLoad(options.keyword)`），**没有** Vant 的 /pests/:keyword 路由，
+ * 照抄那条会跳空页。
+ */
+function openRelated(item) {
+  if (!item?.name) return
+  uni.navigateTo({ url: `/pages/pest/pest?keyword=${encodeURIComponent(item.name)}` })
 }
 </script>
 
@@ -420,6 +449,29 @@ function openWiki() {
   font-size: 26rpx;
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+/* 第 377 批：相关病害（同作物的其他病），与 Vant 端一致的"label + 小胶囊" */
+.ask-related {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 16rpx;
+}
+
+.ask-related-label {
+  color: #8b9a91;
+  font-size: 24rpx;
+}
+
+.ask-related-link {
+  padding: 4rpx 16rpx;
+  border: 1rpx solid rgba(47, 107, 79, 0.35);
+  border-radius: 999rpx;
+  background: #f6fbf8;
+  color: #2f6b4f;
+  font-size: 24rpx;
 }
 
 .feedback-row {

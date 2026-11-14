@@ -558,7 +558,7 @@ def _persist(session, question: str, *, answer: str, reason: str, model: str = '
 
 
 def _related_pests(prepared, limit: int = 3) -> list[dict]:
-    """回答后推荐 2~3 条**同作物的其他病害**（第 369 批）。
+    """回答后推荐 2~3 条**同作物的其他病害**（第 369 批，第 377 批修正）。
 
     ## 为什么只按作物推
 
@@ -566,19 +566,28 @@ def _related_pests(prepared, limit: int = 3) -> list[dict]:
     而"同作物的其他常见病"是最自然的下一步 —— 农户看完番茄晚疫病，
     很可能也想看番茄早疫病/叶霉病（它们常被混淆）。
 
-    只返回 id/name/english_identifier，前端拼链接，避免多传字段。
+    ## ⚠️ 第 377 批修正
+
+    上一版读 `prepared.hits` —— 而 `Prepared` 数据类**根本没有 `hits` 字段**，
+    于是 `getattr(prepared, 'hits', None)` 恒为 None，related **永远是空列表**：
+    桌面端与两个移动端的"相关病害"从来没显示过（接线对、数据空）。
+    现改为从 `prepared.citations` 取 `pest_id`（citation 里就有），再查同作物词条。
     """
-    hits = getattr(prepared, 'hits', None) or []
-    if not hits:
-        return []
     from ..models import PestInfo
 
-    base = hits[0].pest
-    used = {hit.pest.pk for hit in hits}
+    ids = [cite.get('pest_id') for cite in (getattr(prepared, 'citations', None) or [])
+           if cite.get('pest_id')]
+    if not ids:
+        return []
+
+    base = PestInfo.objects.filter(pk__in=ids).first()
+    if base is None:
+        return []
+
     queryset = (
         PestInfo.objects
         .filter(crop_type=base.crop_type)
-        .exclude(pk__in=used)
+        .exclude(pk__in=ids)
         # 排除"健康XXX"词条：用户问的是病害，推荐"健康番茄"没有意义
         .exclude(english_identifier__endswith='_healthy')
     )
@@ -710,6 +719,10 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
         'usage': usage,
         # 第 204 批：答案是否被长度上限截断（前端据此提示"回答可能不完整"）
         'truncated': truncated,
+        # 第 377 批：**非流式也要带 related**。
+        # 第 369 批只加进了 SSE 的 done 事件，而移动端（Vant / uni）走的正是非流式接口，
+        # 于是"相关病害"在手机端拿到的永远是 undefined —— UI 接线对，数据没来。
+        'related': _related_pests(prepared),
     }
 
 

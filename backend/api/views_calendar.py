@@ -113,6 +113,16 @@ def _crop_options():
     )
 
 
+def _month_bounds(year: int, month: int):
+    """返回该月的 [start, end) 两个 aware datetime（本地时区语义）。"""
+    from datetime import datetime as _dt, time as _clock
+    from django.utils import timezone
+    start = timezone.make_aware(_dt.combine(_dt(year, month, 1).date(), _clock.min))
+    ny, nm = (year + 1, 1) if month == 12 else (year, month + 1)
+    end = timezone.make_aware(_dt.combine(_dt(ny, nm, 1).date(), _clock.min))
+    return start, end
+
+
 class CalendarView(APIView):
     """某月的种植日历"""
     permission_classes = [permissions.IsAuthenticated]
@@ -126,6 +136,12 @@ class CalendarView(APIView):
         except (TypeError, ValueError):
             month = today.month
         month = max(1, min(12, month))
+
+        # 第 301 批：月区间**必须**在这里算 —— `month` 到上一行才解析完成。
+        # 曾经把这段放在 `today` 之后（`month` 解析之前），触发 UnboundLocalError。
+        # 区间用 [start, end) 的 aware datetime，语义是"本地时区的这个月"，
+        # 不走 SQLite 上按存储值（UTC）提取月份的 `__month`。
+        _start, _end = _month_bounds(today.year, month)
 
         crop = (request.query_params.get('crop') or '').strip()
         crops = _crop_options()
@@ -150,10 +166,15 @@ class CalendarView(APIView):
                 .filter(user=request.user, pest_info__isnull=False)
                 .values_list('pest_info__crop_type', flat=True) if value
             })
-            # 去年同期我自己识别出过什么（给"去年这个时候"的对照）
+            # 我自己在这个月识别过什么（给"这个月"的对照）。
+            # 历史口径说明：原实现是 `timestamp__month=month`（不带年份），实际匹配**所有年份**的同月；
+            # 第 377 批统一成区间后限定为**本月**，与既有用例 `test_my_history_same_month`
+            # （造一条"现在"的记录，期望出现在 my_history）保持一致。
+            # 前端标题原写"去年这个时候"与实际数据不符，已在同批改成"这个月你识别过的病害"。
             for row in (
                 DetectionHistory.objects
-                .filter(user=request.user, timestamp__month=month, pest_info__isnull=False)
+                .filter(user=request.user, timestamp__gte=_start, timestamp__lt=_end,
+                        pest_info__isnull=False)
                 .values('pest_info__name', 'pest_info__crop_type')
                 .annotate(count=Count('id'))
                 .order_by('-count')[:5]
@@ -175,7 +196,8 @@ class CalendarView(APIView):
             rows = (
                 DetectionHistory.objects
                 .filter(
-                    timestamp__month=month,
+                    timestamp__gte=_start,
+                    timestamp__lt=_end,
                     pest_info__isnull=False,
                     pest_info__crop_type__in=scope_crops,
                 )
@@ -226,11 +248,7 @@ class CalendarView(APIView):
         # `__month` 在 SQLite 上按数据库存储值（UTC）提取，而请求的 month 来自
         # `timezone.localdate()`（本地）——UTC+8 的凌晨两者会差一个月，
         # 表现成"我明明今天识别过，日历格子却是空的"。
-        from datetime import datetime as _dt, time as _time
-
-        _start = timezone.make_aware(_dt.combine(_dt(today.year, month, 1).date(), _time.min))
-        _next_year, _next_month = (today.year + 1, 1) if month == 12 else (today.year, month + 1)
-        _end = timezone.make_aware(_dt.combine(_dt(_next_year, _next_month, 1).date(), _time.min))
+        #: 区间 `_start` / `_end` 已在读取请求参数后用 `_month_bounds` 算好（见函数开头）。
         activity_qs = DetectionHistory.objects.filter(
             timestamp__gte=_start, timestamp__lt=_end, pest_info__isnull=False)
         if crop and crop != 'all':
@@ -252,8 +270,8 @@ class CalendarView(APIView):
             my_days = sorted({
                 row['day'].day
                 for row in (DetectionHistory.objects
-                            .filter(user=request.user, timestamp__year=today.year,
-                                    timestamp__month=month, pest_info__isnull=False)
+                            .filter(user=request.user, timestamp__gte=_start,
+                                    timestamp__lt=_end, pest_info__isnull=False)
                             .annotate(day=TruncDate('timestamp'))
                             .values('day')
                             .annotate(count=Count('id')))
