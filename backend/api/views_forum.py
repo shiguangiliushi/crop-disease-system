@@ -26,6 +26,7 @@ from rest_framework.decorators import action, permission_classes, throttle_class
 from rest_framework.response import Response  # 导入DRF响应类
 from rest_framework.pagination import PageNumberPagination  # 导入分页类
 from rest_framework.throttling import UserRateThrottle  # 导入限流类
+from django.http import Http404  # 第 383 批：评论可见性用 404 表达
 from django.db.models import Count, Q, F, Exists, OuterRef  # 导入Django查询工具
 from django.utils import timezone  # 导入时区工具
 from django.shortcuts import get_object_or_404  # 导入快捷函数
@@ -1118,8 +1119,42 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         2. 前端一直传 ``ordering=-created_at``，后端不读 → 排序参数形同虚设。
         现支持 ``parent__isnull`` / ``parent`` / ``ordering``，并对回复数做 annotate。
         """
+        # ── 第 383 批：**评论必须跟随帖子的可见性** ──────────────────────────
+        #
+        # 实测越权：草稿帖 / 已软删帖本身对他人已 404，但它的评论接口完全不校验
+        # 帖子可见性，于是第三方仍能读到评论正文：
+        #     GET /api/forums/posts/<pk>/comments/                 → 200（含正文）
+        #     GET /api/forums/posts/<pk>/comments/<pk>/            → 200
+        # 这是"帖子藏起来了、评论区还挂着"的典型信息泄漏。
+        #
+        # 规则与帖子详情保持一致：
+        #   · 帖子作者本人 / 版主 / 有 BROADCAST 能力者：可看全部（含草稿、已删）；
+        #   · 其他人：仅 `status='published'` 且未删除的帖子的评论；
+        #   · 帖子不存在或不可见时，评论列表为空（detail 自然 404）。
+        post = (
+            Post.objects
+            .filter(pk=self.kwargs.get('post_pk'))
+            .only('id', 'author_id', 'status', 'is_deleted')
+            .first()
+        )
+        if post is None:
+            raise Http404  # 帖子不存在：与详情接口一致
+
+        user = getattr(self.request, 'user', None)
+        is_privileged = bool(
+            user is not None and user.is_authenticated
+            and (user.pk == post.author_id
+                 or getattr(user, 'is_staff', False)
+                 or has_capability(user, CAP_BROADCAST)
+                 or user.groups.filter(name='Moderators').exists())
+        )
+        if not is_privileged and (post.status != 'published' or post.is_deleted):
+            # 用 404 而不是空列表：与 `PostViewSet` 详情口径一致，
+            # 避免"200 + count=0"暴露这篇帖子确实存在。
+            raise Http404
+
         queryset = Comment.objects.filter(  # 返回评论查询集
-            post_id=self.kwargs['post_pk'],  # 按帖子ID筛选
+            post_id=post.pk,  # 按帖子ID筛选
             is_deleted=False  # 只返回未删除的评论
         )
 

@@ -16546,3 +16546,271 @@ class IdorAccessTestsPart3(TestCase):
         response = self._client(self.c).post(
             f'/api/reports/{report.pk}/handle/', {'action': 'dismiss'}, format='json')
         self.assertIn(response.status_code, (403, 404))
+
+
+class IdorAccessTestsPart4(TestCase):
+    """IDOR 第四批：帖子 / 评论 / 草稿 / 私信软删 / 通知标记已读。
+
+    前三批覆盖了识别记录、助手会话、农事提醒、反馈、通知、专家咨询、私信读取、
+    举报处置；这里补的是**论坛内容**这条线 —— 帖子与评论是普通用户之间最容易
+    "拿别人 id 改到别人东西"的入口，而草稿是帖子里唯一带可见性分级的状态。
+
+    ## 判定口径（与前三批一致的取舍）
+
+    - **私有资源**（草稿、只属于我的通知）→ 必须 **404**，不能 403：
+      403 等于承认"这个 id 存在"；
+    - **本来就公开可读的资源**（已发布帖子、公开评论）→ 403 与 404 都可接受：
+      帖子本来就是公开的，403 不额外泄漏存在性（`IsOwnerOrReadOnly` 的口径）；
+    - 每条用例除状态码外，一律再断言**记录没被改动**（refresh 后字段不变 / 仍存在）；
+    - 匿名访问只能落在 401/403/404，**不能 200**。
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        from api.models_forum import Comment, ForumBoard, Post
+
+        User = get_user_model()
+        self.owner = User.objects.create_user(username='zz_idor4_owner', password='pw12345678')
+        self.other = User.objects.create_user(username='zz_idor4_other', password='pw12345678')
+        self.third = User.objects.create_user(username='zz_idor4_third', password='pw12345678')
+
+        self.board = ForumBoard.objects.create(name='zz IDOR 第四批版块', description='越权回归用版块')
+        #: 公开帖：别人的帖子**可读**，但**不可改/删**
+        self.post = Post.objects.create(
+            title='只有作者能改的公开帖', content='公开帖正文，长度超过十个字',
+            author=self.owner, board=self.board,
+        )
+        #: 草稿：别人连读都不该读到（现有实现里详情已 404）
+        self.draft = Post.objects.create(
+            title='作者没写完的草稿帖', content='草稿正文，长度超过十个字',
+            author=self.owner, board=self.board, status='draft',
+        )
+        #: 公开帖下、属于 owner 的评论（他人可读、不可删）
+        self.comment = Comment.objects.create(
+            post=self.post, author=self.owner, content='只有作者能删的评论',
+        )
+        #: 草稿下、属于第三方的评论 —— 用来验证"草稿藏了，评论是不是也跟着藏"
+        self.draft_comment = Comment.objects.create(
+            post=self.draft, author=self.third, content='别人写在草稿下的评论',
+        )
+
+    def _client(self, user):
+        client = APIClient()
+        client.force_authenticate(user=user)
+        return client
+
+    # ── 帖子：编辑 / 删除 ─────────────────────────────────────
+    def test_other_cannot_update_my_post(self):
+        """A 拿 B 的公开帖 id 发 PATCH：必须被拒，且标题一字没变。"""
+        response = self._client(self.other).patch(
+            f'/api/forums/posts/{self.post.pk}/',
+            {'title': '被别人改掉的标题'},
+            format='json',
+        )
+        self.assertIn(response.status_code, (403, 404), str(response.data)[:200])
+        self.post.refresh_from_db()
+        self.assertEqual(self.post.title, '只有作者能改的公开帖', '别人的帖子不能被改')
+
+    def test_other_cannot_delete_my_post(self):
+        """A 删 B 的公开帖：删不掉，帖子仍在且未被软删。"""
+        response = self._client(self.other).delete(f'/api/forums/posts/{self.post.pk}/')
+        self.assertIn(response.status_code, (403, 404), str(response.data)[:200])
+        from api.models_forum import Post
+
+        self.assertTrue(Post.objects.filter(pk=self.post.pk).exists(), '别人的帖子不能被删掉')
+        self.post.refresh_from_db()
+        self.assertFalse(self.post.is_deleted, '删帖是软删，is_deleted 不该被置真')
+        self.assertEqual(self.post.title, '只有作者能改的公开帖')
+
+    def test_owner_can_update_and_delete_own_post(self):
+        """对照组：路由/方法本身是通的 —— 上面的 403/404 是权限拦下的，不是写错 URL。"""
+        changed = self._client(self.owner).patch(
+            f'/api/forums/posts/{self.post.pk}/',
+            {'title': '作者自己改的标题'},
+            format='json',
+        )
+        self.assertEqual(changed.status_code, 200, str(changed.data)[:200])
+        self.post.refresh_from_db()
+        self.assertEqual(self.post.title, '作者自己改的标题')
+
+        deleted = self._client(self.owner).delete(f'/api/forums/posts/{self.post.pk}/')
+        self.assertEqual(deleted.status_code, 204, str(deleted.data)[:200])
+        self.post.refresh_from_db()
+        self.assertTrue(self.post.is_deleted, '作者本人删自己的帖子应当成功（软删）')
+
+    # ── 帖子草稿：他人不可见 ──────────────────────────────────
+    def test_other_cannot_read_my_draft(self):
+        """别人的草稿：详情 404，列表里也不该出现（不能靠列表把 id 探出来）。"""
+        detail = self._client(self.other).get(f'/api/forums/posts/{self.draft.pk}/')
+        self.assertEqual(detail.status_code, 404, '别人的草稿详情必须 404')
+
+        listing = self._client(self.other).get('/api/forums/posts/', {'page_size': 100})
+        self.assertEqual(listing.status_code, 200)
+        ids = [row['id'] for row in (listing.data.get('results') or [])]
+        self.assertNotIn(self.draft.pk, ids, '别人的草稿不该混进公开列表')
+
+    def test_other_cannot_update_my_draft(self):
+        """连"改"都够不到（404，而不是 403）：草稿对他人是**不存在**的。"""
+        response = self._client(self.other).patch(
+            f'/api/forums/posts/{self.draft.pk}/',
+            {'title': '草稿被别人改掉'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 404, str(response.data)[:200])
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.title, '作者没写完的草稿帖')
+        self.assertEqual(self.draft.status, 'draft', '别人不能替我把草稿发出去')
+
+    def test_other_cannot_delete_my_draft(self):
+        response = self._client(self.other).delete(f'/api/forums/posts/{self.draft.pk}/')
+        self.assertEqual(response.status_code, 404, str(response.data)[:200])
+        from api.models_forum import Post
+
+        draft = Post.objects.get(pk=self.draft.pk)  # 不存在会抛 DoesNotExist → 测试失败
+        self.assertFalse(draft.is_deleted)
+        self.assertEqual(draft.status, 'draft')
+
+    # ── 评论：删除（硬删 DELETE + 用户实际走的软删 action）────────
+    def test_other_cannot_delete_my_comment(self):
+        """A 对 B 的评论发 DELETE（硬删）：403/404，评论仍在且未被软删。"""
+        response = self._client(self.other).delete(
+            f'/api/forums/posts/{self.post.pk}/comments/{self.comment.pk}/')
+        self.assertIn(response.status_code, (403, 404), str(response.data)[:200])
+        from api.models_forum import Comment
+
+        comment = Comment.objects.get(pk=self.comment.pk)
+        self.assertFalse(comment.is_deleted, '别人不能删我的评论')
+        self.assertEqual(comment.content, '只有作者能删的评论')
+
+    def test_other_cannot_soft_delete_my_comment(self):
+        """用户实际点「删除」走的是 `POST .../comments/<pk>/delete/`（软删）。
+
+        这条必须单独测：`DELETE` 那条会先撞上 `IsCommentOwnerOrPostOwner`，
+        而软删 action 走的是**另一段**自己写的权限判断，两条路径不能只测一条。
+        """
+        response = self._client(self.other).post(
+            f'/api/forums/posts/{self.post.pk}/comments/{self.comment.pk}/delete/')
+        self.assertIn(response.status_code, (403, 404), str(response.data)[:200])
+        from api.models_forum import Comment
+
+        comment = Comment.objects.get(pk=self.comment.pk)
+        self.assertFalse(comment.is_deleted, '别人不能替我软删评论')
+        self.assertEqual(comment.content, '只有作者能删的评论')
+
+    def test_owner_can_soft_delete_own_comment(self):
+        """对照组：软删 action 的路由与权限判断对作者本人是通的。"""
+        response = self._client(self.owner).post(
+            f'/api/forums/posts/{self.post.pk}/comments/{self.comment.pk}/delete/')
+        self.assertEqual(response.status_code, 204, str(response.data)[:200])
+        self.comment.refresh_from_db()
+        self.assertTrue(self.comment.is_deleted)
+
+    def test_comments_under_my_draft_are_not_visible_to_others(self):
+        """草稿详情已经是 404，但草稿下的评论不能还是 200 —— 否则可见性被绕过。
+
+        `CommentViewSet.get_queryset()` 只用 URL 里的 `post_pk` 过滤，
+        **从不检查这篇帖子对当前用户是否可见**；只要知道帖子 id，
+        就能借评论接口把已经"藏起来"的帖子的讨论读出来。
+        """
+        listing = self._client(self.other).get(
+            f'/api/forums/posts/{self.draft.pk}/comments/')
+        detail = self._client(self.other).get(
+            f'/api/forums/posts/{self.draft.pk}/comments/{self.draft_comment.pk}/')
+        # 第 383 批已修（CommentViewSet.get_queryset 校验帖子可见性，不通过就 404）。
+        # 注意：**不能**只断言"没有正文"—— 200 + count=0 仍然暴露"这篇帖子存在"。
+        self.assertEqual(listing.status_code, 404, str(getattr(listing, 'data', ''))[:200])
+        self.assertEqual(detail.status_code, 404, str(getattr(detail, 'data', ''))[:200])
+
+    def test_owner_still_sees_comments_on_own_draft(self):
+        """对照组：作者本人必须还能看到自己草稿下的评论（修越权不能把作者也挡了）。"""
+        response = self._client(self.owner).get(
+            f'/api/forums/posts/{self.draft.pk}/comments/')
+        self.assertEqual(response.status_code, 200, str(response.data)[:200])
+        self.assertEqual(response.data['count'], 1)
+
+    def test_comments_under_deleted_post_are_not_visible_to_others(self):
+        """同一根因的另一半：作者软删帖子后，评论不能还对外可读。"""
+        self.post.is_deleted = True
+        self.post.save(update_fields=['is_deleted'])
+
+        listing = self._client(self.other).get(
+            f'/api/forums/posts/{self.post.pk}/comments/')
+        detail = self._client(self.other).get(
+            f'/api/forums/posts/{self.post.pk}/comments/{self.comment.pk}/')
+        self.assertEqual(listing.status_code, 404, str(getattr(listing, 'data', ''))[:200])
+        self.assertEqual(detail.status_code, 404, str(getattr(detail, 'data', ''))[:200])
+
+    # ── 匿名 ──────────────────────────────────────────────────
+    def test_anonymous_cannot_touch_forum_private_content(self):
+        anonymous = APIClient()
+        cases = (
+            ('get', f'/api/forums/posts/{self.draft.pk}/'),
+            ('delete', f'/api/forums/posts/{self.post.pk}/'),
+            ('delete', f'/api/forums/posts/{self.post.pk}/comments/{self.comment.pk}/'),
+        )
+        for method, url in cases:
+            response = getattr(anonymous, method)(url)
+            self.assertIn(response.status_code, (401, 403, 404), f'{method.upper()} {url}')
+            self.assertNotEqual(response.status_code, 200, f'匿名不能 200：{url}')
+
+    # ── 私信：单侧软删边界 ────────────────────────────────────
+    def _send(self, sender, receiver, content):
+        response = self._client(sender).post(
+            f'/api/messages/with/{receiver.pk}/', {'content': content}, format='json')
+        self.assertIn(response.status_code, (200, 201), str(response.data)[:200])
+        return response
+
+    def test_one_side_delete_keeps_conversation_for_the_other(self):
+        """A 删掉与 B 的会话：A 读不回来，B 一条不少 —— 两侧软删标记互相独立。
+
+        已有 `DirectMessageDeleteTests` 从模型侧钉住了 `deleted == 2`；
+        这里补的是 **IDOR 视角**：删除只作用于"我这一侧"，
+        且删完 A 不能借 GET 详情把内容再读回来（软删对读取要真的生效）。
+        """
+        from api.models_message import DirectMessage
+
+        self._send(self.owner, self.other, 'A 发给 B 的私密内容')
+        self._send(self.other, self.owner, 'B 回给 A 的私密内容')
+
+        response = self._client(self.owner).delete(f'/api/messages/with/{self.other.pk}/')
+        self.assertEqual(response.status_code, 200, str(response.data)[:200])
+
+        mine = self._client(self.owner).get(f'/api/messages/with/{self.other.pk}/')
+        self.assertEqual(mine.status_code, 200)
+        self.assertEqual(mine.data['count'], 0, '自己删掉的会话不该还能读回内容')
+        self.assertNotIn('私密内容', str(mine.data))
+
+        theirs = self._client(self.other).get(f'/api/messages/with/{self.owner.pk}/')
+        self.assertEqual(theirs.status_code, 200)
+        self.assertEqual(theirs.data['count'], 2, '对方仍能看到两条消息（单侧软删）')
+        self.assertIn('A 发给 B 的私密内容', str(theirs.data))
+        self.assertIn('B 回给 A 的私密内容', str(theirs.data))
+
+        from_a = DirectMessage.objects.get(sender=self.owner, recipient=self.other)
+        from_b = DirectMessage.objects.get(sender=self.other, recipient=self.owner)
+        self.assertTrue(from_a.sender_deleted, 'A 发的、A 删了 → sender_deleted')
+        self.assertFalse(from_a.recipient_deleted, 'B 没删过 → recipient_deleted 必须还是 False')
+        self.assertFalse(from_b.sender_deleted, 'B 没删过 → sender_deleted 必须还是 False')
+        self.assertTrue(from_b.recipient_deleted, 'B 发的、A 删了 → recipient_deleted')
+
+    # ── 通知：标记已读（补既有用例缺的那半边）──────────────────
+    def test_read_all_only_marks_my_notifications(self):
+        """A 点「全部已读」不能顺手把 B 的未读也标了。
+
+        `NotificationTests.test_unread_count_and_read_flow` 只验证了自己的红点清零，
+        没有验证"别人的未读不受影响" —— 而 `/notifications/read-all/` 是
+        `update()` 批量写，少写一个 `recipient=` 就是全站清空，这里把它钉住。
+        """
+        from api.models_notify import Notification
+
+        a_notification = Notification.objects.create(recipient=self.owner, title='A 的未读通知')
+        b_notification = Notification.objects.create(recipient=self.other, title='B 的未读通知')
+
+        response = self._client(self.owner).post('/api/notifications/read-all/')
+        self.assertEqual(response.status_code, 200, str(response.data)[:200])
+
+        a_notification.refresh_from_db()
+        b_notification.refresh_from_db()
+        self.assertTrue(a_notification.is_read, '自己的通知应当被标为已读')
+        self.assertFalse(b_notification.is_read, '别人的通知不能被一起标为已读')
