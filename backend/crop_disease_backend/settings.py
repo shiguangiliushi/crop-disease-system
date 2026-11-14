@@ -54,7 +54,30 @@ def _load_env_file(path: Path) -> None:
             continue
         key, _, value = line.partition('=')
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        value = value.strip()
+
+        # 第 380 批：**支持行尾注释**（`KEY=value  # 说明`）。
+        #
+        # 为什么必须处理：之前只认行首 `#`，于是
+        #     LLM_MAX_TOKENS=2000  # 建议 2000
+        # 会把整段 `2000  # 建议 2000` 当成值，`int()` 时抛 ValueError，
+        # **服务直接起不来**，而报错落在 settings 加载阶段、极难看出根因。
+        #
+        # 规则与 dotenv 一致：`#` 前面必须是空白才算注释；引号里的 `#` 不算。
+        if value[:1] in ('"', "'"):
+            quote = value[0]
+            end = value.find(quote, 1)
+            if end != -1:
+                value = value[1:end]
+            else:
+                value = value.strip('"').strip("'")
+        else:
+            hash_at = value.find(' #')
+            if hash_at == -1:
+                hash_at = value.find('\t#')
+            if hash_at != -1:
+                value = value[:hash_at].rstrip()
+
         if key and key not in os.environ:
             os.environ[key] = value
 
