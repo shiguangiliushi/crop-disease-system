@@ -1140,6 +1140,11 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         if post is None:
             raise Http404  # 帖子不存在：与详情接口一致
 
+        # 可见性只在**读**动作上强制：写动作（update/destroy/like 等）由权限类判 403，
+        # 既不会回内容、也不会 500；改成 404 反而会改变既有 API 语义（见第 383 批回归）。
+        if getattr(self, 'action', '') not in ('list', 'retrieve'):
+            return Comment.objects.filter(post_id=post.pk, is_deleted=False)
+
         user = getattr(self.request, 'user', None)
         is_privileged = bool(
             user is not None and user.is_authenticated
