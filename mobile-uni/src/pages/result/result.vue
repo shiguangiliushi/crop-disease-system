@@ -47,6 +47,11 @@
 
       <!-- 第 244 批：识别后追问助手（非流式，带 pest_identifier 让回答聚焦该病害） -->
       <view class="block ask-block">
+      <!-- 第 384 批：隐私提示 + 开关（关掉后只返回词条原文，不调用外部模型） -->
+      <view class="ask-privacy">
+        <text class="ask-privacy-text">{{ t('assistantAsk.privacyNotice') }}</text>
+        <switch :checked="allowLlm" color="#2a7f53" @change="onToggleAllowLlm" />
+      </view>
         <text class="block-title">{{ t('auth.askTitle') }}</text>
         <textarea
           v-model="askDraft"
@@ -106,7 +111,7 @@
  * 数据来自上一页存进 `uni.setStorageSync('last_result')` 的识别响应 ——
  * 不在页面间传大对象（小程序 URL 有长度限制，传 JSON 会截断）。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { t } from '@/i18n'
 import { submitRecognitionFeedback } from '@/api/feedback'
 import { makeShareCard } from '@/utils/shareCard'
@@ -177,6 +182,29 @@ const askAnswer = ref('')
 const askRelated = ref([]) // 第 377 批：同作物的其他病害（后端 related，点开进百科）
 const askLoading = ref(false)
 
+/**
+ * 隐私开关（第 384 批）：是否允许把问题发送到外部 AI 模型。
+ *
+ * 默认**开**（关掉后只能拿到词条原文，观感是"答非所问"），但必须告知。
+ * 与桌面端 / Vant 端共用同一个键名 `assistant_allow_llm`，三端口径一致。
+ * uni 端用 `uni.getStorageSync`（H5 会落到 localStorage，小程序走本地存储）。
+ */
+function readAllowLlm() {
+  try {
+    return uni.getStorageSync('assistant_allow_llm') !== '0'
+  } catch (e) {
+    return true
+  }
+}
+const allowLlm = ref(readAllowLlm())
+watch(allowLlm, (value) => {
+  try {
+    uni.setStorageSync('assistant_allow_llm', value ? '1' : '0')
+  } catch (e) {
+    /* 存储不可用就只在本次会话生效 */
+  }
+})
+
 async function onAsk() {
   const question = askDraft.value.trim()
   if (!question) {
@@ -193,7 +221,11 @@ async function onAsk() {
       url: '/assistant/ask/',
       method: 'POST',
       // 识别结果里的 model 类名（有就带上，让回答聚焦到这条病害）
-      data: { question, pest_identifier: detection.value.identifier || '' },
+      data: {
+        question,
+        pest_identifier: detection.value.identifier || '',
+        allow_llm: allowLlm.value,  // 第 384 批：隐私开关
+      },
     })
     askAnswer.value = result.answer || t('auth.askFailed')
     askRelated.value = Array.isArray(result.related) ? result.related : []
@@ -322,6 +354,21 @@ function openRelated(item) {
 </script>
 
 <style scoped>
+/* 第 384 批：隐私提示（与桌面端、Vant 端文案一致） */
+.ask-privacy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 12rpx;
+}
+.ask-privacy-text {
+  flex: 1;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #8a8f8c;
+}
+
 .wiki-link { display: block; margin-top: 8rpx; color: #2a7f53; font-size: 26rpx; }
 
 .page {
