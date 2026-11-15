@@ -217,11 +217,19 @@ if WHITENOISE_ENABLED:
 # 如需放行该请求头，请加回下面这份列表里。
 CORS_ALLOW_ALL_ORIGINS = _env_bool('DJANGO_CORS_ALLOW_ALL', DEBUG)  # 第 82 批：生产默认关闭，改为白名单
 CORS_ALLOW_CREDENTIALS = True  # 允许携带认证信息
+#: 第 398 批：允许用 `DJANGO_CORS_ALLOWED_ORIGINS`（逗号分隔）覆盖。
+#: 之前这个键写在 `.env.production.example` 里却**从没被读取** —— 白名单硬编码成
+#: localhost，部署到真实域名/IP 后浏览器跨域请求会被拒。
+_CORS_ORIGINS_ENV = os.environ.get('DJANGO_CORS_ALLOWED_ORIGINS', '').strip()
 CORS_ALLOWED_ORIGINS = [  # 允许的跨域源列表（CORS_ALLOW_ALL_ORIGINS=True 时不参与判断）
-    'http://localhost:5173',  # 前端开发服务器（Vite）
-    'http://127.0.0.1:5173',
-    'http://localhost:5175',  # 备用端口
-    'http://127.0.0.1:5175',
+    origin.strip()
+    for origin in (_CORS_ORIGINS_ENV.split(',') if _CORS_ORIGINS_ENV else [
+        'http://localhost:5173',  # 前端开发服务器（Vite）
+        'http://127.0.0.1:5173',
+        'http://localhost:5175',  # 备用端口
+        'http://127.0.0.1:5175',
+    ])
+    if origin.strip()
 ]
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -815,14 +823,22 @@ SPECTACULAR_SETTINGS = {
 # 说明：CORS_ALLOWED_ORIGINS 里同时放行了 localhost:5173 与 127.0.0.1:5173，
 # 这里原先只有 localhost 系列，导致用户若用 127.0.0.1:5173 打开前端，
 # 带 Origin 校验的写操作会被 CSRF 拦掉。现与 CORS 白名单对齐。
+#: 第 398 批：允许用 `DJANGO_CSRF_TRUSTED_ORIGINS`（逗号分隔）覆盖。
+#: ⚠️ 部署到真实地址后**必须**把公网地址加进来，否则 Django admin 登录会 403
+#: （CSRF verification failed），而报错信息不会告诉你"白名单里没有这个 host"。
+_CSRF_ORIGINS_ENV = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').strip()
 CSRF_TRUSTED_ORIGINS = [  # CSRF信任的源列表
-    "http://localhost:5173",  # 本地开发服务器
-    "http://127.0.0.1:5173",  # 本地开发服务器（与 CORS 白名单保持一致）
-    "http://localhost:5174",  # 本地开发服务器
-    "http://127.0.0.1:5174",
-    "http://localhost:5175",  # 备用端口（与 CORS_ALLOWED_ORIGINS 对齐）
-    "http://127.0.0.1:5175",
-    'http://localhost:5176'  # 本地开发服务器
+    origin.strip()
+    for origin in (_CSRF_ORIGINS_ENV.split(',') if _CSRF_ORIGINS_ENV else [
+        "http://localhost:5173",  # 本地开发服务器
+        "http://127.0.0.1:5173",  # 本地开发服务器（与 CORS 白名单保持一致）
+        "http://localhost:5174",  # 本地开发服务器
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",  # 备用端口（与 CORS_ALLOWED_ORIGINS 对齐）
+        "http://127.0.0.1:5175",
+        'http://localhost:5176'  # 本地开发服务器
+    ])
+    if origin.strip()
 ]
 
 # ============================================================================
