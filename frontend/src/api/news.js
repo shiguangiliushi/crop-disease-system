@@ -23,6 +23,10 @@ const fieldLabels = () => ({
   source: t('field.source'),
   tags: t('field.tags'),
   is_published: t('field.publishState'),
+  // 第 404 批：英文标题 / 英文来源 / 英文正文（字段级报错也要有显示名）
+  title_en: t('field.titleEn'),
+  source_en: t('field.sourceEn'),
+  content_en: t('field.contentEn'),
   // 第 399 批：新增字段也要有显示名，否则后端返回字段级校验错误时
   // 英文界面会露出 `summary: ...` 这种原始字段名。
   summary: t('field.summary'),
@@ -179,6 +183,25 @@ export async function fetchNewsStats(params = {}) {
 }
 
 /**
+ * 新闻编辑 AI 辅助（第 404 批 · P2-10）
+ * ------------------------------------------------------------------
+ * 后端 `POST /api/news/ai-assist/`（仅内容维护者），body：
+ *   { action: 'summary' | 'title' | 'tags' | 'translate', title?, summary?, content?, tags? }
+ * 成功：
+ *   · summary / title / tags → { action, text, model }
+ *   · translate             → { action: 'translate', title_en, content_en, model }
+ * 失败：503（未启用/调用失败）、429（限流）、400（参数错误）—— 交给调用方按状态码
+ * 给友好提示，本模块不吞错误。
+ *
+ * @param {object} payload
+ * @returns {Promise<object>}
+ */
+export async function aiAssistNews(payload = {}) {
+  const response = await http.post('/news/ai-assist/', payload);
+  return response.data;
+}
+
+/**
  * 组装 multipart 表单数据（第 399 批：由私有 buildFormData 改为导出 buildNewsFormData，
  * 便于单测直接断言"哪些键被 append"；创建/修改两个接口共用）
  *
@@ -200,6 +223,15 @@ export function buildNewsFormData(payload = {}, imageFile = null) {
 
   const tags = payload.tags;
   formData.append('tags', Array.isArray(tags) ? tags.join(',') : tags ?? '');
+
+  // 第 404 批：英文字段（title_en / source_en / content_en）。
+  // 与 summary 等可选字段同一口径：只在 payload 存在该键时才 append，
+  // 空串表示清空 —— 「行业动态」页的弹窗不维护英文字段，不能让它保存时误清空。
+  ['title_en', 'source_en', 'content_en'].forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      formData.append(key, payload[key] ?? '');
+    }
+  });
 
   // 第 399 批：摘要（可空字符串 = 清空摘要）
   if (Object.prototype.hasOwnProperty.call(payload, 'summary')) {
@@ -304,6 +336,7 @@ export default {
   fetchNewsDetail,
   fetchNewsRelated,
   fetchNewsStats,
+  aiAssistNews,
   createNews,
   updateNews,
   toggleNewsPublished,

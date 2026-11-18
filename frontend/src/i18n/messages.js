@@ -111,6 +111,10 @@ export const zhCN = {
     // 第 401 批：原文链接 / 关联病害（新闻表单与字段级报错共用）
     externalUrl: '原文链接',
     relatedPests: '关联病害',
+    // 第 404 批：英文字段（表单标签与字段级报错共用）
+    titleEn: '英文标题',
+    sourceEn: '英文来源',
+    contentEn: '英文正文',
     // 第 399 批：News 新增字段的报错显示名
     summary: '摘要',
     featured: '精选',
@@ -1611,6 +1615,26 @@ export const zhCN = {
     chartTagCloud: '热门标签',
     chartEmpty: '暂无数据',
     viewsUnit: '{count} 阅读',
+    // 第 404 批：英文字段 + AI 辅助（标题优化 / 摘要 / 标签 / 翻译成英文）
+    fieldTitleEn: '英文标题',
+    fieldSourceEn: '英文来源',
+    fieldContentEn: '英文正文',
+    titleEnPlaceholder: '英文标题，可点右侧「AI 翻译成英文」自动生成',
+    titleEnHint: '英文界面读者看到的标题；留空时回落到中文标题',
+    sourceEnPlaceholder: '如：Ministry of Agriculture',
+    contentEnPlaceholder: '英文正文（可粘贴翻译结果，支持纯文本或 HTML）',
+    contentEnHint: '英文界面读者看到的正文；留空时回落到中文正文',
+    aiOptimizeTitle: 'AI 优化标题',
+    aiGenerateSummary: 'AI 生成摘要',
+    aiSuggestTags: 'AI 建议标签',
+    aiTranslate: 'AI 翻译成英文',
+    aiBusy: 'AI 处理中…',
+    aiUnavailable: 'AI 暂不可用，请稍后手动填写',
+    aiRateLimited: '操作太频繁，请稍后再试',
+    aiFailed: 'AI 辅助失败，请稍后重试',
+    aiNoContent: '请先填写正文',
+    aiNoTitle: '请先填写标题',
+    aiDone: 'AI 结果已填入表单',
   },
   review: {
     unpublish: '下架',   // 第 182 批：撤回已发布的内容（可再次通过恢复）
@@ -3500,6 +3524,10 @@ export const en = {
     // Batch 401: original link / related diseases (form labels and field-level errors)
     externalUrl: 'Original URL',
     relatedPests: 'Related diseases',
+    // Batch 404: English fields (form labels and field-level errors)
+    titleEn: 'English title',
+    sourceEn: 'English source',
+    contentEn: 'English content',
     // 第 399 批
     summary: 'Summary',
     featured: 'Featured',
@@ -4927,6 +4955,26 @@ export const en = {
     chartTagCloud: 'Popular tags',
     chartEmpty: 'No data',
     viewsUnit: '{count} views',
+    // Batch 404: English fields + AI assistance (title / summary / tags / translation)
+    fieldTitleEn: 'English title',
+    fieldSourceEn: 'English source',
+    fieldContentEn: 'English content',
+    titleEnPlaceholder: 'English title — use “AI translate” on the right to generate it',
+    titleEnHint: 'Shown to readers in the English UI; falls back to the Chinese title when empty',
+    sourceEnPlaceholder: 'e.g. Ministry of Agriculture',
+    contentEnPlaceholder: 'English body (paste a translation; plain text or HTML both work)',
+    contentEnHint: 'Shown to readers in the English UI; falls back to the Chinese body when empty',
+    aiOptimizeTitle: 'AI title',
+    aiGenerateSummary: 'AI summary',
+    aiSuggestTags: 'AI tags',
+    aiTranslate: 'AI translate',
+    aiBusy: 'AI working…',
+    aiUnavailable: 'AI is unavailable right now; please fill it in manually',
+    aiRateLimited: 'Too many requests, please try again in a moment',
+    aiFailed: 'AI assistance failed, please try again later',
+    aiNoContent: 'Enter the article body first',
+    aiNoTitle: 'Enter a title first',
+    aiDone: 'AI result filled into the form',
   },
   review: {
     unpublish: 'Unpublish',   // Batch 182: take a published post down (reversible)

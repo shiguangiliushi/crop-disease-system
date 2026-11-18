@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import http from '../http';
-import { buildNewsFormData, fetchNewsList, fetchNewsTags, fetchNewsRelated, fetchNewsStats } from '../news';
+import { buildNewsFormData, fetchNewsList, fetchNewsTags, fetchNewsRelated, fetchNewsStats, aiAssistNews } from '../news';
 
 // http.js 的请求拦截器会读 auth store（拿 Token），而 store 需要先装一个 pinia
 beforeEach(() => {
@@ -331,6 +331,78 @@ describe('fetchNewsStats：新闻数据看板', () => {
       top_viewed: [],
       tag_cloud: [],
     });
+  });
+});
+
+// ============================================================================
+// 第 404 批：英文字段 + AI 辅助
+// ----------------------------------------------------------------------------
+// 1) 英文标题/来源/正文与 summary 等可选字段同一口径：**只在 payload 存在该键时
+//    append**，空串表示清空 —— 否则「行业动态」页保存会把管理页维护的译文清掉；
+// 2) AI 辅助是 POST 接口，body 必须原样交给后端（action 决定行为），失败交给调用方。
+// ============================================================================
+describe('buildNewsFormData：英文字段（第 404 批）', () => {
+  it('title_en / source_en / content_en 只在键存在时 append', () => {
+    const absent = buildNewsFormData({ title: 't', content: 'c' });
+    expect(absent.has('title_en')).toBe(false);
+    expect(absent.has('source_en')).toBe(false);
+    expect(absent.has('content_en')).toBe(false);
+  });
+
+  it('显式传空串时 append 空串（用于清空已有译文）', () => {
+    const cleared = buildNewsFormData({
+      title: 't',
+      content: 'c',
+      title_en: '',
+      source_en: '',
+      content_en: '',
+    });
+    expect(cleared.get('title_en')).toBe('');
+    expect(cleared.get('source_en')).toBe('');
+    expect(cleared.get('content_en')).toBe('');
+  });
+
+  it('有值时原样 append（英文正文允许 HTML）', () => {
+    const filled = buildNewsFormData({
+      title: 't',
+      content: 'c',
+      title_en: 'Wheat disease control guidance',
+      source_en: 'Ministry of Agriculture',
+      content_en: '<p>Body in English</p>',
+    });
+    expect(filled.get('title_en')).toBe('Wheat disease control guidance');
+    expect(filled.get('source_en')).toBe('Ministry of Agriculture');
+    expect(filled.get('content_en')).toBe('<p>Body in English</p>');
+  });
+});
+
+describe('aiAssistNews：AI 辅助', () => {
+  it('POST /news/ai-assist/，body 原样透传并返回 data', async () => {
+    http.defaults.adapter = respondWith({ action: 'summary', text: 'AI 生成的摘要', model: 'test-model' });
+
+    const payload = { action: 'summary', title: '标题', content: '正文内容' };
+    const data = await aiAssistNews(payload);
+
+    expect(captured.url).toBe('/news/ai-assist/');
+    expect(captured.method).toBe('post');
+    // axios 默认 transformRequest 会把对象序列化成 JSON 字符串
+    expect(JSON.parse(captured.data)).toEqual(payload);
+    expect(data).toEqual({ action: 'summary', text: 'AI 生成的摘要', model: 'test-model' });
+  });
+
+  it('translate 响应的 title_en / content_en 原样返回', async () => {
+    http.defaults.adapter = respondWith({
+      action: 'translate',
+      title_en: 'English title',
+      content_en: '<p>English body</p>',
+      model: 'test-model',
+    });
+
+    const data = await aiAssistNews({ action: 'translate', title: '标题', content: '正文' });
+
+    expect(JSON.parse(captured.data)).toEqual({ action: 'translate', title: '标题', content: '正文' });
+    expect(data.title_en).toBe('English title');
+    expect(data.content_en).toBe('<p>English body</p>');
   });
 });
 

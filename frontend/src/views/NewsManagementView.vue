@@ -322,13 +322,61 @@
               <span class="section-hint">{{ t('newsMgmt.basicInfoHint') }}</span>
             </div>
 
-            <el-form-item :label="t('news.fieldTitle')" prop="title">
+            <el-form-item prop="title">
+              <template #label>
+                <span class="form-label-row">
+                  <span>{{ t('news.fieldTitle') }}</span>
+                  <!-- 第 404 批：AI 优化标题（需要正文；失败不清空已有标题） -->
+                  <button
+                    v-if="canManage"
+                    type="button"
+                    class="ai-btn"
+                    :disabled="Boolean(aiBusy) || !aiPrerequisite('title')"
+                    :title="aiPrerequisite('title') ? t('newsMgmt.aiOptimizeTitle') : aiDisabledHint('title')"
+                    @click="runAiAssist('title')"
+                  >
+                    <i :class="aiBusy === 'title' ? 'fas fa-spinner fa-spin' : 'fas fa-wand-magic-sparkles'"></i>
+                    {{ aiBusy === 'title' ? t('newsMgmt.aiBusy') : t('newsMgmt.aiOptimizeTitle') }}
+                  </button>
+                </span>
+              </template>
               <el-input
                 v-model="form.title"
                 maxlength="200"
                 show-word-limit
                 :placeholder="t('news.fieldTitlePlaceholder')"
               />
+            </el-form-item>
+
+            <!-- 第 404 批：英文标题（英文界面读者直接看这个；可用 AI 翻译一键回填标题+正文） -->
+            <el-form-item>
+              <template #label>
+                <span class="form-label-row">
+                  <span>{{ t('newsMgmt.fieldTitleEn') }}</span>
+                  <button
+                    v-if="canManage"
+                    type="button"
+                    class="ai-btn"
+                    :disabled="Boolean(aiBusy) || !aiPrerequisite('translate')"
+                    :title="aiPrerequisite('translate') ? t('newsMgmt.aiTranslate') : aiDisabledHint('translate')"
+                    @click="runAiAssist('translate')"
+                  >
+                    <i :class="aiBusy === 'translate' ? 'fas fa-spinner fa-spin' : 'fas fa-language'"></i>
+                    {{ aiBusy === 'translate' ? t('newsMgmt.aiBusy') : t('newsMgmt.aiTranslate') }}
+                  </button>
+                </span>
+              </template>
+              <el-input
+                v-model="form.title_en"
+                maxlength="200"
+                show-word-limit
+                clearable
+                :placeholder="t('newsMgmt.titleEnPlaceholder')"
+              />
+              <p class="field-hint">
+                <i class="fas fa-language"></i>
+                {{ t('newsMgmt.titleEnHint') }}
+              </p>
             </el-form-item>
 
             <el-row :gutter="16">
@@ -343,10 +391,31 @@
                 <el-form-item :label="t('news.fieldSource')">
                   <el-input v-model="form.source" maxlength="100" :placeholder="t('newsMgmt.sourcePlaceholder')" />
                 </el-form-item>
+                <!-- 第 404 批：英文来源（可选；英文界面下来源从这里取） -->
+                <el-form-item :label="t('newsMgmt.fieldSourceEn')">
+                  <el-input v-model="form.source_en" maxlength="100" :placeholder="t('newsMgmt.sourceEnPlaceholder')" />
+                </el-form-item>
               </el-col>
             </el-row>
 
-            <el-form-item :label="t('news.tagLabel')">
+            <el-form-item>
+              <template #label>
+                <span class="form-label-row">
+                  <span>{{ t('news.tagLabel') }}</span>
+                  <!-- 第 404 批：AI 建议标签（回填为逗号分隔的标签数组，可再手动增删） -->
+                  <button
+                    v-if="canManage"
+                    type="button"
+                    class="ai-btn"
+                    :disabled="Boolean(aiBusy) || !aiPrerequisite('tags')"
+                    :title="aiPrerequisite('tags') ? t('newsMgmt.aiSuggestTags') : aiDisabledHint('tags')"
+                    @click="runAiAssist('tags')"
+                  >
+                    <i :class="aiBusy === 'tags' ? 'fas fa-spinner fa-spin' : 'fas fa-tags'"></i>
+                    {{ aiBusy === 'tags' ? t('newsMgmt.aiBusy') : t('newsMgmt.aiSuggestTags') }}
+                  </button>
+                </span>
+              </template>
               <el-select
                 v-model="form.tags"
                 multiple
@@ -413,8 +482,45 @@
               </div>
             </el-form-item>
 
+            <!-- 第 404 批：英文正文（纯文本/HTML 均可，写入 content_en；留空时英文界面回落中文） -->
+            <el-form-item>
+              <template #label>
+                <span class="form-label-row">
+                  <span>{{ t('newsMgmt.fieldContentEn') }}</span>
+                </span>
+              </template>
+              <el-input
+                v-model="form.content_en"
+                type="textarea"
+                :rows="4"
+                resize="none"
+                :placeholder="t('newsMgmt.contentEnPlaceholder')"
+              />
+              <p class="field-hint">
+                <i class="fas fa-language"></i>
+                {{ t('newsMgmt.contentEnHint') }}
+              </p>
+            </el-form-item>
+
             <!-- 第 399 批 · P0-3：列表摘要。留空时读者端回退正文截断；限 200 字与后端一致 -->
-            <el-form-item :label="t('news.fieldSummary')">
+            <el-form-item>
+              <template #label>
+                <span class="form-label-row">
+                  <span>{{ t('news.fieldSummary') }}</span>
+                  <!-- 第 404 批：AI 生成摘要（需要正文；失败不清空手写摘要） -->
+                  <button
+                    v-if="canManage"
+                    type="button"
+                    class="ai-btn"
+                    :disabled="Boolean(aiBusy) || !aiPrerequisite('summary')"
+                    :title="aiPrerequisite('summary') ? t('newsMgmt.aiGenerateSummary') : aiDisabledHint('summary')"
+                    @click="runAiAssist('summary')"
+                  >
+                    <i :class="aiBusy === 'summary' ? 'fas fa-spinner fa-spin' : 'fas fa-wand-magic-sparkles'"></i>
+                    {{ aiBusy === 'summary' ? t('newsMgmt.aiBusy') : t('newsMgmt.aiGenerateSummary') }}
+                  </button>
+                </span>
+              </template>
               <el-input
                 v-model="form.summary"
                 type="textarea"
@@ -560,6 +666,7 @@ import {
 import RichTextEditor from '@/components/RichTextEditor.vue';
 import {
   NEWS_CATEGORIES,
+  aiAssistNews,
   createNews,
   deleteNews,
   fetchNewsDetail,
@@ -574,6 +681,7 @@ import { toAbsoluteMediaUrl } from '@/api/http';
 // 第 401 批：关联病害多选的选项来自病害百科列表
 import { fetchPestList } from '@/api/pest';
 import { useRoute, useRouter } from 'vue-router';  // 第 121 批：旧深链重定向进来的 ?action=
+import { useAuthStore } from '@/stores/auth';  // 第 404 批：AI 辅助仅内容维护者可见
 import { useI18n } from '@/i18n';  // 第 66 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 79 批：新闻标题/来源等内容数据
 // 第 117 批：去掉 BackButton（本页已挪进管理后台外壳，侧栏就是导航）
@@ -591,6 +699,14 @@ const CHART_PALETTE = ['#3d9a68', '#5fb088', '#93cdad', '#2a7f53', '#d9922f', '#
 
 const { t } = useI18n();
 const { localizedField } = useLocalized();
+
+/**
+ * 第 404 批：AI 辅助按钮的可见性
+ * 本页路由本身已要求 CONTENT 能力 + news 内容模块（见 router meta），这里再按能力
+ * 确认一次：AI 是对内容的增强操作，只让内容维护者看到入口，不另造一套权限判断。
+ */
+const authStore = useAuthStore();
+const canManage = computed(() => authStore.isAdmin || authStore.hasContentModule('news'));
 
 /**
  * 第 401 批：关联病害下拉的选项（按需加载一次）
@@ -891,9 +1007,13 @@ const newsFormRef = ref(null);
 const form = reactive({
   id: null,
   title: '',
+  // 第 404 批：英文标题 / 英文正文（来源英文可选）—— 英文界面读者直接看这些字段
+  title_en: '',
   content: '',
+  content_en: '',
   category: 'notice',
   source: '',
+  source_en: '',
   tags: [],
   is_published: true,
   published_at: null,  // 第 38 批：定时发布（留空 = 立即发布）
@@ -905,6 +1025,95 @@ const form = reactive({
   external_url: '',
   related_pests: [],
 });
+
+// ---------- 第 404 批：AI 辅助（标题优化 / 摘要 / 标签 / 翻译成英文） ----------
+// 同一时刻只允许一个 AI 请求（aiBusy 记录当前 action），避免并发回填互相覆盖。
+const aiBusy = ref('');
+
+/** 正文去掉 HTML 标签后是否有实际文字（RichTextEditor 的空正文可能是 `<p><br></p>`） */
+const hasAiContent = computed(() => String(form.content || '').replace(/<[^>]*>/g, '').trim().length > 0);
+const hasAiTitle = computed(() => String(form.title || '').trim().length > 0);
+
+/** 每个 AI 动作的前置条件：翻译需要中英两边都有源（标题+正文），其余只需要正文 */
+const aiPrerequisite = (action) => (
+  action === 'translate' ? hasAiContent.value && hasAiTitle.value : hasAiContent.value
+);
+
+/** 按钮禁用时的 title 提示：缺什么说什么，不能一句笼统的"不可用" */
+const aiDisabledHint = (action) => (
+  action === 'translate' && !hasAiTitle.value ? t('newsMgmt.aiNoTitle') : t('newsMgmt.aiNoContent')
+);
+
+/** 按 action 组装请求体（只带后端认识的字段） */
+const buildAiPayload = (action) => {
+  const title = String(form.title || '').trim();
+  if (action === 'tags') {
+    return { action, title, summary: String(form.summary || '').trim(), content: form.content || '' };
+  }
+  return { action, title, content: form.content || '' };
+};
+
+/**
+ * 执行一次 AI 辅助并把结果回填到表单
+ * - 失败只提示、**绝不改表单已有内容**（用户手写的内容比 AI 结果重要）；
+ * - 503 → 「AI 暂不可用」；429 → 「操作太频繁」；其它 → 后端 error 或通用失败文案；
+ * - 失败不阻断保存：这里不碰 submitting / 表单校验状态。
+ */
+const runAiAssist = async (action) => {
+  if (aiBusy.value || !aiPrerequisite(action) || !canManage.value) return;
+  aiBusy.value = action;
+  try {
+    const data = await aiAssistNews(buildAiPayload(action));
+
+    if (action === 'translate') {
+      if (!data || (data.title_en === undefined && data.content_en === undefined)) {
+        throw new Error('AI 未返回译文');
+      }
+      if (data.title_en !== undefined && data.title_en !== null) {
+        form.title_en = String(data.title_en);
+      }
+      if (data.content_en !== undefined && data.content_en !== null) {
+        form.content_en = String(data.content_en);
+      }
+    } else {
+      const text = String(data?.text ?? '').trim();
+      if (!text) throw new Error('AI 未返回内容');
+      if (action === 'title') {
+        form.title = text;
+      } else if (action === 'summary') {
+        form.summary = text;
+      } else if (action === 'tags') {
+        // 后端返回逗号分隔的标签串；中英文逗号/顿号/分号都拆开，最多 10 个
+        form.tags = text
+          .split(/[,，、;；]/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .slice(0, 10);
+      }
+    }
+
+    ElMessage.success(t('newsMgmt.aiDone'));
+  } catch (error) {
+    const status = error?.response?.status;
+    // 503（未启用/上游失败）与 429（限流）是**预期内**的运营状态，记 warn 即可；
+    // 其它异常才值得 error 级别（便于区分"AI 没开"与"前端写错"）。
+    if (status === 503 || status === 429) {
+      console.warn('AI 辅助暂不可用/限流:', error?.message || error);
+    } else {
+      console.error('AI 辅助失败:', error);
+    }
+    const backendError = error?.response?.data?.error || error?.response?.data?.detail;
+    if (status === 503) {
+      ElMessage.warning(t('newsMgmt.aiUnavailable'));
+    } else if (status === 429) {
+      ElMessage.warning(t('newsMgmt.aiRateLimited'));
+    } else {
+      ElMessage.error(backendError || t('newsMgmt.aiFailed'));
+    }
+  } finally {
+    aiBusy.value = '';
+  }
+};
 
 const imageFile = ref(null);
 const coverPreview = ref('');
@@ -936,9 +1145,13 @@ const resetForm = () => {
   Object.assign(form, {
     id: null,
     title: '',
+    // 第 404 批：英文字段清空（新建时为空；编辑时 handleEdit 会回填）
+    title_en: '',
     content: '',
+    content_en: '',
     category: 'notice',
     source: '',
+    source_en: '',
     tags: [],
     is_published: true,
     published_at: null,
@@ -979,9 +1192,13 @@ const handleEdit = (row) => {
   Object.assign(form, {
     id: row.id,
     title: row.title || '',
+    // 第 404 批：英文标题 / 正文 / 来源（老数据没有该字段时为空串，保存可清空）
+    title_en: row.title_en || '',
     content: row.content || '',
+    content_en: row.content_en || '',
     category: row.category || 'notice',
     source: row.source || '',
+    source_en: row.source_en || '',
     tags: row.tags ? String(row.tags).split(',').filter(Boolean) : [],
     is_published: !!row.is_published,
     published_at: row.published_at || null,
@@ -1041,9 +1258,14 @@ const submitForm = async () => {
   try {
     const payload = {
       title: form.title.trim(),
+      // 第 404 批：英文字段始终带键 —— 空串=清空（用户删掉译文后保存要真的清掉），
+      // buildNewsFormData 只在键存在时 append，所以这里的键不能省。
+      title_en: (form.title_en || '').trim(),
       content: form.content,
+      content_en: (form.content_en || '').trim(),
       category: form.category,
       source: form.source.trim(),
+      source_en: (form.source_en || '').trim(),
       tags: form.tags,
       is_published: form.is_published,
       published_at: form.published_at || null,  // 第 38 批：定时发布
@@ -1616,6 +1838,62 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .news-management {
     overflow-x: clip;
+  }
+}
+
+/* ================= 第 404 批：AI 辅助按钮 / 字段 label 行 ================= */
+.form-label-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+/* 与表单里的 .field-hint 同一套轻量观感：虚线胶囊，hover 变实线 */
+.ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  border: 1px dashed var(--brand-300);
+  border-radius: var(--radius-pill);
+  background: var(--brand-50);
+  color: var(--brand-700);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+.ai-btn:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--brand-500);
+  background: var(--brand-100);
+}
+
+.ai-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ai-btn i {
+  font-size: 11px;
+}
+
+@media (max-width: 480px) {
+  /* 375px：label 行允许换行，AI 按钮不会把字段标题挤出弹窗 */
+  .form-label-row {
+    gap: 6px;
+  }
+
+  .ai-btn {
+    padding: 2px 8px;
+    font-size: 11px;
   }
 }
 </style>
