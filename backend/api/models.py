@@ -809,6 +809,49 @@ class News(models.Model):  # 定义新闻模型
         ordering = ['-created_at']  # 默认按创建时间倒序排列
 
 
+class NewsSubscription(models.Model):
+    """
+    第 402 批（行业动态清单 P2-11）：行业动态订阅。
+
+    为什么要独立一张表而不是复用关注关系：订阅的粒度是"内容分类 / 具体病害"，
+    与"关注某人"是两套语义；而且同一个人可以同时订阅"政策分类"和"番茄晚疫病"，
+    发布扇出时要按两种 target 并集去重（同一人最多收到一条）。
+    """
+
+    TARGET_CHOICES = (
+        ('category', '分类'),
+        ('pest', '病害'),
+    )
+
+    user = models.ForeignKey(
+        CustomUser, on_delete=models.CASCADE,
+        related_name='news_subscriptions', verbose_name='订阅用户',
+    )
+    target_type = models.CharField(
+        max_length=20, choices=TARGET_CHOICES, default='category', verbose_name='订阅类型',
+    )
+    #: target_type='category' 时使用（取值 ∈ News.CATEGORY_CHOICES）
+    category = models.CharField(max_length=20, blank=True, default='', verbose_name='订阅分类')
+    #: target_type='pest' 时使用
+    pest = models.ForeignKey(
+        PestInfo, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='news_subscriptions', verbose_name='订阅病害',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = '行业动态订阅'
+        verbose_name_plural = verbose_name
+        ordering = ['-created_at']
+        # ⚠️ 刻意**不加** unique_together：category / pest 都可为空，而 NULL 在多数
+        # 数据库里互不相等，"同一用户重复订阅"拦不住（SQLite/MySQL 都一样）。
+        # 唯一性由 NewsSubscriptionSerializer.validate() 显式查重（第 402 批）。
+
+    def __str__(self):
+        target = f'病害 {self.pest_id}' if self.target_type == 'pest' else f'分类 {self.category}'
+        return f'{self.user_id} → {target}'
+
+
 # ============================================================================
 # 第 43 批修复：把"卫星模型模块"在这里统一导入一次
 # ----------------------------------------------------------------------------

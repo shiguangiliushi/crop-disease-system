@@ -165,6 +165,8 @@ AnnouncementViewSet = import_view('api.views_notify', 'AnnouncementViewSet')
 AnnouncementLatestView = import_view('api.views_notify', 'AnnouncementLatestView')
 
 NewsViewSet = import_view('api.news_views', 'NewsViewSet')
+# 第 402 批：行业动态订阅（"我的订阅"；P2-11）
+NewsSubscriptionViewSet = import_view('api.views_news_subscription', 'NewsSubscriptionViewSet')
 
 # 论坛相关视图
 ForumBoardViewSet = import_view('api.views_forum', 'ForumBoardViewSet')
@@ -190,6 +192,9 @@ _DOC_AUTHENTICATION_CLASSES = [
 router = DefaultRouter(trailing_slash=True)  # 确保使用斜杠结尾
 # 注册NewsViewSet
 router.register(r'news', NewsViewSet, basename='news')
+# 第 402 批：行业动态订阅。路径是 news-subscriptions，不会被 news/{pk} 详情路由吞掉
+#（DRF 的 list 路由 ^news/$ 与 ^news-subscriptions/$ 前缀不同，互不冲突）。
+router.register(r'news-subscriptions', NewsSubscriptionViewSet, basename='news-subscription')
 
 # 创建论坛子应用路由器
 forum_router = DefaultRouter()

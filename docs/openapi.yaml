@@ -6482,6 +6482,159 @@ paths:
               schema:
                 $ref: '#/components/schemas/News'
           description: ''
+  /api/news-subscriptions/:
+    get:
+      operationId: api_news_subscriptions_list
+      description: |-
+        我的行业动态订阅。
+
+        - 权限：仅登录用户；queryset 强制 `filter(user=request.user)`，
+          所以"看/删别人的订阅"在数据库层就查不到（404，不泄露是否存在）；
+        - 分页：不显式设置分页类 → 走全局 `CustomPagination`，
+          响应是标准 `{count, next, previous, current_page, total_pages, results}`。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - api
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedNewsSubscriptionList'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/PaginatedNewsSubscriptionList'
+          description: ''
+    post:
+      operationId: api_news_subscriptions_create
+      description: |-
+        我的行业动态订阅。
+
+        - 权限：仅登录用户；queryset 强制 `filter(user=request.user)`，
+          所以"看/删别人的订阅"在数据库层就查不到（404，不泄露是否存在）；
+        - 分页：不显式设置分页类 → 走全局 `CustomPagination`，
+          响应是标准 `{count, next, previous, current_page, total_pages, results}`。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewsSubscription'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/NewsSubscription'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/NewsSubscription'
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsSubscription'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/NewsSubscription'
+          description: ''
+  /api/news-subscriptions/{id}/:
+    delete:
+      operationId: api_news_subscriptions_destroy
+      description: |-
+        我的行业动态订阅。
+
+        - 权限：仅登录用户；queryset 强制 `filter(user=request.user)`，
+          所以"看/删别人的订阅"在数据库层就查不到（404，不泄露是否存在）；
+        - 分页：不显式设置分页类 → 走全局 `CustomPagination`，
+          响应是标准 `{count, next, previous, current_page, total_pages, results}`。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this 行业动态订阅.
+        required: true
+      tags:
+      - api
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/news-subscriptions/check/:
+    get:
+      operationId: api_news_subscriptions_check_retrieve
+      description: |-
+        查询"我是否已订阅某个分类 / 某病害"（前端订阅按钮的状态用）。
+
+        参数缺失 / 非法时按"未订阅"返回 200，而不是 400：这个接口只服务于
+        按钮状态，不该让订阅页因为一个拼错的查询参数整块报错。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      tags:
+      - api
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/news/{id}/:
     get:
       operationId: api_news_retrieve
@@ -10622,6 +10775,49 @@ components:
       required:
       - count
       - results
+    NewsSubscription:
+      type: object
+      description: |-
+        第 402 批：行业动态订阅（我的订阅）。
+
+        为什么唯一性在应用层做：`NewsSubscription` 的 category / pest 都可为空，
+        而 NULL 在数据库里互不相等，`unique_together` 拦不住重复订阅
+        （SQLite / MySQL 都是这个行为）；这里按 (user, target_type, category, pest)
+        显式查重，语义才可靠。
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        target_type:
+          allOf:
+          - $ref: '#/components/schemas/TargetTypeEnum'
+          title: 订阅类型
+        category:
+          type: string
+          title: 订阅分类
+          maxLength: 20
+        category_label:
+          type: string
+          description: 分类的展示标签；病害订阅没有分类，返回空串
+          readOnly: true
+        pest:
+          type: integer
+          nullable: true
+          title: 订阅病害
+        pest_detail:
+          allOf:
+          - $ref: '#/components/schemas/RelatedPestBrief'
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - category_label
+      - created_at
+      - id
+      - pest_detail
     Notification:
       type: object
       properties:
@@ -10850,6 +11046,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/News'
+    PaginatedNewsSubscriptionList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewsSubscription'
     PaginatedNotificationList:
       type: object
       required:
@@ -12086,6 +12305,14 @@ components:
         * `pending` - 待审核
         * `published` - 已发布
         * `hidden` - 隐藏
+    TargetTypeEnum:
+      enum:
+      - category
+      - pest
+      type: string
+      description: |-
+        * `category` - 分类
+        * `pest` - 病害
     TaskReminderRequestSchema:
       type: object
       properties:
@@ -12136,6 +12363,7 @@ components:
       - announcement
       - system
       - feedback
+      - news
       type: string
       description: |-
         * `reply` - 有人回复了你
@@ -12147,6 +12375,7 @@ components:
         * `announcement` - 系统公告
         * `system` - 系统消息
         * `feedback` - 反馈回复
+        * `news` - 行业动态
     UserProfile:
       type: object
       description: 用户资料序列化器（本人或管理员查看时使用，含邮箱等）

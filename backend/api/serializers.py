@@ -26,7 +26,7 @@ from django.db.models import Count  # 导入Django计数聚合函数
 from django.utils import timezone  # 第 91 批：反馈里的识别摘要要按本地时区展示
 from .models import (
     CustomUser, PestInfo, PreventionMethod, DetectionHistory, 
-    Feedback, News, SensitiveWord, CropHealthProfile
+    Feedback, News, SensitiveWord, CropHealthProfile, NewsSubscription
 )  # 导入模型类
 from .models_forum import Post, Comment, Like, ForumBoard  # 导入论坛模型类
 # 第 124 批：对象级约束里的"管理员例外"统一用 is_full_admin()（不是能力判定）
@@ -1297,6 +1297,85 @@ class NewsRelatedResponseSerializer(serializers.Serializer):
 
     results = NewsSerializer(many=True)
     count = serializers.IntegerField()
+
+
+class NewsSubscriptionSerializer(serializers.ModelSerializer):
+    """
+    第 402 批：行业动态订阅（我的订阅）。
+
+    为什么唯一性在应用层做：`NewsSubscription` 的 category / pest 都可为空，
+    而 NULL 在数据库里互不相等，`unique_together` 拦不住重复订阅
+    （SQLite / MySQL 都是这个行为）；这里按 (user, target_type, category, pest)
+    显式查重，语义才可靠。
+    """
+
+    #: 每人订阅上限：扇出时每人一条通知，上限是防止脚本刷爆通知量
+    MAX_PER_USER = 50
+
+    #: 分类中文兜底标签（前端按当前语言自己翻译，渲染兜底时才用它）
+    category_label = serializers.SerializerMethodField()
+    #: 病害轻量详情（复用第 401 批的 Brief 序列化器，不把 image/symptoms 塞进订阅列表）
+    pest_detail = RelatedPestBriefSerializer(source='pest', read_only=True, allow_null=True)
+
+    class Meta:
+        model = NewsSubscription
+        fields = [
+            'id', 'target_type', 'category', 'category_label',
+            'pest', 'pest_detail', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_category_label(self, obj) -> str:
+        """分类的展示标签；病害订阅没有分类，返回空串"""
+        return dict(News.CATEGORY_CHOICES).get((obj.category or '').strip(), '')
+
+    def validate(self, attrs):
+        """
+        统一做 target_type 分支校验 / 重复订阅 / 每人上限。
+
+        这三件事都依赖"当前用户"，放在对象级 validate 里才能同时拿到 attrs
+        与 request.user（字段级 validate_category 拿不到用户，没法查重）。
+        """
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+
+        target_type = attrs.get('target_type') or 'category'
+        if target_type not in dict(NewsSubscription.TARGET_CHOICES):
+            raise serializers.ValidationError({'target_type': ['订阅类型不合法']})
+
+        if target_type == 'category':
+            category = (attrs.get('category') or '').strip()
+            if category not in dict(News.CATEGORY_CHOICES):
+                raise serializers.ValidationError({'category': ['分类不合法']})
+            # 分类订阅与病害无关：即使请求里带了 pest 也置空，避免存出"两种都填"的脏数据
+            pest = None
+        else:
+            pest = attrs.get('pest')
+            if pest is None:
+                raise serializers.ValidationError({'pest': ['请选择要订阅的病害']})
+            # 同理：病害订阅不带分类
+            category = ''
+
+        attrs['target_type'] = target_type
+        attrs['category'] = category
+        attrs['pest'] = pest
+
+        # 权限层已要求登录；这里防御性放行（直接实例化序列化器调用时没有 request）
+        if user is None or not getattr(user, 'is_authenticated', False):
+            return attrs
+
+        # 重复订阅：同一用户 + 同一目标只允许一条
+        if NewsSubscription.objects.filter(
+            user=user, target_type=target_type, category=category, pest=pest,
+        ).exists():
+            raise serializers.ValidationError('已经订阅过这个分类/病害')
+
+        # 每人最多 MAX_PER_USER 条（与"删除自己的订阅"配合使用）
+        if NewsSubscription.objects.filter(user=user).count() >= self.MAX_PER_USER:
+            raise serializers.ValidationError(
+                f'每人最多订阅 {self.MAX_PER_USER} 条，请先删除部分订阅'
+            )
+        return attrs
 
 
 class PostListSerializer(serializers.ModelSerializer):

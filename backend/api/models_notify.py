@@ -34,6 +34,8 @@ class Notification(models.Model):
         #: ⚠️ 第 224 批：反馈回复原来借用 `system`（显示成「系统消息」）；
         #: 反馈是**人和人之间**的往来，和系统通知混在一起会让用户找不到。
         ('feedback', '反馈回复'),
+        # 第 402 批：行业动态订阅推送（订阅了某分类/某病害，新闻发布时通知）
+        ('news', '行业动态'),
     )
 
     recipient = models.ForeignKey(
@@ -67,6 +69,14 @@ class Notification(models.Model):
     announcement = models.ForeignKey(
         'api.Announcement', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='notifications', verbose_name='相关公告',
+    )
+    # 第 402 批：行业动态订阅通知 -> 点通知能回到新闻；同时作为"这条新闻是否
+    # 已经发过通知"的去重依据（管理命令补发定时发布新闻时靠它避免重复扇出）。
+    # 用字符串引用 'api.News'：News 定义在 models.py，而本文件被 models.py
+    # 末尾导入，直接 import 会循环。
+    news = models.ForeignKey(
+        'api.News', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='notifications', verbose_name='相关新闻',
     )
 
     is_read = models.BooleanField('已读', default=False)

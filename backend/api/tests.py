@@ -62,6 +62,7 @@ from rest_framework import status  # 第 125 批：能力矩阵测试要断言�
 
 from .models import DetectionHistory, Feedback, News, PestInfo, PreventionMethod, SensitiveWord
 from .models import EditorModuleGrant  # 第 128 批：编辑员的模块授权（内容审核/新闻/百科/反馈）
+from .models import NewsSubscription  # 第 402 批：行业动态订阅（P2-11）
 from .role_matrix import ENDPOINT_RULES, MODULE_PAGES, ANY_AUTHENTICATED_PATHS
 from .capabilities import CONTENT_MODULES  # 第 178 批：角色矩阵测试要按模块遍历（**模块级**导入 ——
 # 局部导入会让"文件里有这个字符串"的检查失效，这个坑本项目吃过）
@@ -3192,6 +3193,382 @@ class NewsLinkageTests(TestCase):
         detail = self.anon.get(f'/api/news/{first.id}/')
         self.assertIsNone(detail.data['prev_news'], 'created_at 相同时按 pk 兜底：pk 最小的是第一篇')
         self.assertEqual(detail.data['next_news']['id'], second.id, 'created_at 相同时下一篇取 pk 更大的')
+
+
+class NewsSubscriptionTests(TestCase):
+    """
+    第 402 批（行业动态清单 P2-11）：行业动态订阅与发布通知。
+
+    背景：订阅是"内容找人"的最后一块拼图 —— 此前用户只能主动来列表页翻新闻，
+    没有任何"我关心政策/我关心小麦锈病"的入口，重要预警发出来也没人知道。
+    本组用例锁死三件事：
+      · 订阅只能看/删自己的（别人的 404，不泄露是否存在）；
+      · 新建即发布 / 草稿→发布 会给"订阅了该分类或该新闻关联病害"的用户各发一条
+        通知（同一人最多一条，账号停用的不发，作者也是订阅者时保留副本）；
+      · 定时发布到点不会触发保存动作，由 `notify_pending_news` 补发且可重复执行。
+    """
+
+    def setUp(self):
+        # 订阅/通知链路会用到缓存（限流等），clear 防止串测
+        cache.clear()
+
+        self.admin = User.objects.create_user(
+            username='sub_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        self.policy_user = User.objects.create_user(username='sub_policy', password='pw123456')
+        self.pest_user = User.objects.create_user(username='sub_pest', password='pw123456')
+        self.both_user = User.objects.create_user(username='sub_both', password='pw123456')
+        self.outsider = User.objects.create_user(username='sub_none', password='pw123456')
+        self.inactive = User.objects.create_user(
+            username='sub_inactive', password='pw123456', is_active=False,
+        )
+
+        self.wheat_pest = PestInfo.objects.create(
+            name='小麦条锈病', name_en='Wheat stripe rust', crop_type='小麦',
+            crop_type_en='Wheat', english_identifier='Wheat___Stripe_rust_sub',
+        )
+
+        # 固定订阅关系：政策分类（policy_user / both_user / inactive 停用账号）
+        # 与小麦条锈病（pest_user / both_user）；both_user 两种都订，用来验证去重。
+        NewsSubscription.objects.create(
+            user=self.policy_user, target_type='category', category='policy',
+        )
+        NewsSubscription.objects.create(
+            user=self.pest_user, target_type='pest', pest=self.wheat_pest,
+        )
+        NewsSubscription.objects.create(
+            user=self.both_user, target_type='category', category='policy',
+        )
+        NewsSubscription.objects.create(
+            user=self.both_user, target_type='pest', pest=self.wheat_pest,
+        )
+        NewsSubscription.objects.create(
+            user=self.inactive, target_type='category', category='policy',
+        )
+
+        self.anon = APIClient()
+        self.anon.raise_request_exception = False
+        self.client_policy = APIClient()
+        self.client_policy.force_authenticate(user=self.policy_user)
+        self.client_pest = APIClient()
+        self.client_pest.force_authenticate(user=self.pest_user)
+        self.client_both = APIClient()
+        self.client_both.force_authenticate(user=self.both_user)
+        self.client_outsider = APIClient()
+        self.client_outsider.force_authenticate(user=self.outsider)
+        self.client_admin = APIClient()
+        self.client_admin.raise_request_exception = False
+        self.client_admin.force_authenticate(user=self.admin)
+
+    def tearDown(self):
+        cache.clear()
+
+    # ---------- 工具 ----------
+
+    def _create_news(self, **overrides):
+        """用管理员账号通过真实接口创建新闻（create 里的发布通知逻辑才会被触发）"""
+        payload = {
+            'title': '小麦条锈病预警',
+            'content': '今年小麦条锈病在多地扩散，建议及时防治。',
+            'category': 'policy',
+            'is_published': 'true',
+        }
+        payload.update(overrides)
+        return self.client_admin.post('/api/news/', payload, format='multipart')
+
+    @staticmethod
+    def _news_notifications(news):
+        return Notification.objects.filter(type='news', news=news)
+
+    # ---------- 权限 / 归属 ----------
+
+    def test_anonymous_cannot_list_or_create(self):
+        self.assertEqual(self.anon.get('/api/news-subscriptions/').status_code, 401)
+        self.assertEqual(
+            self.anon.post(
+                '/api/news-subscriptions/',
+                {'target_type': 'category', 'category': 'policy'},
+                format='json',
+            ).status_code,
+            401,
+        )
+
+    def test_list_only_returns_my_subscriptions(self):
+        data = self.client_policy.get('/api/news-subscriptions/').data
+        self.assertEqual(data['count'], 1, '只返回自己的订阅')
+        self.assertEqual(data['results'][0]['target_type'], 'category')
+        self.assertEqual(data['results'][0]['category'], 'policy')
+
+        both = self.client_both.get('/api/news-subscriptions/').data
+        self.assertEqual(both['count'], 2, '同时订分类与病害应有两条')
+
+    def test_cannot_delete_others_subscription(self):
+        other = NewsSubscription.objects.get(user=self.pest_user, target_type='pest')
+        response = self.client_policy.delete(f'/api/news-subscriptions/{other.id}/')
+        self.assertEqual(response.status_code, 404, '删别人的订阅必须是 404（不泄露是否存在）')
+        self.assertTrue(NewsSubscription.objects.filter(pk=other.pk).exists())
+
+        mine = NewsSubscription.objects.get(user=self.policy_user)
+        self.assertEqual(
+            self.client_policy.delete(f'/api/news-subscriptions/{mine.id}/').status_code, 204,
+        )
+        self.assertFalse(NewsSubscription.objects.filter(pk=mine.pk).exists())
+
+    # ---------- 创建 / 校验 ----------
+
+    def test_create_category_subscription(self):
+        response = self.client_outsider.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'category', 'category': 'tech'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['target_type'], 'category')
+        self.assertEqual(response.data['category'], 'tech')
+        self.assertEqual(response.data['category_label'], '农业技术')
+        self.assertIsNone(response.data['pest'])
+        self.assertIsNone(response.data['pest_detail'])
+        self.assertIn('created_at', response.data)
+        self.assertTrue(
+            NewsSubscription.objects.filter(user=self.outsider, category='tech').exists(),
+        )
+
+    def test_create_pest_subscription(self):
+        response = self.client_outsider.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'pest', 'pest': self.wheat_pest.id},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['target_type'], 'pest')
+        self.assertEqual(response.data['category'], '', '病害订阅不该带分类')
+        self.assertEqual(response.data['category_label'], '')
+        self.assertEqual(response.data['pest'], self.wheat_pest.id)
+        self.assertEqual(response.data['pest_detail']['name'], '小麦条锈病')
+        self.assertEqual(response.data['pest_detail']['crop_type_en'], 'Wheat')
+
+    def test_invalid_category_rejected(self):
+        response = self.client_outsider.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'category', 'category': 'nonsense'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('category', response.data)
+
+    def test_pest_type_requires_pest(self):
+        response = self.client_outsider.post(
+            '/api/news-subscriptions/', {'target_type': 'pest'}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('pest', response.data)
+
+    def test_nonexistent_pest_rejected(self):
+        response = self.client_outsider.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'pest', 'pest': 999999},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('pest', response.data)
+        self.assertFalse(NewsSubscription.objects.filter(user=self.outsider).exists())
+
+    def test_duplicate_subscription_rejected(self):
+        category = self.client_policy.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'category', 'category': 'policy'},
+            format='json',
+        )
+        self.assertEqual(category.status_code, 400)
+        self.assertIn('已经订阅过', str(category.data))
+
+        pest = self.client_both.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'pest', 'pest': self.wheat_pest.id},
+            format='json',
+        )
+        self.assertEqual(pest.status_code, 400)
+        self.assertIn('已经订阅过', str(pest.data))
+
+    def test_subscription_limit_per_user(self):
+        # 直接用 ORM 造满 50 条（接口逐条创建太慢，且这里只测"第 51 条被拦"）
+        NewsSubscription.objects.bulk_create([
+            NewsSubscription(user=self.outsider, target_type='category', category='policy')
+            for _ in range(50)
+        ])
+        response = self.client_outsider.post(
+            '/api/news-subscriptions/',
+            {'target_type': 'category', 'category': 'tech'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('最多订阅', str(response.data))
+        self.assertEqual(NewsSubscription.objects.filter(user=self.outsider).count(), 50)
+
+    # ---------- check ----------
+
+    def test_check_category_and_pest(self):
+        category = self.client_policy.get(
+            '/api/news-subscriptions/check/',
+            {'target_type': 'category', 'category': 'policy'},
+        )
+        self.assertEqual(category.status_code, 200)
+        self.assertTrue(category.data['subscribed'])
+        self.assertIsNotNone(category.data['id'])
+
+        not_subscribed = self.client_policy.get(
+            '/api/news-subscriptions/check/',
+            {'target_type': 'category', 'category': 'tech'},
+        )
+        self.assertFalse(not_subscribed.data['subscribed'])
+        self.assertIsNone(not_subscribed.data['id'])
+
+        pest = self.client_pest.get(
+            '/api/news-subscriptions/check/',
+            {'target_type': 'pest', 'pest': self.wheat_pest.id},
+        )
+        self.assertTrue(pest.data['subscribed'])
+
+        pest_missing = self.client_pest.get(
+            '/api/news-subscriptions/check/',
+            {'target_type': 'pest', 'pest': 999999},
+        )
+        self.assertFalse(pest_missing.data['subscribed'])
+
+    # ---------- 发布通知扇出 ----------
+
+    def test_published_news_notifies_category_and_pest_subscribers(self):
+        response = self._create_news(related_pests=[self.wheat_pest.id])
+        self.assertEqual(response.status_code, 201, response.data)
+        news = News.objects.get(title='小麦条锈病预警')
+
+        self.assertEqual(
+            self._news_notifications(news).filter(recipient=self.policy_user).count(), 1,
+            '订阅该分类的用户应收到通知',
+        )
+        self.assertEqual(
+            self._news_notifications(news).filter(recipient=self.pest_user).count(), 1,
+            '订阅了该新闻关联病害的用户应收到通知',
+        )
+        self.assertEqual(
+            self._news_notifications(news).filter(recipient=self.both_user).count(), 1,
+            '同时订阅分类与病害也只收一条（按用户去重）',
+        )
+        self.assertEqual(
+            self._news_notifications(news).filter(recipient=self.outsider).count(), 0,
+            '没订阅的用户不该收到',
+        )
+        self.assertEqual(
+            self._news_notifications(news).filter(recipient=self.inactive).count(), 0,
+            '已停用账号不该再收到订阅通知',
+        )
+        self.assertEqual(self._news_notifications(news).count(), 3)
+
+        notification = self._news_notifications(news).get(recipient=self.policy_user)
+        self.assertEqual(notification.type, 'news')
+        self.assertEqual(notification.news_id, news.id, '通知要挂上新闻外键（跳转 + 判重）')
+        self.assertEqual(notification.url, f'/news/{news.id}')
+        self.assertIn('小麦条锈病预警', notification.title)
+        self.assertIn('Industry news', notification.title_en)
+        self.assertTrue(notification.message, '通知摘要不能为空')
+        # 类型选项是迁移 AlterField 的一部分，防止以后加类型时被误删
+        self.assertIn(('news', '行业动态'), Notification.TYPE_CHOICES)
+
+    def test_actor_also_subscribed_receives_own_copy(self):
+        """作者本人也订阅了这个分类时，按 allow_self=True 保留他自己的副本"""
+        NewsSubscription.objects.create(
+            user=self.admin, target_type='category', category='policy',
+        )
+        self.assertEqual(self._create_news(title='作者订阅新闻').status_code, 201)
+        news = News.objects.get(title='作者订阅新闻')
+        self.assertEqual(
+            self._news_notifications(news).filter(recipient=self.admin).count(), 1,
+        )
+
+    def test_draft_create_does_not_notify(self):
+        response = self._create_news(title='草稿新闻', is_published='false')
+        self.assertEqual(response.status_code, 201, response.data)
+        news = News.objects.get(title='草稿新闻')
+        self.assertEqual(
+            self._news_notifications(news).count(), 0, '草稿创建时不该通知订阅者',
+        )
+
+    def test_publishing_draft_notifies_once(self):
+        response = self._create_news(
+            title='草稿转发布新闻', is_published='false',
+            related_pests=[self.wheat_pest.id],
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        news = News.objects.get(title='草稿转发布新闻')
+        self.assertEqual(self._news_notifications(news).count(), 0)
+
+        patch = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'is_published': 'true'}, format='multipart',
+        )
+        self.assertEqual(patch.status_code, 200, patch.data)
+        self.assertEqual(self._news_notifications(news).count(), 3, '草稿→发布应通知一次')
+
+        again = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'summary': '补充一句摘要'}, format='multipart',
+        )
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertEqual(
+            self._news_notifications(news).count(), 3,
+            '已发布新闻的普通编辑不能再发通知（否则订阅者会被反复打扰）',
+        )
+
+    def test_scheduled_news_not_notified_before_due(self):
+        future = (timezone.now() + timezone.timedelta(days=1)).isoformat()
+        response = self._create_news(title='明天才发布的新闻', published_at=future)
+        self.assertEqual(response.status_code, 201, response.data)
+        news = News.objects.get(title='明天才发布的新闻')
+        self.assertEqual(
+            self._news_notifications(news).count(), 0, '未到点的定时新闻不该提前通知',
+        )
+
+    # ---------- 管理命令：定时发布补发 ----------
+
+    def test_management_command_backfills_once(self):
+        future = (timezone.now() + timezone.timedelta(days=1)).isoformat()
+        response = self._create_news(
+            title='定时到点的新闻', published_at=future,
+            related_pests=[self.wheat_pest.id],
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        news = News.objects.get(title='定时到点的新闻')
+        self.assertEqual(self._news_notifications(news).count(), 0)
+
+        # 模拟"到点了但没人保存"：把定时发布时间拨到过去，再跑补发命令
+        News.objects.filter(pk=news.pk).update(
+            published_at=timezone.now() - timezone.timedelta(minutes=5),
+        )
+        first_run = StringIO()
+        call_command('notify_pending_news', stdout=first_run)
+        self.assertEqual(
+            self._news_notifications(news).count(), 3, '定时到点后应由命令补发通知',
+        )
+        self.assertIn('补发完成', first_run.getvalue())
+
+        second_run = StringIO()
+        call_command('notify_pending_news', stdout=second_run)
+        self.assertEqual(
+            self._news_notifications(news).count(), 3, '命令再跑一次不能重复通知',
+        )
+        self.assertIn('没有需要补发', second_run.getvalue())
+
+    def test_management_command_dry_run_does_not_write(self):
+        # 直接 ORM 造"对公众可见但从未通知"的新闻（走接口会被 create 的触发逻辑先通知）
+        news = News.objects.create(
+            title='漏发通知的新闻', content='正文内容', is_published=True,
+            category='policy', author=self.admin,
+        )
+        output = StringIO()
+        call_command('notify_pending_news', '--dry-run', stdout=output)
+        self.assertEqual(
+            self._news_notifications(news).count(), 0, '--dry-run 不能写任何通知',
+        )
+        self.assertIn('dry-run', output.getvalue())
+        self.assertIn('漏发通知的新闻', output.getvalue())
 
 
 # ============================================================================

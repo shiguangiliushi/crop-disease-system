@@ -40,7 +40,7 @@ VISIBLE_ANNOUNCEMENT_Q = Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.
 
 
 def notify(recipient, *, type, title, message='', url='', actor=None, post=None, comment=None,
-           announcement=None, title_en='', message_en='', allow_self=False):
+           announcement=None, title_en='', message_en='', allow_self=False, news=None):
     """
     投递一条站内通知（业务代码调用；失败只记日志，绝不影响主流程）
 
@@ -69,6 +69,9 @@ def notify(recipient, *, type, title, message='', url='', actor=None, post=None,
             message=(message or '')[:500], url=url or '',
             title_en=(title_en or '')[:200], message_en=(message_en or '')[:500],
             post=post, comment=comment, announcement=announcement,
+            # 第 402 批：行业动态订阅通知要挂到具体新闻上 —— 既用于跳转，
+            # 也用于 notify_pending_news 判"这条新闻已经发过通知没有"。
+            news=news,
         )
     except Exception:
         logger.exception('投递通知失败 recipient=%s type=%s', getattr(recipient, 'id', None), type)

@@ -17,6 +17,9 @@ import re
 
 from .models import News
 from .serializers import NewsRelatedResponseSerializer, NewsSerializer
+# 第 402 批：发布扇出（订阅了该分类/关联病害的用户收站内通知）。
+# 本模块不反向依赖这里，不存在循环导入。
+from .views_news_subscription import notify_news_subscribers
 # 第 124 批：能力判定统一收口（新闻维护 = CONTENT，信息编辑员可）
 from .capabilities import MODULE_NEWS, has_content_module
 # 第 91 批：图片上传统一校验（大小上限 + 按文件头探测真实格式 + 随机文件名）
@@ -386,6 +389,10 @@ class NewsViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
+        # 第 402 批：新建即"对公众可见"才通知订阅者；草稿 / 定时未到点的不发
+        #（它们要等 publish 动作或定时补发命令，见 update / notify_pending_news）。
+        if serializer.instance.is_visible_to_public:
+            notify_news_subscribers(serializer.instance, actor=request.user)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
@@ -568,9 +575,15 @@ class NewsViewSet(viewsets.ModelViewSet):
         """更新新闻（支持部分更新，可同时替换封面图片）"""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        # 第 402 批：先记编辑前的可见状态 —— 只有"不可见 → 可见"（草稿发布、
+        # 定时到点后再保存、下架→重新发布）才通知订阅者；已发布新闻的普通编辑
+        # 不重复打扰（管理端 toggleNewsPublished 走的正是这个 PATCH 路径）。
+        was_visible = instance.is_visible_to_public
         serializer = self.get_serializer(instance, data=request.data, partial=partial or True)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
+        if not was_visible and instance.is_visible_to_public:
+            notify_news_subscribers(instance, actor=request.user)
         return Response(serializer.data)
 
     def perform_update(self, serializer):
