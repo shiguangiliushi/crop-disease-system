@@ -121,6 +121,18 @@
                 <span v-if="row.source" class="source-text">
                   {{ t('newsMgmt.sourceLabel', { source: localizedField(row, 'source') }) }}
                 </span>
+                <!-- 第 401 批：原文外链小图标（新标签页打开，不影响表格行本身） -->
+                <a
+                  v-if="row.external_url"
+                  class="title-ext-link"
+                  :href="row.external_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :title="t('news.externalLink')"
+                  :aria-label="t('news.externalLink')"
+                >
+                  <i class="fas fa-arrow-up-right-from-square"></i>
+                </a>
               </div>
             </div>
           </template>
@@ -248,6 +260,44 @@
                 style="width: 100%"
               />
               <p class="field-hint">{{ t('newsMgmt.tagHint') }}</p>
+            </el-form-item>
+
+            <!-- 第 401 批：原文链接 / 关联病害（与行业动态页弹窗同口径） -->
+            <el-form-item :label="t('field.externalUrl')">
+              <el-input
+                v-model="form.external_url"
+                type="url"
+                maxlength="500"
+                show-word-limit
+                clearable
+                :placeholder="t('news.externalUrlPlaceholder')"
+              />
+              <p class="field-hint">
+                <i class="fas fa-arrow-up-right-from-square"></i>
+                {{ t('news.externalUrlHint') }}
+              </p>
+            </el-form-item>
+
+            <el-form-item :label="t('field.relatedPests')">
+              <el-select
+                v-model="form.related_pests"
+                multiple
+                filterable
+                clearable
+                :placeholder="t('news.relatedPestsPlaceholder')"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="pest in pestOptions"
+                  :key="pest.id"
+                  :label="`${localizedField(pest, 'crop_type')} - ${localizedField(pest, 'name')}`"
+                  :value="pest.id"
+                />
+              </el-select>
+              <p class="field-hint">
+                <i class="fas fa-leaf"></i>
+                {{ t('news.relatedPestsHint') }}
+              </p>
             </el-form-item>
           </section>
 
@@ -407,6 +457,8 @@ import {
   updateNews,
 } from '@/api/news';
 import { toAbsoluteMediaUrl } from '@/api/http';
+// 第 401 批：关联病害多选的选项来自病害百科列表
+import { fetchPestList } from '@/api/pest';
 import { useRoute, useRouter } from 'vue-router';  // 第 121 批：旧深链重定向进来的 ?action=
 import { useI18n } from '@/i18n';  // 第 66 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 79 批：新闻标题/来源等内容数据
@@ -414,6 +466,38 @@ import { useLocalized } from '@/utils/localized';  // 第 79 批：新闻标题/
 
 const { t } = useI18n();
 const { localizedField } = useLocalized();
+
+/**
+ * 第 401 批：关联病害下拉的选项（按需加载一次）
+ * ------------------------------------------------------------------
+ * 病害词条全量最多 100 条，够本页使用；接口失败时保持空列表、不打扰管理员 ——
+ * 关联病害只是新闻的增强信息，不能让它阻断"保存新闻"这条主流程。
+ */
+const pestOptions = ref([]);
+const pestOptionsLoaded = ref(false);
+const ensurePestOptions = async () => {
+  if (pestOptionsLoaded.value) return;
+  pestOptionsLoaded.value = true;
+  try {
+    const data = await fetchPestList({ page_size: 100 });
+    const results = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
+    pestOptions.value = results.filter((item) => item && item.id !== undefined && item.id !== null);
+  } catch (error) {
+    console.warn('获取病害选项失败（关联病害下拉留空）:', error);
+    pestOptions.value = [];
+  }
+};
+
+/** 病害 id 归一化成数字数组（后端主键是整数，字符串 id 会让 el-select 回显不上） */
+const toPestIdArray = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((id) => (typeof id === 'number' ? id : Number(id)))
+    .filter((id) => Number.isFinite(id) && id > 0);
+};
+
+/** 第 401 批：响应里有没有 related_pests 字段 —— 没有就不提交 clear_related_pests，避免误清空 */
+const relatedPestsKnown = ref(true);
 
 // ---------- 列表 ----------
 const loading = ref(false);
@@ -530,6 +614,9 @@ const form = reactive({
   // 补上对应 append 后，定时发布（含清空）才真正生效。
   summary: '',
   is_featured: false,
+  // 第 401 批：原文链接 / 关联病害（关联 id 数组，多选控件直接绑定）
+  external_url: '',
+  related_pests: [],
 });
 
 const imageFile = ref(null);
@@ -570,7 +657,12 @@ const resetForm = () => {
     published_at: null,
     summary: '',
     is_featured: false,
+    // 第 401 批
+    external_url: '',
+    related_pests: [],
   });
+  // 新建新闻时"关系为空"是确定的；编辑时 handleEdit 会按响应里有没有该字段覆盖
+  relatedPestsKnown.value = true;
   imageFile.value = null;
   coverPreview.value = '';
   clearImage.value = false;
@@ -580,12 +672,23 @@ const resetForm = () => {
 const handleCreate = () => {
   formTitle.value = t('newsMgmt.newNews');
   resetForm();
+  // 第 401 批：打开弹窗时按需加载病害选项（只拉一次）
+  ensurePestOptions();
   dialogVisible.value = true;
 };
 
 const handleEdit = (row) => {
   formTitle.value = t('news.edit');
   resetForm();
+  // 第 401 批：列表行可能没有关联字段（老后端）；有 related_pests 用 id，
+  // 只有 related_pest_details 时用明细里的 id 兜底，两者都没有就标 known=false，
+  // 提交时不带 clear_related_pests，避免把后端存量关系误清空。
+  relatedPestsKnown.value = Array.isArray(row.related_pests) || Array.isArray(row.related_pest_details);
+  const relatedPestIds = Array.isArray(row.related_pests)
+    ? toPestIdArray(row.related_pests)
+    : toPestIdArray(
+      (Array.isArray(row.related_pest_details) ? row.related_pest_details : []).map((pest) => pest?.id),
+    );
   Object.assign(form, {
     id: row.id,
     title: row.title || '',
@@ -598,8 +701,12 @@ const handleEdit = (row) => {
     // 第 399 批：列表行（后端序列化器）带 summary / is_featured；老数据给安全默认值
     summary: row.summary || '',
     is_featured: !!row.is_featured,
+    // 第 401 批：原文链接 / 关联病害
+    external_url: row.external_url || '',
+    related_pests: relatedPestIds,
   });
   coverPreview.value = toAbsoluteMediaUrl(row.image_url || row.image);
+  ensurePestOptions();
   dialogVisible.value = true;
 };
 
@@ -657,8 +764,20 @@ const submitForm = async () => {
       // multipart 约定打成 'true'/'false'，published_at=null 会打成空串（清空定时）
       summary: form.summary || '',
       is_featured: !!form.is_featured,
+      // 第 401 批：原文链接（空串 = 清空）
+      external_url: (form.external_url || '').trim(),
       clear_image: clearImage.value,
     };
+
+    // 第 401 批：关联病害只在"知道后端已有值"时才提交。
+    // 老后端没有该字段，若照常提交空数组 + clear_related_pests=true，
+    // 保存一次就会把后端存量的关联关系误清空。
+    if (relatedPestsKnown.value) {
+      const relatedPestIds = toPestIdArray(form.related_pests);
+      payload.related_pests = relatedPestIds;
+      // multipart 无法表达空数组：清空用独立开关；非空传 false 表示以本次列表为准
+      payload.clear_related_pests = relatedPestIds.length === 0;
+    }
 
     if (form.id) {
       await updateNews(form.id, payload, imageFile.value);
@@ -931,6 +1050,24 @@ onMounted(async () => {
 
 .cover-tile {
   width: 100%;
+}
+
+/* 第 401 批：标题 meta 行的原文外链小图标 */
+.title-ext-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  color: var(--brand-600);
+  font-size: 11px;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.title-ext-link:hover {
+  background: var(--brand-50);
+  color: var(--brand-800);
 }
 
 @media (max-width: 768px) {

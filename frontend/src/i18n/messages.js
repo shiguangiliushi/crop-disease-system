@@ -108,6 +108,9 @@ export const zhCN = {
     category: '分类',
     source: '来源',
     tags: '标签',
+    // 第 401 批：原文链接 / 关联病害（新闻表单与字段级报错共用）
+    externalUrl: '原文链接',
+    relatedPests: '关联病害',
     // 第 399 批：News 新增字段的报错显示名
     summary: '摘要',
     featured: '精选',
@@ -1154,6 +1157,21 @@ export const zhCN = {
     deleteTitle: '提示',
     deleteOk: '删除成功',
     deleteFailed: '删除新闻失败',
+    // 第 401 批：详情页阅读体验（目录 / 上下篇 / 复制链接 / 分享图 / 返回顶部 / 相关推荐）
+    tocTitle: '目录',
+    prevNews: '上一篇',
+    nextNews: '下一篇',
+    copyLink: '复制链接',
+    copied: '链接已复制',
+    copyFailed: '复制失败，请手动复制地址栏链接',
+    shareImage: '生成分享图',
+    shareGenerating: '生成中...',
+    shareSaved: '分享图已生成，正在下载',
+    shareFailed: '分享图生成失败，请稍后重试',
+    shareFooter: '更多农业资讯，尽在「行业动态」',
+    backToTop: '返回顶部',
+    relatedTitle: '相关推荐',
+    externalLink: '原文',
   },
   notFound: {
     title: '页面未找到',
@@ -2167,6 +2185,15 @@ export const zhCN = {
     publishHint: '选择「存为未发布」时，这条新闻只有管理员能在管理页看到，用户端不显示。',
     saveNow: '保存后立即生效',
     save: '保存',
+    // 第 401 批：原文外链 / 官方来源 / 关联病害（列表卡片、编辑弹窗与详情页共用）
+    externalLink: '原文',
+    officialBadge: '官方',
+    externalUrlPlaceholder: '如：https://www.moa.gov.cn/...',
+    externalUrlHint: '填写报道原文地址，读者可在卡片上点「原文」跳转',
+    relatedPests: '关联病害',
+    relatedPestsPlaceholder: '选择这条新闻提到的病害（可多选）',
+    relatedPestsHint: '选中的病害会显示在新闻卡片上，读者可点进病害详情',
+    pestsMore: '另有 {count} 个关联病害',
   },
   preventPage: {
     backHome: '返回首页',
@@ -2345,6 +2372,9 @@ export const zhCN = {
     noSymptoms: '暂无详细症状描述。',
     noPattern: '暂无发病规律信息。',
     noTreatment: '暂无防治方法信息。',
+    // 第 401 批：底部「相关行业动态」
+    relatedNews: '相关行业动态',
+    viewAllNews: '查看全部动态',
   },
   // 第 75 批：应用内拍照（getUserMedia 实时取景 + 快门）
   camera: {
@@ -3424,6 +3454,9 @@ export const en = {
     category: 'Category',
     source: 'Source',
     tags: 'Tags',
+    // Batch 401: original link / related diseases (form labels and field-level errors)
+    externalUrl: 'Original URL',
+    relatedPests: 'Related diseases',
     // 第 399 批
     summary: 'Summary',
     featured: 'Featured',
@@ -4403,6 +4436,21 @@ export const en = {
     deleteTitle: 'Notice',
     deleteOk: 'Deleted',
     deleteFailed: 'Could not delete the news item',
+    // Batch 401: reading experience (contents / prev-next / copy link / share image / back to top / related)
+    tocTitle: 'Contents',
+    prevNews: 'Previous',
+    nextNews: 'Next',
+    copyLink: 'Copy link',
+    copied: 'Link copied',
+    copyFailed: 'Copy failed — please copy the address bar link manually',
+    shareImage: 'Create share image',
+    shareGenerating: 'Creating…',
+    shareSaved: 'Share image created — downloading',
+    shareFailed: 'Could not create the share image, please try again',
+    shareFooter: 'More agricultural news in Industry News',
+    backToTop: 'Back to top',
+    relatedTitle: 'Related news',
+    externalLink: 'Original',
   },
   notFound: {
     title: 'Page not found',
@@ -5394,6 +5442,15 @@ export const en = {
     publishHint: 'If saved as unpublished, only admins can see this news in the management page; users will not see it.',
     saveNow: 'Takes effect immediately after saving',
     save: 'Save',
+    // Batch 401: original link / official source / related diseases (list card, edit dialog, detail page)
+    externalLink: 'Original',
+    officialBadge: 'Official',
+    externalUrlPlaceholder: 'e.g. https://www.moa.gov.cn/...',
+    externalUrlHint: 'URL of the original story; readers can open it from the card',
+    relatedPests: 'Related diseases',
+    relatedPestsPlaceholder: 'Select diseases mentioned in this story (multiple)',
+    relatedPestsHint: 'Selected diseases appear as chips on the news card and link to the disease wiki',
+    pestsMore: '{count} more related diseases',
   },
   preventPage: {
     backHome: 'Back to home',
@@ -5569,6 +5626,9 @@ export const en = {
     noSymptoms: 'No detailed symptom description yet.',
     noPattern: 'No development information yet.',
     noTreatment: 'No treatment information yet.',
+    // Batch 401: related industry news at the bottom
+    relatedNews: 'Related industry news',
+    viewAllNews: 'View all news',
   },
   // Batch 75: in-app camera (getUserMedia live preview + shutter)
   camera: {

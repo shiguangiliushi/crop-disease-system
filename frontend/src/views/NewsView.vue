@@ -198,6 +198,10 @@
                 <p class="featured-summary">{{ summaryOf(item) }}</p>
                 <div class="featured-meta">
                   <span v-if="item.source">
+                    <!-- 第 401 批：来源命中官方白名单时加「官方」徽标（仅展示层，不新增后端字段） -->
+                    <span v-if="isOfficialSource(item)" class="official-badge">
+                      <i class="fas fa-circle-check"></i> {{ t('news.officialBadge') }}
+                    </span>
                     <i class="fas fa-building-columns"></i> {{ localizedField(item, 'source') }}
                   </span>
                   <span>
@@ -205,6 +209,36 @@
                   </span>
                   <span v-if="item.views !== undefined && item.views !== null">
                     <i class="fas fa-eye"></i> {{ t('forum.readsShort', { count: item.views }) }}
+                  </span>
+                  <!-- 第 401 批：原文外链。@click.stop 防止触发整张卡片的"进详情"跳转 -->
+                  <a
+                    v-if="item.external_url"
+                    class="news-external"
+                    :href="item.external_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    @click.stop
+                  >
+                    <i class="fas fa-arrow-up-right-from-square"></i> {{ t('news.externalLink') }}
+                  </a>
+                </div>
+                <!-- 第 401 批：关联病害 chip（最多 3 个 + N），点击直达病害详情 -->
+                <div v-if="relatedPestsOf(item).length" class="news-pests featured-pests">
+                  <button
+                    v-for="pest in visiblePests(item)"
+                    :key="pest.id"
+                    type="button"
+                    class="pest-chip"
+                    @click.stop="goToPestDetail(pest)"
+                  >
+                    <i class="fas fa-leaf"></i> {{ pestChipLabel(pest) }}
+                  </button>
+                  <span
+                    v-if="relatedPestsOf(item).length > MAX_CARD_PESTS"
+                    class="pest-chip pest-chip-more"
+                    :title="t('news.pestsMore', { count: relatedPestsOf(item).length - MAX_CARD_PESTS })"
+                  >
+                    +{{ relatedPestsOf(item).length - MAX_CARD_PESTS }}
                   </span>
                 </div>
                 <span class="featured-read-more">
@@ -262,6 +296,10 @@
                      meta 从标题下方移到这里，避免小屏时来源/日期/阅读量与标签挤在一起 -->
                 <div class="news-meta">
                   <span class="news-source" v-if="newsItem.source">
+                    <!-- 第 401 批：官方来源徽标（关键词包含匹配，见 OFFICIAL_SOURCE_KEYWORDS） -->
+                    <span v-if="isOfficialSource(newsItem)" class="official-badge">
+                      <i class="fas fa-circle-check"></i> {{ t('news.officialBadge') }}
+                    </span>
                     <i class="fas fa-building-columns"></i> {{ localizedField(newsItem, 'source') }}
                   </span>
                   <span class="news-date">
@@ -269,6 +307,36 @@
                   </span>
                   <span class="news-views" v-if="newsItem.views !== undefined">
                     <i class="fas fa-eye"></i> {{ t('forum.readsShort', { count: newsItem.views }) }}
+                  </span>
+                  <!-- 第 401 批：原文外链（新标签页 + noopener；stopPropagation 避免进详情页） -->
+                  <a
+                    v-if="newsItem.external_url"
+                    class="news-external"
+                    :href="newsItem.external_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    @click.stop
+                  >
+                    <i class="fas fa-arrow-up-right-from-square"></i> {{ t('news.externalLink') }}
+                  </a>
+                </div>
+                <!-- 第 401 批：关联病害 chip（最多 3 个，其余 +N；点击直达百科详情） -->
+                <div v-if="relatedPestsOf(newsItem).length" class="news-pests">
+                  <button
+                    v-for="pest in visiblePests(newsItem)"
+                    :key="pest.id"
+                    type="button"
+                    class="pest-chip"
+                    @click.stop="goToPestDetail(pest)"
+                  >
+                    <i class="fas fa-leaf"></i> {{ pestChipLabel(pest) }}
+                  </button>
+                  <span
+                    v-if="relatedPestsOf(newsItem).length > MAX_CARD_PESTS"
+                    class="pest-chip pest-chip-more"
+                    :title="t('news.pestsMore', { count: relatedPestsOf(newsItem).length - MAX_CARD_PESTS })"
+                  >
+                    +{{ relatedPestsOf(newsItem).length - MAX_CARD_PESTS }}
                   </span>
                 </div>
                 <div class="news-footer">
@@ -420,6 +488,44 @@
                 </el-form-item>
               </el-col>
             </el-row>
+
+            <!-- 第 401 批：原文链接 / 关联病害（放在「基本信息」，与来源同组） -->
+            <el-form-item :label="t('field.externalUrl')">
+              <el-input
+                v-model="newsForm.external_url"
+                type="url"
+                maxlength="500"
+                show-word-limit
+                clearable
+                :placeholder="t('news.externalUrlPlaceholder')"
+              />
+              <p class="field-hint">
+                <i class="fas fa-arrow-up-right-from-square"></i>
+                {{ t('news.externalUrlHint') }}
+              </p>
+            </el-form-item>
+
+            <el-form-item :label="t('field.relatedPests')">
+              <el-select
+                v-model="newsForm.related_pests"
+                multiple
+                filterable
+                clearable
+                :placeholder="t('news.relatedPestsPlaceholder')"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="pest in pestOptions"
+                  :key="pest.id"
+                  :label="`${localizedField(pest, 'crop_type')} - ${localizedField(pest, 'name')}`"
+                  :value="pest.id"
+                />
+              </el-select>
+              <p class="field-hint">
+                <i class="fas fa-leaf"></i>
+                {{ t('news.relatedPestsHint') }}
+              </p>
+            </el-form-item>
           </section>
 
           <!-- 正文 -->
@@ -581,6 +687,8 @@ import { toAbsoluteMediaUrl } from '@/api/http';
 import api from '@/api';
 // 与管理端「新闻管理」页共用同一套提交逻辑（字段白名单 + multipart 组装 + 错误文案）
 import { createNews, updateNews, formatNewsError, fetchNewsTags } from '@/api/news';
+// 第 401 批：管理员编辑弹窗的「关联病害」下拉选项（病害百科词条）
+import { fetchPestList } from '@/api/pest';
 // 身份读写统一走适配器（sessionStorage 优先），避免"本标签页是 A、请求却带 B 的 token"
 import { getToken, clearIdentity } from '@/utils/authStorage';
 // 第 31 批：页面底部"怎么用好行业动态"补充信息区
@@ -620,6 +728,61 @@ const summaryOf = (item) => {
   return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX)}...` : text;
 };
 
+/**
+ * 第 401 批：官方来源白名单
+ * ------------------------------------------------------------------
+ * 「来源」是编辑手填的机构名，没有任何"官方认证"字段。读者最需要的是
+ * "这条是不是权威渠道发的" —— 与其新增后端字段，不如在展示层按机构名做
+ * 关键词包含匹配：命中就在来源前加一个小「官方」徽标。
+ *
+ * 关键词同时收中英文：内容数据里 source / source_en 都可能是机构名，
+ * 匹配时把两者拼起来一起看（见 isOfficialSource），中文界面命中中文、
+ * 英文界面命中英文，不会因为切换语言丢掉徽标。
+ *
+ * 只做"包含"而不要求全等：真实来源常写成「农业农村部种植业管理司」
+ * 「中国气象局 · 中央气象台」这类带后缀的形式。
+ */
+const OFFICIAL_SOURCE_KEYWORDS = [
+  '农业农村部',
+  '中国气象局',
+  '中国农业信息网',
+  '国家统计局',
+  '海关总署',
+  '国家发展改革委',
+  '国家发展和改革委员会',
+  'Ministry of Agriculture',
+  'China Meteorological Administration',
+  'National Bureau of Statistics',
+  'General Administration of Customs',
+  'National Development and Reform Commission',
+];
+
+/** 来源是否命中官方白名单（item 可直接传新闻对象，也兼容只传来源字符串） */
+const isOfficialSource = (item) => {
+  const raw = typeof item === 'string'
+    ? item
+    : `${item?.source || ''} ${item?.source_en || ''}`;
+  const text = raw.toLowerCase();
+  if (!text.trim()) return false;
+  return OFFICIAL_SOURCE_KEYWORDS.some((keyword) => text.includes(keyword.toLowerCase()));
+};
+
+/**
+ * 第 401 批：卡片上的关联病害
+ * ------------------------------------------------------------------
+ * 读接口给的是 `related_pest_details`（轻量条目：id / name / name_en / english_identifier），
+ * 写接口用的 `related_pests` 是 id 数组。两个字段都可能缺失（老后端 / 老数据），
+ * 这里统一兜底成数组，模板里就不用到处写 `Array.isArray(...)`。
+ */
+const relatedPestsOf = (item) => (Array.isArray(item?.related_pest_details) ? item.related_pest_details : []);
+
+/** 卡片最多展示 3 个 chip，其余收成 +N */
+const MAX_CARD_PESTS = 3;
+const visiblePests = (item) => relatedPestsOf(item).slice(0, MAX_CARD_PESTS);
+
+/** chip 文案：名称缺失时退回英文标识符，不渲染空 chip */
+const pestChipLabel = (pest) => localizedField(pest, 'name') || pest?.english_identifier || '';
+
 // 第 63 批：底部"怎么用好行业动态"卡片（原来内联在模板里，无法随语言切换）
 const guideItems = computed(() => [
   { icon: 'fas fa-filter', title: t('news.guide1'), text: t('news.guide1Desc') },
@@ -646,6 +809,50 @@ const authStore = useAuthStore();
 
 // 检查是否是管理员
 const isAdmin = computed(() => authStore.isAdmin);
+
+/**
+ * 第 401 批：关联病害下拉的选项
+ * ------------------------------------------------------------------
+ * 按需加载（管理员第一次打开编辑弹窗时）而不是页面初始化就拉：
+ *   · 只有管理员才会用到这个下拉，普通读者不该为它多付一次接口请求；
+ *   · 病害词条一次最多 100 条，够用；失败时保持空列表（下拉打开是空的），
+ *     不弹错误 —— 关联病害是增强项，不能因它阻断"编辑新闻"这条主流程。
+ */
+const pestOptions = ref([]);
+const pestOptionsLoaded = ref(false);
+const loadPestOptions = async () => {
+  if (pestOptionsLoaded.value) return;
+  pestOptionsLoaded.value = true;
+  try {
+    const data = await fetchPestList({ page_size: 100 });
+    const results = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : [];
+    pestOptions.value = results.filter((item) => item && item.id !== undefined && item.id !== null);
+  } catch (error) {
+    console.warn('获取病害选项失败（关联病害下拉留空）:', error);
+    pestOptions.value = [];
+  }
+};
+
+/** 把接口/表单里的病害 id 归一化成数字数组（后端主键是整数，字符串 id 会让 el-select 匹配不上） */
+const toPestIdArray = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((id) => (typeof id === 'number' ? id : Number(id)))
+    .filter((id) => Number.isFinite(id) && id > 0);
+};
+
+// 第 401 批：后端列表/详情响应里是否有 related_pests 字段。
+// 老后端没有这个字段时，提交**不能**带 clear_related_pests=true —— 否则编辑一次
+// 就会把后端已有（但前端没拿到）的关联关系误清空。有字段时才按"空数组=清空"处理。
+const relatedPestsKnown = ref(true);
+
+// 第 401 批：跳到关联病害的百科详情（点击 chip 时 stopPropagation，不触发卡片跳转）
+const goToPestDetail = (pest) => {
+  const identifier = pest?.english_identifier;
+  if (!identifier) return;
+  router.push({ name: 'PestDetail', params: { english_identifier: identifier } });
+};
+
 
 // 第 121 批：`isEditMode` / `isCreateMode` 已删除 —— 那两条历史深链
 // （`/news/create`、`/news/:id/edit`）现在重定向进管理后台的新闻管理页，
@@ -695,7 +902,10 @@ const newsForm = ref({
   // 第 399 批：新增字段的后端契约是「缺键不 append」，因此表单里始终显式维护这两个键；
   // summary 清空时提交空串是有意义的（表示清空摘要 → 列表回退正文）
   summary: '',
-  is_featured: false
+  is_featured: false,
+  // 第 401 批：原文链接 / 关联病害（编辑时从详情接口回填；新建时为空）
+  external_url: '',
+  related_pests: []
 });
 
 // 表单验证规则（文案走 i18n，第 63 批）
@@ -749,8 +959,13 @@ const resetForm = () => {
     image: null,
     is_published: true,
     summary: '',
-    is_featured: false
+    is_featured: false,
+    // 第 401 批：新建新闻时这两个字段是"确定的空"，提交时按空值处理
+    external_url: '',
+    related_pests: []
   };
+  // 新建 = 后端关系必然为空，允许带 clear_related_pests（编辑时由 loadNewsDetail 覆盖）
+  relatedPestsKnown.value = true;
   editingNews.value = null;
   if (newsFormRef.value) {
     newsFormRef.value.resetFields();
@@ -763,12 +978,16 @@ const goToAddNews = () => {
   resetForm();
   // 设置编辑状态
   editingNews.value = null;
+  // 第 401 批：打开弹窗时再加载病害选项（管理员才需要，且只加载一次）
+  loadPestOptions();
   // 显示对话框
   showAddDialog.value = true;
 };
 
 // 编辑新闻
 const editNews = async (news) => {
+  // 第 401 批：与管理页一致，打开编辑弹窗前按需拉一次病害选项
+  loadPestOptions();
   try {
     await loadNewsDetail(news.id);
   } catch (error) {
@@ -881,6 +1100,15 @@ const loadNewsDetail = async (id) => {
     // 处理图片URL
     const imageUrl = data.image || data.image_url;
 
+    // 第 401 批：关联病害回填
+    // 详情接口读的是 id 数组（related_pests）；若后端只给了 related_pest_details，
+    // 就从明细里取 id 兜底。两者都没有说明是老后端 —— known=false，提交时不动这个字段。
+    relatedPestsKnown.value = Array.isArray(data.related_pests)
+      || Array.isArray(data.related_pest_details);
+    const relatedPestIds = Array.isArray(data.related_pests)
+      ? toPestIdArray(data.related_pests)
+      : toPestIdArray(relatedPestsOf(data).map((pest) => pest?.id));
+
     // 更新表单数据
     newsForm.value = {
       ...data,
@@ -897,7 +1125,10 @@ const loadNewsDetail = async (id) => {
       // 第 399 批：后端刚上线这两个字段时，老数据 / 老接口返回里可能没有，
       // 显式给默认值，表单就不会出现 undefined（el-switch 会当成未开启）
       summary: data.summary || '',
-      is_featured: !!data.is_featured
+      is_featured: !!data.is_featured,
+      // 第 401 批：原文链接 / 关联病害（关联 id 用于多选回显）
+      external_url: data.external_url || '',
+      related_pests: relatedPestIds
     };
 
     // 标记"正在编辑哪条新闻"，否则弹窗标题会显示成「添加新闻」
@@ -1119,10 +1350,22 @@ const submitNews = async () => {
       // published_at —— buildNewsFormData 对缺省的键不 append，不会误清空管理页的定时发布。
       summary: newsForm.value.summary || '',
       is_featured: !!newsForm.value.is_featured,
+      // 第 401 批：原文链接（空串 = 清空）与关联病害。
+      // 关联病害只在"知道后端已有值"（relatedPestsKnown）时才提交：
+      // 老后端没有该字段，若照常提交空数组 + clear_related_pests=true，
+      // 编辑一次就会把后端存量的关联关系误清空。
+      external_url: (newsForm.value.external_url || '').trim(),
       // 只有"用户确实移除了封面"（没有新文件、也没有预览）时才要求清空，
       // 否则保持原有封面不动
       clear_image: !imageFile && !newsForm.value.image_preview,
     };
+
+    if (relatedPestsKnown.value) {
+      const relatedPestIds = toPestIdArray(newsForm.value.related_pests);
+      payload.related_pests = relatedPestIds;
+      // multipart 无法表达"空数组"，清空用独立开关；非空时传 false 表示"以本次列表为准"
+      payload.clear_related_pests = relatedPestIds.length === 0;
+    }
 
     const newsId = newsForm.value.id || route.params.id;
 
@@ -2541,5 +2784,90 @@ watch(() => route.name, (newVal) => {
   .featured-title {
     font-size: 15.5px;
   }
+}
+
+/* ================= 第 401 批：官方来源 / 原文外链 / 关联病害 chip ================= */
+.official-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-100);
+  color: var(--brand-700);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.official-badge i {
+  font-size: 10px;
+}
+
+.news-external {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--brand-700);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 1px dashed transparent;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.news-external:hover {
+  color: var(--brand-500);
+  border-bottom-color: var(--brand-300);
+}
+
+/* 关联病害 chip：与标签区分开（标签是 el-tag 的彩色块，这里是描边胶囊） */
+.news-pests {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.featured-pests {
+  margin: 10px 0 0;
+}
+
+.pest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--brand-200);
+  border-radius: var(--radius-pill);
+  background: var(--brand-50);
+  color: var(--brand-700);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.pest-chip:hover {
+  border-color: var(--brand-400);
+  background: var(--brand-100);
+}
+
+.pest-chip i {
+  font-size: 11px;
+}
+
+.pest-chip-more {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--ink-500);
+  cursor: default;
 }
 </style>

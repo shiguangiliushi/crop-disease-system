@@ -28,6 +28,9 @@ const fieldLabels = () => ({
   summary: t('field.summary'),
   is_featured: t('field.featured'),
   published_at: t('field.publishedAt'),
+  // 第 401 批：原文链接 / 关联病害（multipart 表单里相关键名同上）
+  external_url: t('field.externalUrl'),
+  related_pests: t('field.relatedPests'),
   detail: t('field.permission'),
   non_field_errors: t('field.validationFailed'),
 });
@@ -116,6 +119,34 @@ export async function fetchNewsDetail(id) {
 }
 
 /**
+ * 查询某条新闻的"相关推荐"（第 401 批 · P1）
+ * ------------------------------------------------------------------
+ * 后端 `GET /api/news/{id}/related/` 返回 `{ results: [NewsSerializer...], count: N }`，
+ * 默认 4 条、可通过 `limit` 调整。
+ *
+ * 与列表接口不同，这里的返回体**不是分页结构**（没有 next/previous），
+ * 老后端（接口还没上线时）会 404 —— 调用方 catch 后按"无推荐"处理即可，页面不崩。
+ *
+ * @param {number|string} id 当前新闻 id
+ * @param {object} [params] { limit }
+ * @returns {Promise<{results: Array, count: number}>}
+ */
+export async function fetchNewsRelated(id, params = {}) {
+  const response = await http.get(`/news/${id}/related/`, { params });
+  const data = response.data;
+
+  // 兼容两种返回：约定的 {results,count}，以及万一后端直接给数组
+  if (Array.isArray(data)) {
+    return { results: data, count: data.length };
+  }
+  const results = Array.isArray(data?.results) ? data.results : [];
+  return {
+    results,
+    count: typeof data?.count === 'number' ? data.count : results.length,
+  };
+}
+
+/**
  * 组装 multipart 表单数据（第 399 批：由私有 buildFormData 改为导出 buildNewsFormData，
  * 便于单测直接断言"哪些键被 append"；创建/修改两个接口共用）
  *
@@ -149,6 +180,28 @@ export function buildNewsFormData(payload = {}, imageFile = null) {
   // 第 399 批：定时发布时间。传 null/空串表示清空定时发布（后端转 None，立即发布）
   if (Object.prototype.hasOwnProperty.call(payload, 'published_at')) {
     formData.append('published_at', payload.published_at || '');
+  }
+
+  // 第 401 批：原文链接。空串 = 清空原文链接（后端 validate_external_url 归一成 ''），
+  // 因此只在 payload 显式带这个键时才 append —— 与上面几个可选字段同一口径，
+  // 避免「行业动态」弹窗保存时把「新闻管理」页维护的数据顺手清掉。
+  if (Object.prototype.hasOwnProperty.call(payload, 'external_url')) {
+    formData.append('external_url', payload.external_url ?? '');
+  }
+
+  // 第 401 批：关联病害。multipart 没有"数组"类型，后端按**重复同名 key**解析；
+  // 空数组时**不能** append 空串（后端会尝试把它转成 int 而报错），
+  // 清空改用下面独立的 clear_related_pests 开关。
+  if (Object.prototype.hasOwnProperty.call(payload, 'related_pests')) {
+    const relatedPests = Array.isArray(payload.related_pests) ? payload.related_pests : [];
+    relatedPests
+      .filter((id) => id !== null && id !== undefined && id !== '')
+      .forEach((id) => formData.append('related_pests', String(id)));
+  }
+
+  // 第 401 批：清空关联病害的开关（只有显式传键时才 append，布尔打字符串）
+  if (Object.prototype.hasOwnProperty.call(payload, 'clear_related_pests')) {
+    formData.append('clear_related_pests', payload.clear_related_pests ? 'true' : 'false');
   }
 
   if (payload.clear_image) {
@@ -217,6 +270,7 @@ export default {
   fetchNewsList,
   fetchNewsTags,
   fetchNewsDetail,
+  fetchNewsRelated,
   createNews,
   updateNews,
   toggleNewsPublished,

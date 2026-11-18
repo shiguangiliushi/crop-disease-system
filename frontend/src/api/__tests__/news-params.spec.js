@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import http from '../http';
-import { buildNewsFormData, fetchNewsList, fetchNewsTags } from '../news';
+import { buildNewsFormData, fetchNewsList, fetchNewsTags, fetchNewsRelated } from '../news';
 
 // http.js 的请求拦截器会读 auth store（拿 Token），而 store 需要先装一个 pinia
 beforeEach(() => {
@@ -162,3 +162,102 @@ describe('fetchNewsTags：热门标签聚合', () => {
     expect(data).toEqual({ tags: [], count: 0 });
   });
 });
+
+// ============================================================================
+// 第 401 批：原文链接 / 关联病害 / 相关推荐
+// ----------------------------------------------------------------------------
+// 这一批后端给 News 加了 external_url、related_pests（写 id 数组）、
+// clear_related_pests（multipart 清空开关）与 GET /news/{id}/related/。
+//
+// 表单拼装的关键约定（与 summary 等可选字段同一口径）：
+//   · **只在 payload 里存在该键时才 append** —— 否则行业动态弹窗保存一次，
+//     就会把新闻管理页维护的原文链接/关联病害清空；
+//   · 关联病害用**重复同名 key** 表达数组；空数组不能 append 空串
+//     （后端 PrimaryKeyRelatedField 会把 '' 当非法主键），清空走 clear_related_pests；
+//   · clear_related_pests 是布尔，multipart 里打成 'true'/'false'。
+// ============================================================================
+describe('buildNewsFormData：第 401 批新增字段', () => {
+  it('external_url 只在 payload 存在该键时才 append（空串表示清空原文链接）', () => {
+    expect(buildNewsFormData({ title: 't', content: 'c' }).has('external_url')).toBe(false);
+
+    const cleared = buildNewsFormData({ title: 't', content: 'c', external_url: '' });
+    expect(cleared.has('external_url')).toBe(true);
+    expect(cleared.get('external_url')).toBe('');
+
+    const filled = buildNewsFormData({
+      title: 't',
+      content: 'c',
+      external_url: 'https://www.moa.gov.cn/news/1.html',
+    });
+    expect(filled.get('external_url')).toBe('https://www.moa.gov.cn/news/1.html');
+  });
+
+  it('related_pests 数组逐个 append（multipart 用重复同名 key）', () => {
+    const formData = buildNewsFormData({ title: 't', content: 'c', related_pests: [3, 7] });
+    expect(formData.getAll('related_pests')).toEqual(['3', '7']);
+  });
+
+  it('空 related_pests 不 append 空串，清空由 clear_related_pests 表达', () => {
+    const formData = buildNewsFormData({
+      title: 't',
+      content: 'c',
+      related_pests: [],
+      clear_related_pests: true,
+    });
+
+    expect(formData.has('related_pests')).toBe(false);
+    expect(formData.getAll('related_pests')).toEqual([]);
+    expect(formData.get('clear_related_pests')).toBe('true');
+  });
+
+  it('related_pests 缺键时一个都不 append（避免 A 页面保存清空 B 页面）', () => {
+    const formData = buildNewsFormData({ title: 't', content: 'c' });
+    expect(formData.has('related_pests')).toBe(false);
+    expect(formData.has('clear_related_pests')).toBe(false);
+  });
+
+  it('related_pests 里的空值会被过滤，只保留有效 id', () => {
+    const formData = buildNewsFormData({ title: 't', content: 'c', related_pests: [null, 5, '', undefined] });
+    expect(formData.getAll('related_pests')).toEqual(['5']);
+  });
+
+  it("clear_related_pests 布尔 → 'true'/'false'（仅键存在时）", () => {
+    const cleared = buildNewsFormData({ title: 't', content: 'c', clear_related_pests: true });
+    expect(cleared.get('clear_related_pests')).toBe('true');
+
+    const kept = buildNewsFormData({ title: 't', content: 'c', clear_related_pests: false });
+    expect(kept.get('clear_related_pests')).toBe('false');
+  });
+});
+
+describe('fetchNewsRelated：相关推荐接口', () => {
+  it('请求 /news/{id}/related/ 并归一化 { results, count }', async () => {
+    http.defaults.adapter = respondWith({
+      results: [{ id: 2, title: '相关报道' }],
+      count: 1,
+    });
+
+    const data = await fetchNewsRelated(12, { limit: 4 });
+
+    expect(captured.url).toBe('/news/12/related/');
+    // 用 toMatchObject：http 客户端的 GET 可能追加防缓存时间戳（_t），只断言关心的参数
+    expect(captured.params).toMatchObject({ limit: 4 });
+    expect(data).toEqual({ results: [{ id: 2, title: '相关报道' }], count: 1 });
+  });
+
+  it('响应缺 results/count 时归一化成空数组与 0（接口未上线 / 异常返回不崩）', async () => {
+    http.defaults.adapter = respondWith({});
+
+    expect(await fetchNewsRelated(1)).toEqual({ results: [], count: 0 });
+  });
+
+  it('后端直接返回数组时也兼容成 { results, count }', async () => {
+    http.defaults.adapter = respondWith([{ id: 5 }]);
+
+    expect(await fetchNewsRelated(5, { limit: 4 })).toEqual({
+      results: [{ id: 5 }],
+      count: 1,
+    });
+  });
+});
+
