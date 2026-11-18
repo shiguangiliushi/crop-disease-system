@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import http from '../http';
-import { buildNewsFormData, fetchNewsList, fetchNewsTags, fetchNewsRelated } from '../news';
+import { buildNewsFormData, fetchNewsList, fetchNewsTags, fetchNewsRelated, fetchNewsStats } from '../news';
 
 // http.js 的请求拦截器会读 auth store（拿 Token），而 store 需要先装一个 pinia
 beforeEach(() => {
@@ -257,6 +257,79 @@ describe('fetchNewsRelated：相关推荐接口', () => {
     expect(await fetchNewsRelated(5, { limit: 4 })).toEqual({
       results: [{ id: 5 }],
       count: 1,
+    });
+  });
+});
+
+// ============================================================================
+// 第 403 批：新闻数据看板（GET /admin/news-stats/）
+// ----------------------------------------------------------------------------
+// 看板是一次性聚合接口，前端只做两件事：把 days 透传过去、把返回体收敛成
+// 「数组字段一定是数组、totals 一定是对象」的形状 —— 视图直接 v-for / .length，
+// 后端少返回一个字段时不该让整个新闻管理页崩掉。
+// ============================================================================
+describe('fetchNewsStats：新闻数据看板', () => {
+  const fullPayload = {
+    days: 7,
+    totals: {
+      all: 10,
+      published: 8,
+      draft: 2,
+      featured: 3,
+      scheduled: 1,
+      views_total: 1234,
+      views_avg: 123.4,
+    },
+    publish_trend: [{ date: '2026-11-01', count: 2 }],
+    category_distribution: [{ category: 'policy', count: 4 }],
+    top_viewed: [{ id: 1, title: '标题', views: 99, created_at: '2026-11-01T10:00:00+08:00' }],
+    tag_cloud: [{ name: '政策', count: 3 }],
+    generated_at: '2026-11-18T10:00:00+08:00',
+  };
+
+  it('请求 /admin/news-stats/ 并透传 days；完整响应原样返回', async () => {
+    http.defaults.adapter = respondWith(fullPayload);
+
+    const data = await fetchNewsStats({ days: 7 });
+
+    expect(captured.url).toBe('/admin/news-stats/');
+    // 用 toMatchObject：GET 可能带防缓存时间戳（_t），只断言业务参数
+    expect(captured.params).toMatchObject({ days: 7 });
+    expect(data).toEqual(fullPayload);
+  });
+
+  it('缺字段时归一化：数组字段给 []、totals 给 {}、days 回落 30', async () => {
+    http.defaults.adapter = respondWith({});
+
+    expect(await fetchNewsStats()).toEqual({
+      days: 30,
+      totals: {},
+      publish_trend: [],
+      category_distribution: [],
+      top_viewed: [],
+      tag_cloud: [],
+    });
+  });
+
+  it('响应缺 days 时回落到入参 days（切换 7/30/90 后图表横轴范围不丢）', async () => {
+    http.defaults.adapter = respondWith({ totals: { all: 1 } });
+
+    const data = await fetchNewsStats({ days: 90 });
+
+    expect(data.days).toBe(90);
+    expect(data.totals).toEqual({ all: 1 });
+  });
+
+  it('非对象响应（数组/字符串等异常体）不崩，按空看板归一化', async () => {
+    http.defaults.adapter = respondWith([1, 2]);
+
+    expect(await fetchNewsStats({ days: 7 })).toEqual({
+      days: 7,
+      totals: {},
+      publish_trend: [],
+      category_distribution: [],
+      top_viewed: [],
+      tag_cloud: [],
     });
   });
 });

@@ -147,6 +147,38 @@ export async function fetchNewsRelated(id, params = {}) {
 }
 
 /**
+ * 新闻数据看板（第 403 批 · P2-12）
+ * ------------------------------------------------------------------
+ * 后端 `GET /api/admin/news-stats/?days=30`（7 / 30 / 90 天）一次返回：
+ *   { totals, publish_trend, category_distribution, top_viewed, tag_cloud, generated_at }
+ * 权限是 CONTENT 能力（管理员 / 信息编辑员可看，普通用户 403）。
+ *
+ * 这里做**向后兼容归一化**：数组字段缺失给 []、totals 缺失给 {}、
+ * days 缺失回落到入参/30。看板是新增的辅助区块，后端某次响应少个字段时
+ * 页面应按空态渲染，而不是在视图里对 undefined 调 .map() 崩掉。
+ *
+ * @param {object} [params] { days: 7|30|90 }
+ * @returns {Promise<object>} 归一化后的看板数据
+ */
+export async function fetchNewsStats(params = {}) {
+  const response = await http.get('/admin/news-stats/', { params });
+  const data = response.data;
+  const toArray = (value) => (Array.isArray(value) ? value : []);
+  const payload = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+
+  return {
+    // 保留后端原字段（如 generated_at），只补/修归一化字段
+    ...payload,
+    days: typeof payload.days === 'number' ? payload.days : (params.days ?? 30),
+    totals: payload.totals && typeof payload.totals === 'object' ? payload.totals : {},
+    publish_trend: toArray(payload.publish_trend),
+    category_distribution: toArray(payload.category_distribution),
+    top_viewed: toArray(payload.top_viewed),
+    tag_cloud: toArray(payload.tag_cloud),
+  };
+}
+
+/**
  * 组装 multipart 表单数据（第 399 批：由私有 buildFormData 改为导出 buildNewsFormData，
  * 便于单测直接断言"哪些键被 append"；创建/修改两个接口共用）
  *
@@ -271,6 +303,7 @@ export default {
   fetchNewsTags,
   fetchNewsDetail,
   fetchNewsRelated,
+  fetchNewsStats,
   createNews,
   updateNews,
   toggleNewsPublished,

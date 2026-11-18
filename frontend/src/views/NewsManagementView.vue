@@ -59,30 +59,128 @@
       <span class="filter-total">{{ t('newsMgmt.totalCount', { count: pagination.total }) }}</span>
     </div>
 
-    <!-- 统计小卡（第 28 批：原来整页只有白卡片，加一点色彩与信息密度） -->
-    <div class="admin-stats">
-      <div class="stat-tile">
-        <span class="stat-tile-icon"><i class="fas fa-newspaper"></i></span>
-        <div>
-          <div class="stat-tile-value">{{ stats.total }}</div>
-          <div class="stat-tile-label">{{ t('newsMgmt.tabAll') }}</div>
+    <!-- 第 403 批：数据看板（统计行 + 趋势/分类/Top/标签云）。
+         放在筛选栏之后、新闻列表之前：管理员先看整体走势，再往下处理具体条目。
+         接口未就绪/请求失败时各区块显示空态，绝不影响下方列表与统计卡。 -->
+    <section class="news-dashboard" :aria-label="t('newsMgmt.dashboardTitle')">
+      <div class="dashboard-head">
+        <div class="dashboard-head-text">
+          <h3>{{ t('newsMgmt.dashboardTitle') }}</h3>
+          <p>{{ t('newsMgmt.dashboardSubtitle') }}</p>
+        </div>
+        <div class="dashboard-range">
+          <span class="dashboard-range-label">{{ t('newsMgmt.rangeLabel') }}</span>
+          <el-radio-group v-model="statsDays" size="small" @change="loadNewsStats">
+            <el-radio-button :value="7">{{ t('newsMgmt.range7d') }}</el-radio-button>
+            <el-radio-button :value="30">{{ t('newsMgmt.range30d') }}</el-radio-button>
+            <el-radio-button :value="90">{{ t('newsMgmt.range90d') }}</el-radio-button>
+          </el-radio-group>
         </div>
       </div>
-      <div class="stat-tile stat-tile--ok">
-        <span class="stat-tile-icon"><i class="fas fa-circle-check"></i></span>
-        <div>
-          <div class="stat-tile-value">{{ stats.published }}</div>
-          <div class="stat-tile-label">{{ t('newsMgmt.tabPublished') }}</div>
+
+      <!-- 统计行：总数 / 已发布 / 草稿 / 精选 / 定时 / 总阅读量 -->
+      <div class="admin-stats dashboard-stats">
+        <div
+          v-for="card in statCards"
+          :key="card.key"
+          class="stat-tile"
+          :class="card.tone"
+        >
+          <span class="stat-tile-icon"><i :class="card.icon"></i></span>
+          <div>
+            <div class="stat-tile-value">{{ formatNumber(card.value) }}</div>
+            <div class="stat-tile-label">{{ card.label }}</div>
+          </div>
         </div>
       </div>
-      <div class="stat-tile stat-tile--pending">
-        <span class="stat-tile-icon"><i class="fas fa-file-pen"></i></span>
-        <div>
-          <div class="stat-tile-value">{{ stats.draft }}</div>
-          <div class="stat-tile-label">{{ t('newsMgmt.tabUnpublished') }}</div>
+
+      <!-- 首次加载：骨架；接口失败后 show 空态（statsLoaded） -->
+      <el-skeleton v-if="statsLoading && !statsLoaded" :rows="6" animated class="dashboard-skeleton" />
+
+      <template v-else>
+        <div class="dashboard-grid">
+          <section class="panel-card">
+            <div class="panel-head">
+              <span class="panel-icon"><i class="fas fa-chart-line"></i></span>
+              <h4 class="panel-title">{{ t('newsMgmt.chartPublishTrend') }}</h4>
+              <span class="panel-count">{{ t('newsMgmt.rangeDays', { days: statsDays }) }}</span>
+            </div>
+            <div class="panel-body dashboard-chart-body">
+              <Line v-if="!publishTrendEmpty" :data="publishTrendChart" :options="trendOptions" />
+              <div v-else class="dashboard-empty">
+                <i class="fas fa-chart-line"></i>
+                <span>{{ t('newsMgmt.chartEmpty') }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-head">
+              <span class="panel-icon"><i class="fas fa-chart-pie"></i></span>
+              <h4 class="panel-title">{{ t('newsMgmt.chartCategory') }}</h4>
+            </div>
+            <div class="panel-body dashboard-chart-body">
+              <Doughnut v-if="!categoryEmpty" :data="categoryChart" :options="categoryOptions" />
+              <div v-else class="dashboard-empty">
+                <i class="fas fa-chart-pie"></i>
+                <span>{{ t('newsMgmt.chartEmpty') }}</span>
+              </div>
+            </div>
+          </section>
         </div>
-      </div>
-    </div>
+
+        <div class="dashboard-grid">
+          <section class="panel-card">
+            <div class="panel-head">
+              <span class="panel-icon"><i class="fas fa-fire"></i></span>
+              <h4 class="panel-title">{{ t('newsMgmt.chartTopViewed') }}</h4>
+              <span class="panel-count">{{ t('newsMgmt.totalCount', { count: topViewedNews.length }) }}</span>
+            </div>
+            <div class="panel-body dashboard-list-body">
+              <ol v-if="topViewedNews.length" class="top-viewed-list">
+                <li v-for="(item, index) in topViewedNews" :key="item.id">
+                  <button type="button" class="top-viewed-item" @click="goToNewsDetail(item.id)">
+                    <span class="top-viewed-rank" :class="`is-${index + 1}`">{{ index + 1 }}</span>
+                    <span class="top-viewed-title">{{ localizedField(item, 'title') }}</span>
+                    <span class="top-viewed-views">
+                      <i class="fas fa-eye"></i> {{ t('newsMgmt.viewsUnit', { count: formatNumber(item.views) }) }}
+                    </span>
+                  </button>
+                </li>
+              </ol>
+              <div v-else class="dashboard-empty dashboard-empty--compact">
+                <i class="fas fa-fire"></i>
+                <span>{{ t('newsMgmt.chartEmpty') }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-head">
+              <span class="panel-icon"><i class="fas fa-tags"></i></span>
+              <h4 class="panel-title">{{ t('newsMgmt.chartTagCloud') }}</h4>
+              <span class="panel-count">{{ t('newsMgmt.totalCount', { count: tagCloudItems.length }) }}</span>
+            </div>
+            <div class="panel-body dashboard-tag-body">
+              <div v-if="tagCloudItems.length" class="tag-cloud">
+                <span
+                  v-for="tag in tagCloudItems"
+                  :key="tag.name"
+                  class="tag-cloud-item"
+                  :style="tag.style"
+                >
+                  {{ tag.name }}<em>{{ tag.count }}</em>
+                </span>
+              </div>
+              <div v-else class="dashboard-empty dashboard-empty--compact">
+                <i class="fas fa-tags"></i>
+                <span>{{ t('newsMgmt.chartEmpty') }}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </template>
+    </section>
 
     <!-- 列表（第 29 批：卡片加"着色头条"，表格加斑马纹，整块不再是一张白纸） -->
     <el-card class="table-card admin-list-card" shadow="never">
@@ -444,6 +542,21 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { Plus, Search } from '@element-plus/icons-vue';
 import { format } from 'date-fns';
+// 第 403 批：数据看板图表（本页只注册用到的 controller/element，方式与 AdminDashboardView 一致）
+import { Doughnut, Line } from 'vue-chartjs';
+import {
+  ArcElement,
+  CategoryScale,
+  Chart as ChartJS,
+  DoughnutController,
+  Filler,
+  Legend,
+  LineController,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+} from 'chart.js';
 import RichTextEditor from '@/components/RichTextEditor.vue';
 import {
   NEWS_CATEGORIES,
@@ -451,6 +564,7 @@ import {
   deleteNews,
   fetchNewsDetail,
   fetchNewsList,
+  fetchNewsStats,
   formatNewsError,
   getNewsCategoryLabel,
   toggleNewsPublished,
@@ -463,6 +577,17 @@ import { useRoute, useRouter } from 'vue-router';  // 第 121 批：旧深链重
 import { useI18n } from '@/i18n';  // 第 66 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 79 批：新闻标题/来源等内容数据
 // 第 117 批：去掉 BackButton（本页已挪进管理后台外壳，侧栏就是导航）
+
+// 第 403 批：按需注册（register 是幂等的，各页面注册自己用到的图表类型即可，不要在 main.js 全局注册）
+ChartJS.register(
+  LineController, LineElement, PointElement, CategoryScale, LinearScale,
+  Filler, Legend, Tooltip, DoughnutController, ArcElement,
+);
+
+const BRAND = '#3d9a68';
+const BRAND_SOFT = 'rgba(61, 154, 104, 0.16)';
+// 分类环形图配色：品牌绿系 + 两个辅助色，和 AdminDashboardView 的调色板保持一致
+const CHART_PALETTE = ['#3d9a68', '#5fb088', '#93cdad', '#2a7f53', '#d9922f', '#3d7ea6', '#cf4436', '#9dada5'];
 
 const { t } = useI18n();
 const { localizedField } = useLocalized();
@@ -536,6 +661,168 @@ const fetchStats = async () => {
     };
   } catch (error) {
     console.warn('获取新闻统计失败:', error);
+  }
+};
+
+// ---------- 第 403 批：新闻数据看板 ----------
+const statsDays = ref(30);
+const newsStats = ref(null);
+const statsLoading = ref(true);   // 首次渲染即显示骨架，避免「先空态、后数据」闪一下
+const statsLoaded = ref(false);
+let statsRequestSeq = 0;
+
+/** 数字千分位；未加载的统计项显示「—」，避免误报 0 */
+const formatNumber = (value) => {
+  if (value === null || value === undefined || value === '') return '—';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString() : String(value);
+};
+
+/** YYYY-MM-DD → MM-DD（图表横轴用；不用 new Date，避免时区把日期挪一天） */
+const formatMonthDay = (value) => {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[2]}-${match[3]}` : String(value || '');
+};
+
+/**
+ * 看板统计行（6 张卡）
+ * 数据看板接口未就绪时，前 3 项回落到第 28 批的列表 count（fetchStats），
+ * 精选 / 定时 / 总阅读量显示「—」—— 不能凭空显示 0 误导管理员。
+ */
+const statCards = computed(() => {
+  const totals = newsStats.value?.totals && typeof newsStats.value.totals === 'object'
+    ? newsStats.value.totals
+    : null;
+  return [
+    { key: 'all', icon: 'fas fa-newspaper', value: totals ? totals.all : stats.value.total, label: t('newsMgmt.tabAll'), tone: '' },
+    { key: 'published', icon: 'fas fa-circle-check', value: totals ? totals.published : stats.value.published, label: t('newsMgmt.tabPublished'), tone: 'stat-tile--ok' },
+    { key: 'draft', icon: 'fas fa-file-pen', value: totals ? totals.draft : stats.value.draft, label: t('newsMgmt.draft'), tone: 'stat-tile--pending' },
+    { key: 'featured', icon: 'fas fa-star', value: totals ? (totals.featured ?? 0) : null, label: t('newsMgmt.statFeatured'), tone: 'stat-tile--processing' },
+    { key: 'scheduled', icon: 'fas fa-clock', value: totals ? (totals.scheduled ?? 0) : null, label: t('newsMgmt.statScheduled'), tone: '' },
+    { key: 'views', icon: 'fas fa-eye', value: totals ? (totals.views_total ?? 0) : null, label: t('newsMgmt.statViews'), tone: '' },
+  ];
+});
+
+// ---- 发布量趋势（折线） ----
+const publishTrendRows = computed(() => (Array.isArray(newsStats.value?.publish_trend) ? newsStats.value.publish_trend : []));
+const publishTrendEmpty = computed(() => {
+  if (publishTrendRows.value.length === 0) return true;
+  return publishTrendRows.value.every((row) => !Number(row?.count));
+});
+const publishTrendChart = computed(() => ({
+  labels: publishTrendRows.value.map((row) => row?.date || ''),
+  datasets: [{
+    label: t('newsMgmt.chartPublishTrend'),
+    data: publishTrendRows.value.map((row) => Number(row?.count) || 0),
+    borderColor: BRAND,
+    backgroundColor: BRAND_SOFT,
+    fill: true,
+    tension: 0.32,
+    borderWidth: 2,
+    pointRadius: 2,
+    pointHoverRadius: 4,
+  }],
+}));
+const trendOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: {
+      grid: { display: false },
+      ticks: {
+        color: '#78897f',
+        font: { size: 11 },
+        maxRotation: 0,
+        autoSkipPadding: 8,
+        // 后端给 YYYY-MM-DD，横轴只显示 MM-DD（标签过长会在窄屏挤成一团）
+        callback(value) {
+          return formatMonthDay(this.getLabelForValue(value));
+        },
+      },
+    },
+    y: {
+      beginAtZero: true,
+      grid: { color: '#eef5f1' },
+      ticks: { color: '#78897f', precision: 0, font: { size: 11 } },
+    },
+  },
+};
+
+// ---- 分类占比（环形；标签走 i18n，不用后端中文 label） ----
+const categoryRows = computed(() => (Array.isArray(newsStats.value?.category_distribution) ? newsStats.value.category_distribution : []));
+const categoryEmpty = computed(() => {
+  if (categoryRows.value.length === 0) return true;
+  return categoryRows.value.every((row) => !Number(row?.count));
+});
+const categoryChart = computed(() => ({
+  labels: categoryRows.value.map((row) => getNewsCategoryLabel(row?.category, t)),
+  datasets: [{
+    data: categoryRows.value.map((row) => Number(row?.count) || 0),
+    backgroundColor: CHART_PALETTE,
+    borderWidth: 0,
+  }],
+}));
+const categoryOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  cutout: '58%',
+  plugins: {
+    legend: { position: 'bottom', labels: { boxWidth: 10, color: '#566b60', font: { size: 11 } } },
+  },
+};
+
+// ---- 阅读量 Top（最多 10 条） ----
+const topViewedNews = computed(() => {
+  const rows = Array.isArray(newsStats.value?.top_viewed) ? newsStats.value.top_viewed : [];
+  return rows.slice(0, 10);
+});
+
+/**
+ * 标签云：按出现次数决定字号与深浅（12→20px、0.62→1）。
+ * 纯展示；最多 20 个，防止标签特别多时把卡片撑高/撑破。
+ */
+const tagCloudItems = computed(() => {
+  const rows = Array.isArray(newsStats.value?.tag_cloud) ? newsStats.value.tag_cloud : [];
+  const maxCount = rows.reduce((top, row) => Math.max(top, Number(row?.count) || 0), 0);
+  return rows
+    .filter((row) => row && row.name)
+    .slice(0, 20)
+    .map((row) => {
+      const count = Number(row.count) || 0;
+      const ratio = maxCount > 0 ? count / maxCount : 0;
+      return {
+        name: row.name,
+        count,
+        style: {
+          fontSize: `${12 + Math.round(ratio * 8)}px`,
+          opacity: String(0.62 + ratio * 0.38),
+        },
+      };
+    });
+});
+
+/**
+ * 拉取看板聚合数据
+ * - 失败静默：只 console.warn，保留已有数据/空态，不弹错误打断管理员；
+ * - 序号防竞态：快速切 7/30/90 时，旧响应不能覆盖新范围；
+ * - 与新闻列表、统计卡完全解耦：这里失败不影响下方表格。
+ */
+const loadNewsStats = async () => {
+  const requestId = ++statsRequestSeq;
+  statsLoading.value = true;
+  try {
+    const data = await fetchNewsStats({ days: statsDays.value });
+    if (requestId !== statsRequestSeq) return;
+    newsStats.value = data;
+    statsLoaded.value = true;
+  } catch (error) {
+    if (requestId !== statsRequestSeq) return;
+    console.warn('加载新闻数据看板失败（按空态处理，不影响列表）:', error);
+    // 标记已加载：首次失败展示各区块空态；切换范围失败则保留上一份数据
+    statsLoaded.value = true;
+  } finally {
+    if (requestId === statsRequestSeq) statsLoading.value = false;
   }
 };
 
@@ -789,6 +1076,8 @@ const submitForm = async () => {
 
     dialogVisible.value = false;
     await fetchData();
+    // 第 403 批：新增/编辑会改变看板统计，顺手刷新（失败静默）
+    loadNewsStats();
   } catch (error) {
     console.error('保存新闻失败:', error);
     ElMessage.error(formatNewsError(error, t('msg.savingFailedRetry')));
@@ -808,6 +1097,8 @@ const togglePublishStatus = async (row) => {
     ElMessage.success(t('newsMgmt.publishToggled', { action: actual ? t('newsMgmt.publishedAction') : t('newsMgmt.unpublishedAction') }));
     // 操作后重新拉取列表，确保管理端看到的与后端完全一致
     await fetchData();
+    // 第 403 批：上下架会改变看板的已发布/草稿数
+    loadNewsStats();
   } catch (error) {
     console.error('更新新闻状态失败:', error);
     ElMessage.error(formatNewsError(error, t('msg.operationFailedRetry')));
@@ -824,6 +1115,8 @@ const handleDelete = async (id) => {
       pagination.currentPage -= 1;
     }
     await fetchData();
+    // 第 403 批：删除会改变看板的分类占比/标签云
+    loadNewsStats();
   } catch (error) {
     console.error('删除新闻失败:', error);
     ElMessage.error(formatNewsError(error, t('msg.deleteFailedRetry')));
@@ -853,6 +1146,12 @@ const formatDate = (value) => {
 const route = useRoute();
 const router = useRouter();
 
+/** 第 403 批：看板「阅读量 Top」点击跳新闻详情 */
+const goToNewsDetail = (id) => {
+  if (!id) return;
+  router.push({ name: 'news-detail', params: { id } });
+};
+
 const openFromQuery = async () => {
   const action = String(route.query.action || '');
   if (!action) return;
@@ -878,6 +1177,8 @@ const openFromQuery = async () => {
 };
 
 onMounted(async () => {
+  // 第 403 批：看板与列表并行加载（loadNewsStats 内部已兜底，失败不影响列表）
+  loadNewsStats();
   await fetchData();
   await openFromQuery();
 });</script>
@@ -1078,6 +1379,243 @@ onMounted(async () => {
 
   .filter-total {
     margin-left: 0;
+  }
+}
+
+/* ================= 第 403 批：新闻数据看板 ================= */
+.news-dashboard {
+  margin: 4px 0 18px;
+}
+
+.dashboard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.dashboard-head-text h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--ink-900);
+}
+
+.dashboard-head-text p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-500);
+}
+
+.dashboard-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dashboard-range-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-500);
+}
+
+.dashboard-stats {
+  margin: 0 0 14px;
+  /* 6 张卡在桌面排 3 列 × 2 行（比 auto-fit 的 5+1 更均衡；375px 收成 2 列） */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-skeleton {
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #f5fcf8 0%, #ffffff 62%);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+/* 图表容器固定高度：切换 7/30/90 天时图表不会跳、也不把整页撑高 */
+.dashboard-chart-body {
+  position: relative;
+  height: 240px;
+}
+
+.dashboard-list-body {
+  min-height: 240px;
+}
+
+.dashboard-tag-body {
+  min-height: 240px;
+}
+
+.dashboard-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  min-height: 180px;
+  color: var(--ink-400);
+  font-size: 13px;
+}
+
+.dashboard-empty i {
+  font-size: 26px;
+  opacity: 0.6;
+}
+
+.dashboard-empty--compact {
+  min-height: 160px;
+}
+
+/* 阅读量 Top */
+.top-viewed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.top-viewed-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.top-viewed-item:hover {
+  border-color: var(--brand-300);
+  background: var(--brand-50);
+}
+
+.top-viewed-rank {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--ink-100);
+  color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.top-viewed-rank.is-1 { background: linear-gradient(135deg, #f0a94a, #d9822b); color: #fff; }
+.top-viewed-rank.is-2 { background: linear-gradient(135deg, #9fb4c7, #7b8fa3); color: #fff; }
+.top-viewed-rank.is-3 { background: linear-gradient(135deg, #cd9a72, #a9764c); color: #fff; }
+
+.top-viewed-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-viewed-views {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+/* 标签云：字号/深浅按出现次数区分 */
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+}
+
+.tag-cloud-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 12px;
+  border: 1px solid var(--brand-200);
+  border-radius: var(--radius-pill);
+  background: var(--brand-50);
+  color: var(--brand-700);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.tag-cloud-item em {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+@media (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-chart-body {
+    height: 220px;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-range {
+    width: 100%;
+  }
+
+  /* 375px：统计卡固定 2 列，6 张卡排 3 行（不再按 minmax 自适应成 1 列） */
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-stats {
+    gap: 8px;
+  }
+
+  .stat-tile {
+    padding: 12px;
+  }
+
+  .top-viewed-item {
+    padding: 8px;
+  }
+}
+
+/* 第 403 批：375px 实测发现本页多出 19px 横向滚动条 —— 根因不在看板，而是
+   `.tinted-page::after` 那个 250×250 的右侧圆形水印用了 `right: -34px`，故意
+   探出容器装饰边缘；桌面端看着是设计，手机端就变成"整页可以左右晃"。
+   这里只在窄屏把它裁掉（overflow-x: clip 不新建滚动容器，也不影响纵向 sticky），
+   桌面端保持原样。同类页面（也用 .tinted-page）若要做移动端，可复用这一行。 */
+@media (max-width: 768px) {
+  .news-management {
+    overflow-x: clip;
   }
 }
 </style>

@@ -1594,6 +1594,23 @@ export const zhCN = {
     unpublishedAction: '下架',
     totalCount: '共 {count} 条',
     loadFailed: '加载新闻列表失败',
+    // 第 403 批：数据看板（统计行 / 发布趋势 / 分类占比 / 阅读量 Top / 标签云）
+    dashboardTitle: '数据看板',
+    dashboardSubtitle: '发布趋势、分类占比、阅读量与热门标签，按所选时间范围统计',
+    rangeLabel: '统计范围',
+    range7d: '近 7 天',
+    range30d: '近 30 天',
+    range90d: '近 90 天',
+    rangeDays: '近 {days} 天',
+    statFeatured: '精选',
+    statScheduled: '定时发布',
+    statViews: '总阅读量',
+    chartPublishTrend: '发布量趋势',
+    chartCategory: '分类占比',
+    chartTopViewed: '阅读量 Top 10',
+    chartTagCloud: '热门标签',
+    chartEmpty: '暂无数据',
+    viewsUnit: '{count} 阅读',
   },
   review: {
     unpublish: '下架',   // 第 182 批：撤回已发布的内容（可再次通过恢复）
@@ -2781,7 +2798,7 @@ export const zhCN = {
   },
   notify: {
     title: '通知中心',
-    subtitle: '帖子被回复、点赞、收藏，以及系统公告都会出现在这里',
+    subtitle: '帖子被回复、点赞、收藏，以及系统公告、行业动态推送都会出现在这里',
     // 第 77 批：公告弹窗标题（原来在模板里写成三目表达式的两个中文字面量）
     editAnnouncement: '编辑公告',
     createAnnouncement: '发布公告',
@@ -4893,6 +4910,23 @@ export const en = {
     unpublishedAction: 'unpublished',
     totalCount: '{count} total',
     loadFailed: 'Failed to load the news list',
+    // Batch 403: data dashboard (totals / publish trend / category share / most read / tag cloud)
+    dashboardTitle: 'Dashboard',
+    dashboardSubtitle: 'Publishing trend, category share, most-read articles and popular tags for the selected range',
+    rangeLabel: 'Range',
+    range7d: 'Last 7 days',
+    range30d: 'Last 30 days',
+    range90d: 'Last 90 days',
+    rangeDays: 'Last {days} days',
+    statFeatured: 'Featured',
+    statScheduled: 'Scheduled',
+    statViews: 'Total views',
+    chartPublishTrend: 'Publishing trend',
+    chartCategory: 'Category share',
+    chartTopViewed: 'Most read (Top 10)',
+    chartTagCloud: 'Popular tags',
+    chartEmpty: 'No data',
+    viewsUnit: '{count} views',
   },
   review: {
     unpublish: 'Unpublish',   // Batch 182: take a published post down (reversible)
@@ -6049,7 +6083,7 @@ export const en = {
   },
   notify: {
     title: 'Notifications',
-    subtitle: 'Replies, likes, favorites and system announcements all show up here',
+    subtitle: 'Replies, likes, favorites, system announcements and industry news alerts all show up here',
     // 第 77 批：公告弹窗标题
     editAnnouncement: 'Edit announcement',
     createAnnouncement: 'New announcement',
