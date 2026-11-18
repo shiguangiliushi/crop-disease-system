@@ -670,6 +670,55 @@ paths:
           description: ''
         '204':
           description: No response body
+  /api/admin/news-stats/:
+    get:
+      operationId: api_admin_news_stats_retrieve
+      description: |-
+        管理端「行业动态数据看板」（第 403 批 P2-12）
+
+            GET /api/admin/news-stats/?days=30
+
+        为什么单独一个接口而不塞进总看板：新闻运营（发多少、哪些火、标签生态）
+        与"用户 / 识别 / 论坛"看板是不同角色关心的东西；独立接口也方便前端在
+        行业动态页里把图表区块按需加载，不必为了几张图把总看板拖慢。
+
+        口径说明（容易踩的地方都写在这里）：
+          · `published` / `draft` / `featured` / `scheduled` 都按**全部新闻**计数，
+            其中 scheduled 只算"已发布且 published_at 还在未来"的；
+          · `views_total` / `views_avg` 同样按**全部新闻**统计 —— 下架新闻的历史阅读量
+            也是真实发生过的，不该因为当前发布状态被抹掉；没有新闻时 views_avg=0.0；
+          · 趋势 / 分类分布 / Top 阅读 / 标签云 只统计**已发布**（草稿对外不可见，
+            算进"发布趋势"会让人误判内容产出）；
+          · 趋势按**有效发布时间**（published_at 优先，空则回退 created_at）分桶，
+            且按**本地时区**取日期 —— 第 69 批踩过"UTC 日期与本地日期差 8 小时"的坑。
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+        description: 统计最近 N 天（含今天），默认 30；合法范围 7..180，非法 / 越界回退默认值 30。
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      tags:
+      - api
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsStatsResponseSchema'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/NewsStatsResponseSchema'
+          description: ''
   /api/admin/role-matrix/:
     get:
       operationId: api_admin_role_matrix_retrieve
@@ -10775,6 +10824,122 @@ components:
       required:
       - count
       - results
+    NewsStatsCategoryCountSchema:
+      type: object
+      description: 分类分布的一行（固定输出 5 个分类，无数据 count=0）
+      properties:
+        category:
+          type: string
+        count:
+          type: integer
+      required:
+      - category
+      - count
+    NewsStatsResponseSchema:
+      type: object
+      description: '`GET /api/admin/news-stats/` 的完整响应结构'
+      properties:
+        days:
+          type: integer
+        totals:
+          $ref: '#/components/schemas/NewsStatsTotalsSchema'
+        publish_trend:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewsStatsTrendPointSchema'
+        category_distribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewsStatsCategoryCountSchema'
+        top_viewed:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewsStatsTopViewedSchema'
+        tag_cloud:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewsStatsTagCountSchema'
+        generated_at:
+          type: string
+          format: date-time
+      required:
+      - category_distribution
+      - days
+      - generated_at
+      - publish_trend
+      - tag_cloud
+      - top_viewed
+      - totals
+    NewsStatsTagCountSchema:
+      type: object
+      description: 标签云的一行
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+      required:
+      - count
+      - name
+    NewsStatsTopViewedSchema:
+      type: object
+      description: 阅读量 Top 榜的一行（created_at 为 ISO 字符串）
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        title_en:
+          type: string
+        views:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - id
+      - title
+      - title_en
+      - views
+    NewsStatsTotalsSchema:
+      type: object
+      description: totals 段：总量与阅读量
+      properties:
+        all:
+          type: integer
+        published:
+          type: integer
+        draft:
+          type: integer
+        featured:
+          type: integer
+        scheduled:
+          type: integer
+        views_total:
+          type: integer
+        views_avg:
+          type: number
+          format: double
+      required:
+      - all
+      - draft
+      - featured
+      - published
+      - scheduled
+      - views_avg
+      - views_total
+    NewsStatsTrendPointSchema:
+      type: object
+      description: 发布趋势的一天（date 为本地日期 YYYY-MM-DD）
+      properties:
+        date:
+          type: string
+        count:
+          type: integer
+      required:
+      - count
+      - date
     NewsSubscription:
       type: object
       description: |-

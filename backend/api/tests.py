@@ -3571,6 +3571,247 @@ class NewsSubscriptionTests(TestCase):
         self.assertIn('漏发通知的新闻', output.getvalue())
 
 
+class NewsStatsTests(TestCase):
+    """
+    第 403 批（行业动态清单 P2-12）：管理端行业动态数据看板
+    `GET /api/admin/news-stats/`。
+
+    背景：新闻运营需要回答"最近发了多少 / 哪些最火 / 标签生态长什么样"，
+    此前只能靠管理员自己翻列表数。本接口把趋势、分类分布、阅读量 Top、
+    标签云聚合到一次请求里。
+
+    用例锁死这些容易后悔的口径：
+      · 趋势长度必须 = days 且空白日补 0（否则前端折线会跳日期）；
+      · 趋势按"有效发布时间"（published_at 优先，空则 created_at）分桶 ——
+        只按 created_at 会漏掉定时发布、只按 published_at 会漏掉立即发布；
+      · 分类分布固定 5 类全量输出（没有数据的分类也要出现，图例才稳定）；
+      · Top 阅读 / 标签云 / 分布都只看 is_published=True（草稿对外不可见，
+        把它算进"已发布表现"会误导运营）；
+      · days 非法/越界回退 30，合法范围 7..180。
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='ns403_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        # 信息编辑员：有 news 模块授权 → 具备 CONTENT 能力 → 可以看这个看板
+        self.editor = User.objects.create_user(
+            username='ns403_editor', password='pw123456', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(
+            user=self.editor, module='news', granted_by=self.admin,
+        )
+        self.normal = User.objects.create_user(username='ns403_user', password='pw123456')
+
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_user = APIClient()
+        self.client_user.force_authenticate(user=self.normal)
+        self.anon = APIClient()
+
+        now = timezone.now()
+
+        # 1) 今天发布（政策 / 100 阅读 / 精选；同篇标签重复写，用于验证去重）
+        self.today_news = News.objects.create(
+            title='今天的政策新闻', content='正文', is_published=True, is_featured=True,
+            category='policy', views=100, tags='政策,补贴,政策',
+        )
+        # 2) 昨天发布（技术 / 50 阅读）
+        self.yesterday_news = News.objects.create(
+            title='昨天的技术新闻', content='正文', is_published=True,
+            category='tech', views=50, tags='技术,补贴',
+        )
+        News.objects.filter(pk=self.yesterday_news.pk).update(
+            created_at=now - timedelta(days=1),
+        )
+        # 3) 十天前创建、三天前通过 published_at 发布（市场 / 10 阅读）——
+        #    趋势必须按 published_at 而不是 created_at 分桶
+        self.published_later_news = News.objects.create(
+            title='三天前发布的旧稿', content='正文', is_published=True,
+            category='market', views=10, tags='市场',
+        )
+        News.objects.filter(pk=self.published_later_news.pk).update(
+            created_at=now - timedelta(days=10),
+            published_at=now - timedelta(days=3),
+        )
+        # 4) 十天前立即发布（报告 / 5 阅读；published_at 为空）
+        self.ten_days_news = News.objects.create(
+            title='十天前的行业报告', content='正文', is_published=True,
+            category='report', views=5,
+        )
+        News.objects.filter(pk=self.ten_days_news.pk).update(
+            created_at=now - timedelta(days=10),
+        )
+        # 5) 草稿（通知分类 / 999 阅读 / 精选 / 带标签）—— 不能进已发布口径的图表
+        self.draft_news = News.objects.create(
+            title='草稿新闻', content='正文', is_published=False, is_featured=True,
+            category='notice', views=999, tags='草稿标签',
+        )
+        # 6) 定时发布（报告 / 未来 published_at）—— 计入 published/scheduled，但不进趋势
+        self.scheduled_news = News.objects.create(
+            title='明天发布的新闻', content='正文', is_published=True,
+            category='report', views=7,
+            published_at=now + timedelta(days=1),
+        )
+        # 7) 12 条高阅读已发布新闻（60 天前创建 → 不在 30 天趋势里，只影响总量/Top/标签）
+        self.top_news = []
+        for index in range(12):
+            news = News.objects.create(
+                title=f'热读新闻{index}', content='正文', is_published=True,
+                category='tech', views=1000 - index, tags='技术',
+            )
+            News.objects.filter(pk=news.pk).update(created_at=now - timedelta(days=60))
+            news.refresh_from_db()
+            self.top_news.append(news)
+
+    def tearDown(self):
+        cache.clear()
+
+    def _get(self, params=None):
+        return self.client_admin.get('/api/admin/news-stats/', params or {})
+
+    # ---------- 权限 ----------
+
+    def test_anonymous_and_normal_user_cannot_view(self):
+        guest = self.anon.get('/api/admin/news-stats/')
+        self.assertIn(guest.status_code, (401, 403), '匿名不能看管理端看板')
+
+        normal = self.client_user.get('/api/admin/news-stats/')
+        self.assertEqual(normal.status_code, 403)
+        self.assertEqual(normal.data['detail'], '没有权限查看新闻数据看板')
+
+    def test_editor_with_news_module_can_view(self):
+        response = self.client_editor.get('/api/admin/news-stats/')
+        self.assertEqual(response.status_code, 200, '信息编辑员（有 news 模块）应能看新闻看板')
+
+    def test_admin_gets_full_response_shape(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        data = response.data
+        for key in (
+            'days', 'totals', 'publish_trend', 'category_distribution',
+            'top_viewed', 'tag_cloud', 'generated_at',
+        ):
+            self.assertIn(key, data, f'响应缺少 {key}')
+        for key in (
+            'all', 'published', 'draft', 'featured', 'scheduled',
+            'views_total', 'views_avg',
+        ):
+            self.assertIn(key, data['totals'], f'totals 缺少 {key}')
+        self.assertEqual(data['days'], 30, '不带 days 参数时默认 30')
+        self.assertEqual(len(data['publish_trend']), 30)
+        self.assertIsInstance(data['generated_at'], str, 'generated_at 用 ISO 字符串')
+
+    # ---------- 总量 ----------
+
+    def test_totals_are_accurate(self):
+        totals = self._get().data['totals']
+        self.assertEqual(totals['all'], 18)
+        self.assertEqual(totals['published'], 17, 'published=is_published=True 全部（含定时未到点）')
+        self.assertEqual(totals['draft'], 1)
+        self.assertEqual(totals['featured'], 2, 'featured 按 is_featured=True 统计（含草稿）')
+        self.assertEqual(totals['scheduled'], 1, 'scheduled=已发布且发布时间在未来')
+        # 阅读量按全部新闻统计：100+50+10+5+999+7 + (1000+…+989)
+        self.assertEqual(totals['views_total'], 13105)
+        self.assertAlmostEqual(totals['views_avg'], round(13105 / 18, 1), places=1)
+
+    # ---------- 发布趋势 ----------
+
+    def test_publish_trend_length_and_effective_publish_time(self):
+        data = self._get().data
+        trend = {row['date']: row['count'] for row in data['publish_trend']}
+        today = timezone.localdate()
+
+        self.assertEqual(len(data['publish_trend']), 30, '趋势长度必须等于 days')
+        self.assertEqual(data['publish_trend'][0]['date'], (today - timedelta(days=29)).isoformat())
+        self.assertEqual(data['publish_trend'][-1]['date'], today.isoformat(), '日期升序、最后一天是今天')
+
+        self.assertEqual(trend[today.isoformat()], 1)
+        self.assertEqual(trend[(today - timedelta(days=1)).isoformat()], 1)
+        self.assertEqual(
+            trend[(today - timedelta(days=3)).isoformat()], 1,
+            'published_at 非空时按发布日分桶（即使创建于 10 天前）',
+        )
+        self.assertEqual(trend[(today - timedelta(days=10)).isoformat()], 1)
+        self.assertEqual(trend[(today - timedelta(days=5)).isoformat()], 0, '没有新闻的日期要补 0')
+
+        # 草稿 / 60 天前的新闻 / 未来的定时新闻都不该进最近 30 天趋势
+        self.assertEqual(sum(trend.values()), 4, '趋势只统计已发布且有效发布时间落在区间内的新闻')
+
+    # ---------- days 参数 ----------
+
+    def test_days_param_range_and_fallback(self):
+        for value in ('abc', '1', '999', '0', '-5', ''):
+            response = self.client_admin.get('/api/admin/news-stats/', {'days': value})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data['days'], 30, f'days={value!r} 应回退默认值 30')
+            self.assertEqual(len(response.data['publish_trend']), 30)
+
+        seven = self.client_admin.get('/api/admin/news-stats/', {'days': 7})
+        self.assertEqual(seven.data['days'], 7)
+        self.assertEqual(len(seven.data['publish_trend']), 7)
+        self.assertEqual(
+            sum(row['count'] for row in seven.data['publish_trend']), 3,
+            '近 7 天只含今天 / 昨天 / 3 天前三条（10 天前的被排除）',
+        )
+
+        big = self.client_admin.get('/api/admin/news-stats/', {'days': 180})
+        self.assertEqual(big.data['days'], 180, '180 是合法上界')
+        self.assertEqual(len(big.data['publish_trend']), 180)
+
+    # ---------- 分类分布 ----------
+
+    def test_category_distribution_includes_all_five_categories(self):
+        distribution = self._get().data['category_distribution']
+        self.assertEqual(
+            [row['category'] for row in distribution],
+            [value for value, _label in News.CATEGORY_CHOICES],
+            '固定按 CATEGORY_CHOICES 输出全部 5 个分类',
+        )
+        self.assertEqual(
+            {row['category']: row['count'] for row in distribution},
+            {'policy': 1, 'tech': 13, 'market': 1, 'report': 2, 'notice': 0},
+            '只统计已发布；没有数据的分类输出 0（草稿所在的通知分类应为 0）',
+        )
+
+    # ---------- 阅读量 Top ----------
+
+    def test_top_viewed_sorted_and_limited(self):
+        top = self._get().data['top_viewed']
+        self.assertEqual(len(top), 10, '最多返回 10 条')
+        self.assertEqual(
+            [row['id'] for row in top], [news.id for news in self.top_news[:10]],
+            '按 views 降序排列；后两条（views 更少）被截断',
+        )
+        views = [row['views'] for row in top]
+        self.assertEqual(views, sorted(views, reverse=True))
+
+        top_ids = [row['id'] for row in top]
+        self.assertNotIn(self.draft_news.id, top_ids, '草稿不该出现在阅读量榜')
+        self.assertEqual(top[0]['title_en'], '', 'title_en 字段要返回（空也保留）')
+        self.assertIsInstance(top[0]['created_at'], str, 'created_at 用 ISO 字符串')
+
+    # ---------- 标签云 ----------
+
+    def test_tag_cloud_dedupe_sorted_and_excludes_drafts(self):
+        tag_cloud = self._get().data['tag_cloud']
+        self.assertEqual(
+            tag_cloud,
+            [
+                {'name': '技术', 'count': 13},
+                {'name': '补贴', 'count': 2},
+                {'name': '市场', 'count': 1},
+                {'name': '政策', 'count': 1},
+            ],
+            '同一篇新闻里重复标签只算一次（政策 1 条出现两次仍记 1），按 (-count, name) 排序',
+        )
+        names = [row['name'] for row in tag_cloud]
+        self.assertNotIn('草稿标签', names, '草稿标签不统计')
+
+
 # ============================================================================
 # 第 39 批：管理员数据看板
 # ============================================================================

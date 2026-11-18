@@ -7,6 +7,7 @@
 这里给管理端一个聚合接口，一次请求拿齐看板需要的全部数据：
 
     GET /api/admin/dashboard/?days=14
+    GET /api/admin/news-stats/?days=30   # 第 403 批：行业动态专属看板
 
 返回：
     totals            总量与今日/近 7 日数字（用户、识别、帖子、评论、新闻、反馈）
@@ -23,15 +24,19 @@
 权限：仅管理员（is_staff / is_superuser / role=ADMIN，与项目其它管理端口径一致）。
 """
 import logging
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Q
+from django.db.models import Avg, Count, Q, Sum
 from django.db.models.functions import TruncDay
 from django.utils import timezone
-from rest_framework import permissions
+from rest_framework import permissions, serializers
 from drf_spectacular.types import OpenApiTypes  # 第 389 批
-from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
+from drf_spectacular.utils import (  # 第 389 批：OpenAPI 标注
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+)
 # 第 124 批：能力判定统一收口（看板 = CONTENT 只读；样本统计 = BROADCAST）
 from .capabilities import CAP_BROADCAST, CAP_CONTENT, has_capability, is_full_admin
 from rest_framework.response import Response
@@ -41,6 +46,10 @@ from .models import DetectionHistory, Feedback, News, PestInfo
 from .models_forum import Comment, Post
 from .models_report import Report
 from .services_content_i18n import pest_en_maps  # 第 77 批：分布图的中英对照
+# 第 403 批：标签云与新闻列表的标签筛选必须用**同一套**拆分口径，
+# 否则"列表能按 A,B 筛出新闻、标签云却把 'A，B' 当成一个标签"。
+# news_views 不 import 本模块，不存在循环导入。
+from .news_views import TAG_SPLIT_RE
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -318,4 +327,207 @@ class AdminDashboardView(APIView):
             'recent_users': recent_users,
             # 明确告诉前端"这两块有没有数据"，省得前端自己猜（空数组 ≠ 没有用户）
             'includes_user_detail': include_user_detail,
+        })
+
+
+# ============================================================================
+# 第 403 批（行业动态清单 P2-12）：行业动态数据看板
+# ============================================================================
+# 下面这组 Serializer **只用于 OpenAPI 文档**（不参与实际序列化）：这个接口返回的是
+# 手工拼的 dict，drf-spectacular 推导不出结构；不显式声明的话 schema 里只有
+# `type: object`，前端拿不到字段名。字段顺序与响应保持一致。
+class NewsStatsTotalsSchema(serializers.Serializer):
+    """totals 段：总量与阅读量"""
+
+    all = serializers.IntegerField()
+    published = serializers.IntegerField()
+    draft = serializers.IntegerField()
+    featured = serializers.IntegerField()
+    scheduled = serializers.IntegerField()
+    views_total = serializers.IntegerField()
+    views_avg = serializers.FloatField()
+
+
+class NewsStatsTrendPointSchema(serializers.Serializer):
+    """发布趋势的一天（date 为本地日期 YYYY-MM-DD）"""
+
+    date = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class NewsStatsCategoryCountSchema(serializers.Serializer):
+    """分类分布的一行（固定输出 5 个分类，无数据 count=0）"""
+
+    category = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class NewsStatsTopViewedSchema(serializers.Serializer):
+    """阅读量 Top 榜的一行（created_at 为 ISO 字符串）"""
+
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    title_en = serializers.CharField()
+    views = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+
+
+class NewsStatsTagCountSchema(serializers.Serializer):
+    """标签云的一行"""
+
+    name = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class NewsStatsResponseSchema(serializers.Serializer):
+    """`GET /api/admin/news-stats/` 的完整响应结构"""
+
+    days = serializers.IntegerField()
+    totals = NewsStatsTotalsSchema()
+    publish_trend = NewsStatsTrendPointSchema(many=True)
+    category_distribution = NewsStatsCategoryCountSchema(many=True)
+    top_viewed = NewsStatsTopViewedSchema(many=True)
+    tag_cloud = NewsStatsTagCountSchema(many=True)
+    generated_at = serializers.DateTimeField()
+
+
+class AdminNewsStatsView(APIView):
+    """
+    管理端「行业动态数据看板」（第 403 批 P2-12）
+
+        GET /api/admin/news-stats/?days=30
+
+    为什么单独一个接口而不塞进总看板：新闻运营（发多少、哪些火、标签生态）
+    与"用户 / 识别 / 论坛"看板是不同角色关心的东西；独立接口也方便前端在
+    行业动态页里把图表区块按需加载，不必为了几张图把总看板拖慢。
+
+    口径说明（容易踩的地方都写在这里）：
+      · `published` / `draft` / `featured` / `scheduled` 都按**全部新闻**计数，
+        其中 scheduled 只算"已发布且 published_at 还在未来"的；
+      · `views_total` / `views_avg` 同样按**全部新闻**统计 —— 下架新闻的历史阅读量
+        也是真实发生过的，不该因为当前发布状态被抹掉；没有新闻时 views_avg=0.0；
+      · 趋势 / 分类分布 / Top 阅读 / 标签云 只统计**已发布**（草稿对外不可见，
+        算进"发布趋势"会让人误判内容产出）；
+      · 趋势按**有效发布时间**（published_at 优先，空则回退 created_at）分桶，
+        且按**本地时区**取日期 —— 第 69 批踩过"UTC 日期与本地日期差 8 小时"的坑。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='days', type=int, location=OpenApiParameter.QUERY, required=False,
+                description='统计最近 N 天（含今天），默认 30；合法范围 7..180，'
+                            '非法 / 越界回退默认值 30。',
+            ),
+        ],
+        responses={200: NewsStatsResponseSchema},
+    )
+    def get(self, request):
+        if not _can_view_dashboard(request.user):
+            return Response({'detail': '没有权限查看新闻数据看板'}, status=403)
+
+        try:
+            days = int(request.query_params.get('days', 30))
+        except (TypeError, ValueError):
+            days = 30
+        # 7..180：少于 7 天看不出趋势；多于 180 天图表放不下、查询也变慢
+        if not 7 <= days <= 180:
+            days = 30
+
+        now = timezone.now()
+        today = timezone.localdate()
+        start_date = today - timedelta(days=days - 1)
+        # 区间是"本地日期 [start_date, today]"，换算成 aware datetime 给 DB 粗筛用
+        start_dt = timezone.make_aware(datetime.combine(start_date, time.min))
+
+        all_news = News.objects.all()
+        published_news = all_news.filter(is_published=True)
+
+        # ---------- 总量 ----------
+        totals = {
+            'all': all_news.count(),
+            'published': published_news.count(),
+            'draft': all_news.filter(is_published=False).count(),
+            'featured': all_news.filter(is_featured=True).count(),
+            'scheduled': published_news.filter(published_at__gt=now).count(),
+            # 阅读量按全部新闻统计（见类说明的取舍）
+            'views_total': all_news.aggregate(total=Sum('views'))['total'] or 0,
+            'views_avg': round(all_news.aggregate(avg=Avg('views'))['avg'] or 0, 1),
+        }
+
+        # ---------- 发布趋势（有效发布时间口径） ----------
+        # 先用粗筛把"可能落在区间内"的已发布新闻取出来（published_at 为空时看
+        # created_at），再在 Python 里按本地日期分桶：两个时间字段选一个用 OR 表达，
+        # 在 SQL 里按"有效时间"trunc 既难读、又容易在 SQLite 上碰时区问题。
+        effective_rows = published_news.filter(
+            Q(published_at__gte=start_dt)
+            | Q(published_at__isnull=True, created_at__gte=start_dt)
+        ).values_list('published_at', 'created_at')
+        day_counts = {}
+        for published_at, created_at in effective_rows:
+            effective_at = published_at or created_at
+            day = timezone.localtime(effective_at).date()
+            # 上界用 <= today 再兜一道：published_at 在未来的定时新闻不该进趋势
+            if start_date <= day <= today:
+                day_counts[day] = day_counts.get(day, 0) + 1
+        publish_trend = []
+        for offset in range(days):
+            day = start_date + timedelta(days=offset)
+            publish_trend.append({
+                'date': day.isoformat(),
+                'count': day_counts.get(day, 0),
+            })
+
+        # ---------- 分类分布（固定 5 类，无数据补 0） ----------
+        category_counts = {
+            row['category']: row['count']
+            for row in published_news.values('category').annotate(count=Count('id'))
+        }
+        category_distribution = [
+            {'category': value, 'count': category_counts.get(value, 0)}
+            for value, _label in News.CATEGORY_CHOICES
+        ]
+
+        # ---------- 阅读量 Top 10 ----------
+        top_viewed = [
+            {
+                'id': row['id'],
+                'title': row['title'],
+                'title_en': row['title_en'],
+                'views': row['views'],
+                'created_at': row['created_at'].isoformat(),
+            }
+            for row in published_news.order_by('-views', '-created_at').values(
+                'id', 'title', 'title_en', 'views', 'created_at',
+            )[:10]
+        ]
+
+        # ---------- 标签云 Top 20 ----------
+        tag_counter = {}
+        for raw_tags in published_news.values_list('tags', flat=True).iterator():
+            seen = set()
+            for name in TAG_SPLIT_RE.split(raw_tags or ''):
+                name = name.strip()
+                if not name or name in seen:
+                    continue
+                # 同一篇新闻里重复写同一个标签只算一次（否则会把自己刷上榜首）
+                seen.add(name)
+                tag_counter[name] = tag_counter.get(name, 0) + 1
+        tag_cloud = [
+            {'name': name, 'count': count}
+            for name, count in sorted(
+                tag_counter.items(), key=lambda item: (-item[1], item[0]),
+            )[:20]
+        ]
+
+        return Response({
+            'days': days,
+            'totals': totals,
+            'publish_trend': publish_trend,
+            'category_distribution': category_distribution,
+            'top_viewed': top_viewed,
+            'tag_cloud': tag_cloud,
+            'generated_at': now.isoformat(),
         })

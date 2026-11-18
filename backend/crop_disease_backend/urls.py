@@ -102,6 +102,8 @@ UsernameAvailabilityView = import_view('api.views_user', 'UsernameAvailabilityVi
 SiteConfigView = import_view('api.views_user', 'SiteConfigView')  # 第 38 批
 SensitiveWordViewSet = import_view('api.views_sensitive', 'SensitiveWordViewSet')  # 第 38 批
 AdminDashboardView = import_view('api.views_dashboard', 'AdminDashboardView')  # 第 39 批：数据看板
+# 第 403 批：行业动态数据看板（发布趋势 / 分类分布 / 阅读量 Top / 标签云）
+AdminNewsStatsView = import_view('api.views_dashboard', 'AdminNewsStatsView')
 # 第 91 批：识别纠错样本的闭环度量（攒了多少可训练样本 / 误判率下钻到病害）
 AdminFeedbackDatasetStatsView = import_view(
     'api.views_dashboard', 'AdminFeedbackDatasetStatsView'
@@ -399,6 +401,8 @@ api_urlpatterns = [
 
     # 管理员数据看板（第 39 批）
     path('admin/dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
+    # 第 403 批：行业动态数据看板（P2-12；CONTENT 能力可看，信息编辑员亦可）
+    path('admin/news-stats/', AdminNewsStatsView.as_view(), name='admin-news-stats'),
     # 第 91 批：识别纠错样本统计（攒了多少可用样本 / 哪类病害总被认错）
     path('admin/dataset-stats/', AdminFeedbackDatasetStatsView.as_view(), name='admin-dataset-stats'),
 
