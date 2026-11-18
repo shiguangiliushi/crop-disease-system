@@ -5,6 +5,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.pagination import PageNumberPagination
 # 第 399 批：列表新增的查询参数是手写 query_params 的，drf-spectacular 推导不到，
 # 必须显式登记，否则 docs/openapi.yaml 里看不到这些参数（前端只能靠口口相传）。
+from drf_spectacular.types import OpenApiTypes  # 第 404 批：ai-assist 的 schema 标注
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.conf import settings
 from django.core.cache import cache
@@ -12,9 +13,11 @@ from django.core.files.storage import default_storage
 from django.db.models import Case, F, IntegerField, Q, Value, When
 from django.http import Http404
 from django.utils import timezone
+import json
 import logging
 import re
 
+from .assistant import llm  # 第 404 批：AI 辅助复用助手链路的 LLM 调用层
 from .models import News
 from .serializers import NewsRelatedResponseSerializer, NewsSerializer
 # 第 402 批：发布扇出（订阅了该分类/关联病害的用户收站内通知）。
@@ -126,6 +129,101 @@ RELATED_MAX_LIMIT = 10
 
 class InvalidQueryParam(Exception):
     """第 399 批：列表查询参数非法 —— 统一转成 400，而不是落进 500 兜底。"""
+
+
+# ============================================================================
+# 第 404 批（P2-10 内容生产半自动化）：新闻编辑 AI 辅助
+# ============================================================================
+#: 支持的 AI 动作（summary=摘要 / title=改标题 / tags=标签建议 / translate=中英翻译）
+AI_ACTIONS = ('summary', 'title', 'tags', 'translate')
+#: 摘要/标题动作要求正文至少有 20 个字，否则模型只能瞎编
+AI_MIN_CONTENT_LENGTH = 20
+#: 传给模型的正文最多取前 4000 字（再长既费 token、又超出小模型的有效上下文）
+AI_INPUT_CONTENT_LIMIT = 4000
+#: 每用户每小时的 AI 调用上限（防止脚本把付费接口刷爆）
+AI_RATE_LIMIT_PER_HOUR = 30
+AI_RATE_LIMIT_WINDOW = 3600
+#: 翻译动作 content_en 的截断长度（模型偶尔不听话，返回整篇长文）
+AI_TRANSLATE_CONTENT_LIMIT = 1500
+#: 中文 system 提示：模型爱加解释/Markdown/引号，这里明确三条禁令
+AI_SYSTEM_PROMPT = (
+    '你是农业行业资讯编辑助手。只输出结果本身，不要解释、不要 Markdown、不要加引号。'
+)
+
+
+def _clean_ai_text(text):
+    """
+    清洗模型输出：去 ``` 围栏、去整体包裹的成对引号、去首尾空白。
+
+    为什么必须做：小模型经常把纯文本也包成 ```…``` 或加一对引号；这些字符
+    直接回填到"摘要/标题"输入框会很难看（编辑还得手动删）。
+    """
+    value = (text or '').strip()
+    value = re.sub(r'^```[a-zA-Z0-9_-]*\s*', '', value)
+    value = re.sub(r'\s*```$', '', value).strip()
+    if len(value) >= 2:
+        quote_pairs = {'"': '"', "'": "'", '“': '”', '「': '」', '『': '』'}
+        if value[0] in quote_pairs and value[-1] == quote_pairs[value[0]]:
+            value = value[1:-1].strip()
+    return value
+
+
+def _parse_translate_payload(text):
+    """
+    从模型输出里解析翻译 JSON（容错：```json 围栏、前后说明文字）。
+
+    返回 dict 或 None。调用方只认 `title_en` / `content_en` 两个键，其余忽略。
+    """
+    raw = (text or '').strip()
+    candidates = []
+    fenced = re.search(r'```(?:json)?\s*(.*?)```', raw, flags=re.S)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    candidates.append(_clean_ai_text(raw))
+    # 模型常加一句"以下是翻译："再跟 JSON，从第一个 { 到最后一个 } 再试一次
+    if '{' in raw and '}' in raw:
+        candidates.append(raw[raw.find('{'):raw.rfind('}') + 1])
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _ai_messages(action_name, *, title='', summary='', content='', tags=''):
+    """按动作拼中文 system + user prompt（输入统一截断到 4000 字）"""
+    content = (content or '')[:AI_INPUT_CONTENT_LIMIT]
+    if action_name == 'summary':
+        user = (
+            '请为下面这篇农业资讯写一段 80~120 字的中文摘要（最多不超过 200 字），'
+            f'只输出摘要：\n\n{content}'
+        )
+    elif action_name == 'title':
+        user = (
+            f'原标题：{title or "（未提供）"}\n\n正文：\n{content}\n\n'
+            '请输出一个更清晰准确的新闻标题（不超过 60 字），只输出标题。'
+        )
+    elif action_name == 'tags':
+        user = (
+            f'标题：{title}\n摘要：{summary}\n正文：\n{content}\n\n'
+            '请输出 3~6 个中文标签，用逗号分隔，只输出标签。'
+        )
+    else:  # translate
+        user = (
+            f'标题：{title}\n\n正文：\n{content}\n\n'
+            '请输出 JSON（不要解释、不要 Markdown）：'
+            '{"title_en": "英文标题", "content_en": "英文正文纯文本段落，最多 1500 字"}'
+        )
+    return [
+        {'role': 'system', 'content': AI_SYSTEM_PROMPT},
+        {'role': 'user', 'content': user},
+    ]
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -696,6 +794,149 @@ class NewsViewSet(viewsets.ModelViewSet):
             'tags': [{'name': name, 'count': count} for name, count in rows],
             'count': len(rows),
         })
+
+    @staticmethod
+    def _consume_ai_quota(user):
+        """
+        第 404 批：每用户每小时的 AI 调用限额（默认 30 次）。
+
+        为什么用 cache 而不是数据库计数：这是"防刷"的软限制，不需要精确审计；
+        用 `add` 抢第一次、后续 `incr` 的写法在本地内存 / Redis 后端上都够用。
+        缓存后端不支持 `incr` 或临时不可用时**放行**（AI 是旁路功能，不该因为
+        限流器故障把编辑挡在门外），只记一条 warning。
+
+        返回 True=允许本次调用，False=超限。
+        """
+        hour_key = timezone.localtime().strftime('%Y%m%d%H')
+        cache_key = f'news:ai:{user.pk}:{hour_key}'
+        try:
+            if cache.add(cache_key, 1, AI_RATE_LIMIT_WINDOW):
+                return True
+            try:
+                count = cache.incr(cache_key)
+            except (ValueError, NotImplementedError):
+                # key 刚好过期 / 后端不支持 incr：退回"重置为 1 并放行"
+                cache.set(cache_key, 1, AI_RATE_LIMIT_WINDOW)
+                return True
+            return count <= AI_RATE_LIMIT_PER_HOUR
+        except Exception as exc:
+            logger.warning('AI 限流缓存不可用，放行本次调用: %s', exc)
+            return True
+
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            400: OpenApiTypes.OBJECT,
+            429: OpenApiTypes.OBJECT,
+            503: OpenApiTypes.OBJECT,
+        },
+    )
+    @action(detail=False, methods=['post'], url_path='ai-assist')
+    def ai_assist(self, request):
+        """
+        第 404 批（P2-10）：新闻编辑 AI 辅助（`POST /api/news/ai-assist/`）
+
+        入参：`{action: summary|title|tags|translate, title?, summary?, content?, tags?}`
+
+        为什么放在新闻接口里而不是另开一套 AI 接口：四个动作都是"编辑一篇新闻时的
+        辅助工具"，权限与新闻维护完全一致（CONTENT），复用 `get_permissions()` 与
+        `_can_manage_news` 就不会出现"看新闻的人能调 AI、能改新闻的人反而不能"的错位。
+
+        失败语义（前端按状态码区分即可）：
+          · 503 + `AI 服务未启用或未配置`：没配 LLM 环境变量（不是 bug，先关掉入口）；
+          · 503 + `AI 服务暂不可用：…`：网络/超时/HTTP 错误（可重试）；
+          · 429：本小时调用次数超限（稍后再试）；
+          · 500：其它未预期错误（后端看日志）。
+        """
+        # get_permissions() 已把非只读 action 收敛到内容维护者；这里再兜一道，
+        # 防止将来有人把 ai_assist 加进只读白名单后接口裸奔。
+        if not self._can_manage_news(request.user):
+            return Response({'detail': '没有权限使用 AI 辅助'}, status=403)
+
+        data = request.data if hasattr(request.data, 'get') else {}
+        action_name = (data.get('action') or '').strip()
+        if action_name not in AI_ACTIONS:
+            return Response(
+                {'error': '不支持的 AI 动作，合法取值：summary / title / tags / translate'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        title = (data.get('title') or '').strip()
+        summary = (data.get('summary') or '').strip()
+        content = (data.get('content') or '').strip()
+        tags = (data.get('tags') or '').strip()
+
+        # 摘要 / 改标题都依赖正文：太短的正文让模型只能编，直接告诉调用方
+        if action_name in ('summary', 'title') and len(content) < AI_MIN_CONTENT_LENGTH:
+            return Response(
+                {'error': '正文太短，至少需要 20 个字'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+        if action_name == 'tags' and not (title or summary or content):
+            return Response(
+                {'error': '请至少提供标题、摘要或正文'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+        if action_name == 'translate' and not (title or content):
+            return Response(
+                {'error': '翻译至少需要标题或正文'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 先扣配额再查 LLM 是否启用：服务未配置时也不该被脚本无限打（429 先于 503）
+        if not self._consume_ai_quota(request.user):
+            return Response(
+                {'error': 'AI 调用过于频繁，请稍后再试'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        if not llm.enabled():
+            return Response(
+                {'error': 'AI 服务未启用或未配置，请联系管理员'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        messages = _ai_messages(
+            action_name, title=title, summary=summary, content=content, tags=tags,
+        )
+        try:
+            result = llm.chat(messages, max_tokens=600, temperature=0.3)
+        except llm.LLMError as exc:
+            logger.warning('新闻 AI 辅助调用失败（action=%s）: %s', action_name, exc)
+            return Response(
+                {'error': f'AI 服务暂不可用：{exc}'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception:
+            # 不把内部异常信息回给前端（可能带配置/密钥线索），只记日志
+            logger.exception('新闻 AI 辅助未预期错误（action=%s）', action_name)
+            return Response(
+                {'error': 'AI 服务内部错误'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        model = llm.model_name()
+        if action_name == 'translate':
+            payload = _parse_translate_payload(result.text) or {}
+            title_en = str(payload.get('title_en') or '').strip()
+            content_en = str(payload.get('content_en') or '').strip()
+            if not title_en or not content_en:
+                return Response(
+                    {'error': 'AI 返回格式异常，请稍后重试'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            return Response({
+                'action': 'translate',
+                'title_en': title_en[:200],
+                'content_en': content_en[:AI_TRANSLATE_CONTENT_LIMIT],
+                'model': model,
+            })
+
+        text = _clean_ai_text(result.text)
+        if action_name == 'tags':
+            # 去掉模型爱加的 #，并统一分隔符为中文逗号，方便前端 split
+            parts = [part for part in re.split(r'[,，、;；\s]+', text.replace('#', ' ')) if part]
+            text = '，'.join(parts)
+        if action_name in ('summary', 'title'):
+            text = text[:200]
+        return Response({'action': action_name, 'text': text, 'model': model})
 
     @extend_schema(
         parameters=NEWS_RELATED_OPENAPI_PARAMETERS,

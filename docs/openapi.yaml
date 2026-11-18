@@ -6950,6 +6950,95 @@ paths:
               schema:
                 $ref: '#/components/schemas/NewsRelatedResponse'
           description: ''
+  /api/news/ai-assist/:
+    post:
+      operationId: api_news_ai_assist_create
+      description: |-
+        第 404 批（P2-10）：新闻编辑 AI 辅助（`POST /api/news/ai-assist/`）
+
+        入参：`{action: summary|title|tags|translate, title?, summary?, content?, tags?}`
+
+        为什么放在新闻接口里而不是另开一套 AI 接口：四个动作都是"编辑一篇新闻时的
+        辅助工具"，权限与新闻维护完全一致（CONTENT），复用 `get_permissions()` 与
+        `_can_manage_news` 就不会出现"看新闻的人能调 AI、能改新闻的人反而不能"的错位。
+
+        失败语义（前端按状态码区分即可）：
+          · 503 + `AI 服务未启用或未配置`：没配 LLM 环境变量（不是 bug，先关掉入口）；
+          · 503 + `AI 服务暂不可用：…`：网络/超时/HTTP 错误（可重试）；
+          · 429：本小时调用次数超限（稍后再试）；
+          · 500：其它未预期错误（后端看日志）。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      tags:
+      - api
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+            text/event-stream:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/news/recent/:
     get:
       operationId: api_news_recent_retrieve

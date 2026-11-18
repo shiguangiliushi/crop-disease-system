@@ -3812,6 +3812,357 @@ class NewsStatsTests(TestCase):
         self.assertNotIn('草稿标签', names, '草稿标签不统计')
 
 
+class NewsFeedFetchTests(TestCase):
+    """
+    第 404 批（P2-10）：`manage.py fetch_news_feeds` 抓取行业资讯订阅源。
+
+    本组用例**全部用本地 XML 文件**（`--file`），不联网：真实订阅源会变、还可能断网，
+    固定 XML 才能断言解析口径。
+    """
+
+    RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>示例农业资讯</title>
+    <item>
+      <title>番茄晚疫病防控提示</title>
+      <link>https://example.com/agri/1</link>
+      <description><![CDATA[<p>近期阴雨偏多，注意通风。</p><p>及时清除病叶。</p>]]></description>
+      <pubDate>Mon, 17 Nov 2026 08:00:00 +0800</pubDate>
+    </item>
+    <item>
+      <title>无效链接条目</title>
+      <link>javascript:alert(1)</link>
+      <description>这个链接不是 http/https，应被跳过</description>
+    </item>
+  </channel>
+</rss>
+"""
+
+    ATOM_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>示例 Atom 资讯</title>
+  <entry>
+    <title>小麦锈病预警</title>
+    <link rel="alternate" href="https://example.com/atom/1"/>
+    <summary type="html">&lt;p&gt;小麦锈病进入高发期，注意田间监测。&lt;/p&gt;</summary>
+    <updated>2026-11-17T08:00:00+08:00</updated>
+  </entry>
+</feed>
+"""
+
+    def setUp(self):
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+
+    def _write_temp_feed(self, content):
+        """把 XML 写成临时文件（delete=False：Windows 上不能一边打开一边重新读取）"""
+        import tempfile
+
+        handle = tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', suffix='.xml', delete=False,
+        )
+        try:
+            handle.write(content)
+        finally:
+            handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def _run(self, *args):
+        stdout, stderr = StringIO(), StringIO()
+        call_command('fetch_news_feeds', *args, stdout=stdout, stderr=stderr)
+        return stdout.getvalue(), stderr.getvalue()
+
+    def test_rss_creates_draft_with_correct_fields(self):
+        path = self._write_temp_feed(self.RSS_FEED)
+        output, _err = self._run('--file', path)
+
+        news = News.objects.get(external_url='https://example.com/agri/1')
+        self.assertFalse(news.is_published, '抓来的内容必须以草稿入库，等人工审核')
+        self.assertIsNone(news.author, '外部抓取不挂发布人')
+        self.assertEqual(news.category, 'notice', '默认分类 notice')
+        self.assertEqual(news.source, '示例农业资讯', '来源优先取 feed 的 <title>')
+        self.assertEqual(news.title, '番茄晚疫病防控提示')
+
+        self.assertIn('阴雨', news.summary)
+        self.assertNotIn('<p>', news.summary, 'summary 必须是纯文本')
+        self.assertLessEqual(len(news.summary), 200, 'summary 截到 200 字')
+        self.assertIn('<p>近期阴雨偏多，注意通风。</p>', news.content, '正文按段落包 <p>')
+        self.assertIn('<p>及时清除病叶。</p>', news.content)
+
+        self.assertFalse(
+            News.objects.filter(title='无效链接条目').exists(),
+            'link 不是 http/https 的条目要跳过',
+        )
+        self.assertIn('创建 1 条', output)
+
+    def test_atom_creates_draft(self):
+        path = self._write_temp_feed(self.ATOM_FEED)
+        self._run('--file', path)
+
+        news = News.objects.get(external_url='https://example.com/atom/1')
+        self.assertEqual(news.title, '小麦锈病预警')
+        self.assertEqual(news.source, '示例 Atom 资讯')
+        self.assertFalse(news.is_published)
+        self.assertIn('小麦锈病进入高发期', news.content)
+        self.assertIn('<p>', news.content)
+
+    def test_rerun_is_idempotent(self):
+        path = self._write_temp_feed(self.RSS_FEED)
+        self._run('--file', path)
+        self.assertEqual(News.objects.count(), 1)
+
+        output, _err = self._run('--file', path)
+        self.assertEqual(News.objects.count(), 1, '重复运行不能重复建草稿')
+        self.assertIn('创建 0 条', output)
+        self.assertIn('跳过 2 条', output)
+
+    def test_dry_run_does_not_write(self):
+        path = self._write_temp_feed(self.RSS_FEED)
+        output, _err = self._run('--file', path, '--dry-run')
+
+        self.assertEqual(News.objects.count(), 0, '--dry-run 不能写库')
+        self.assertIn('[dry-run] 将创建：番茄晚疫病防控提示', output)
+        self.assertIn('未写库', output)
+
+    def test_limit_applies_per_feed(self):
+        feed = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>限量源</title>
+  <item><title>第一条</title><link>https://example.com/limit/1</link><description>正文一</description></item>
+  <item><title>第二条</title><link>https://example.com/limit/2</link><description>正文二</description></item>
+  <item><title>第三条</title><link>https://example.com/limit/3</link><description>正文三</description></item>
+</channel></rss>
+"""
+        path = self._write_temp_feed(feed)
+        self._run('--file', path, '--limit', '1')
+        self.assertEqual(News.objects.count(), 1, '--limit 生效：每个 feed 只处理 1 条')
+
+    def test_invalid_category_raises_command_error(self):
+        path = self._write_temp_feed(self.RSS_FEED)
+        with self.assertRaises(CommandError):
+            self._run('--file', path, '--category', 'nonsense')
+
+    def test_requires_at_least_one_source(self):
+        with self.assertRaises(CommandError):
+            self._run()
+
+    def test_invalid_xml_does_not_crash_and_keeps_going(self):
+        bad_path = self._write_temp_feed('<rss><channel>这不是合法 XML')
+        good_path = self._write_temp_feed(self.RSS_FEED)
+        output, stderr = self._run('--file', bad_path, '--file', good_path)
+
+        # 单个源解析失败只计数、不中断：好源照样入库
+        self.assertEqual(News.objects.count(), 1)
+        self.assertIn('错误 1 个', output)
+        self.assertIn('读取/解析失败', stderr)
+
+    def test_source_fallback_and_title_dedupe(self):
+        feed = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <item><title>已有标题的新闻</title><link>https://example.com/dup/1</link><description>正文</description></item>
+</channel></rss>
+"""
+        News.objects.create(title='已有标题的新闻', content='旧正文', is_published=False)
+        path = self._write_temp_feed(feed)
+        output, _err = self._run('--file', path, '--source', '兜底来源')
+
+        self.assertEqual(
+            News.objects.filter(title='已有标题的新闻').count(), 1,
+            '标题已存在（忽略大小写）的条目要跳过',
+        )
+        self.assertIn('创建 0 条', output)
+
+
+class NewsAiAssistTests(TestCase):
+    """
+    第 404 批（P2-10）：新闻编辑 AI 辅助接口 `POST /api/news/ai-assist/`。
+
+    全部用 `unittest.mock.patch` 替换 `api.assistant.llm.enabled` / `llm.chat`，
+    **不联网、不真的调模型**；断言重点在权限、参数校验、失败降级（503/429）
+    与输出清洗，而不是模型说了什么。
+    """
+
+    URL = '/api/news/ai-assist/'
+    #: 30 个字的正文（摘要/标题动作的最小长度是 20）
+    VALID_CONTENT = '近期阴雨偏多，番茄晚疫病进入高发期，请及时通风并清除病叶。'
+
+    def setUp(self):
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='ai_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        self.editor = User.objects.create_user(
+            username='ai_editor', password='pw123456', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(
+            user=self.editor, module='news', granted_by=self.admin,
+        )
+        self.normal = User.objects.create_user(username='ai_user', password='pw123456')
+
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin)
+        self.client_editor = APIClient()
+        self.client_editor.force_authenticate(user=self.editor)
+        self.client_user = APIClient()
+        self.client_user.force_authenticate(user=self.normal)
+        self.anon = APIClient()
+
+    def tearDown(self):
+        cache.clear()
+
+    def _payload(self, action='summary', **overrides):
+        data = {
+            'action': action,
+            'title': '番茄晚疫病预警',
+            'summary': '',
+            'content': self.VALID_CONTENT,
+            'tags': '',
+        }
+        data.update(overrides)
+        return data
+
+    @staticmethod
+    def _ok_result(text='  摘要文本  '):
+        return llm.ChatResult(text=text)
+
+    # ---------- 权限 ----------
+
+    def test_permissions(self):
+        guest = self.anon.post(self.URL, self._payload(), format='json')
+        self.assertIn(guest.status_code, (401, 403), '匿名不能调 AI 辅助')
+
+        normal = self.client_user.post(self.URL, self._payload(), format='json')
+        self.assertEqual(normal.status_code, 403, '普通用户不能调 AI 辅助')
+
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat', return_value=self._ok_result(),
+        ):
+            self.assertEqual(
+                self.client_admin.post(self.URL, self._payload(), format='json').status_code,
+                200, '管理员（内容维护者）应可调用',
+            )
+            self.assertEqual(
+                self.client_editor.post(self.URL, self._payload(), format='json').status_code,
+                200, '有 news 模块授权的编辑员应可调用',
+            )
+
+    # ---------- 参数校验 ----------
+
+    def test_invalid_action_returns_400(self):
+        response = self.client_admin.post(
+            self.URL, self._payload(action='nonsense'), format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('不支持的 AI 动作', response.data['error'])
+
+    def test_too_short_content_returns_400(self):
+        response = self.client_admin.post(
+            self.URL, self._payload(content='太短了'), format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('正文太短', response.data['error'])
+
+    def test_translate_requires_title_or_content(self):
+        response = self.client_admin.post(
+            self.URL,
+            {'action': 'translate', 'title': '', 'content': ''},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+    # ---------- LLM 成功 / 失败 ----------
+
+    def test_summary_success_cleans_text_and_returns_model(self):
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat', return_value=self._ok_result(),
+        ) as chat_mock:
+            response = self.client_admin.post(self.URL, self._payload(), format='json')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['action'], 'summary')
+        self.assertEqual(response.data['text'], '摘要文本', '输出要 strip')
+        self.assertEqual(response.data['model'], llm.model_name())
+        _args, kwargs = chat_mock.call_args
+        self.assertEqual(kwargs['max_tokens'], 600)
+        self.assertEqual(kwargs['temperature'], 0.3)
+
+    def test_tags_output_cleans_hash_and_separators(self):
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat',
+            return_value=self._ok_result(text='#小麦# 病害, 政策'),
+        ):
+            response = self.client_admin.post(
+                self.URL, self._payload(action='tags'), format='json',
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['text'], '小麦，病害，政策')
+
+    def test_llm_disabled_returns_503(self):
+        with patch('api.assistant.llm.enabled', return_value=False):
+            response = self.client_admin.post(self.URL, self._payload(), format='json')
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data['error'], 'AI 服务未启用或未配置，请联系管理员')
+
+    def test_llm_error_returns_503(self):
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat', side_effect=llm.LLMError('模拟超时'),
+        ):
+            response = self.client_admin.post(self.URL, self._payload(), format='json')
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('暂不可用', response.data['error'])
+        self.assertIn('模拟超时', response.data['error'])
+
+    # ---------- 翻译 JSON 解析 ----------
+
+    def test_translate_parses_fenced_json(self):
+        fenced = (
+            '```json\n'
+            '{"title_en": "Tomato late blight alert", '
+            '"content_en": "Late blight is spreading in tomato fields."}\n'
+            '```'
+        )
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat', return_value=self._ok_result(text=fenced),
+        ):
+            response = self.client_admin.post(
+                self.URL, self._payload(action='translate'), format='json',
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['action'], 'translate')
+        self.assertEqual(response.data['title_en'], 'Tomato late blight alert')
+        self.assertEqual(
+            response.data['content_en'], 'Late blight is spreading in tomato fields.',
+        )
+        self.assertEqual(response.data['model'], llm.model_name())
+
+    def test_translate_bad_json_returns_503(self):
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat', return_value=self._ok_result(text='这不是 JSON'),
+        ):
+            response = self.client_admin.post(
+                self.URL, self._payload(action='translate'), format='json',
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('格式异常', response.data['error'])
+
+    # ---------- 限流 ----------
+
+    def test_rate_limit_blocks_after_30_calls_per_hour(self):
+        with patch('api.assistant.llm.enabled', return_value=True), patch(
+            'api.assistant.llm.chat', return_value=self._ok_result(text='摘要'),
+        ):
+            for index in range(30):
+                response = self.client_admin.post(self.URL, self._payload(), format='json')
+                self.assertEqual(response.status_code, 200, f'第 {index + 1} 次应放行')
+            blocked = self.client_admin.post(self.URL, self._payload(), format='json')
+
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn('过于频繁', blocked.data['error'])
+
+
 # ============================================================================
 # 第 39 批：管理员数据看板
 # ============================================================================
