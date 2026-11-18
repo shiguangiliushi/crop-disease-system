@@ -3,11 +3,17 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.pagination import PageNumberPagination
+# 第 399 批：列表新增的查询参数是手写 query_params 的，drf-spectacular 推导不到，
+# 必须显式登记，否则 docs/openapi.yaml 里看不到这些参数（前端只能靠口口相传）。
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.conf import settings
+from django.core.cache import cache
 from django.core.files.storage import default_storage
-from django.db.models import Q
+from django.db.models import F, Q
 from django.http import Http404
+from django.utils import timezone
 import logging
+import re
 
 from .models import News
 from .serializers import NewsSerializer
@@ -22,6 +28,72 @@ from .image_validation import (
 
 #: 新闻配图允许的格式（不含 BMP：编辑器插图用不到，且体积偏大）
 NEWS_IMAGE_FORMATS = {k: v for k, v in ALLOWED_FORMATS.items() if k != 'BMP'}
+
+
+# 第 399 批：`ordering` 的语义别名 → 实际排序字段。
+# 为什么用白名单而不是把参数直接塞进 order_by()：不存在的字段会抛 FieldError
+# 变成 500（recent 原实现正是如此），而且"任意字段都能排序"等于把模型结构
+# 暴露给调用方。白名单之外的取值统一 400，并列出合法值方便前端自查。
+ORDERING_ALIASES = {
+    'recent': ('-created_at',),
+    'hot': ('-views', '-created_at'),
+    'oldest': ('created_at',),
+}
+#: 兼容"裸字段"（旧 recent 调用方会直接传 -created_at 这类字段名），可带 - 前缀。
+ORDERING_FIELDS = {'created_at', 'views', 'published_at', 'updated_at'}
+ORDERING_ERROR = (
+    '排序参数不合法，合法取值：recent / hot / oldest，'
+    '或字段 created_at / views / published_at / updated_at（可带 - 前缀）'
+)
+
+#: 第 399 批：标签分隔符 —— 中英文逗号、顿号、中英文分号都算（表单里手打很随意）。
+TAG_SPLIT_RE = re.compile(r'[,，、;；]')
+#: 第 399 批：标签筛选最多取前 5 个（AND 条件堆太多时查询计划会变差，前端也不该多选更多）。
+MAX_TAG_FILTERS = 5
+
+#: 第 399 批：时间范围参数 → 天数；'all' 表示不限。
+DATE_RANGE_DAYS = {'7d': 7, '30d': 30}
+DATE_RANGE_ERROR = '时间范围参数不合法，合法取值：7d / 30d / all'
+
+#: 第 399 批：新增列表查询参数的 OpenAPI 登记（drf-spectacular 推导不到手写 query_params）
+NEWS_LIST_OPENAPI_PARAMETERS = [
+    OpenApiParameter(
+        name='ordering', type=str, location=OpenApiParameter.QUERY, required=False,
+        description='排序方式：recent（默认，最新） / hot（最热） / oldest（最早）；'
+                    '也兼容裸字段 created_at / views / published_at / updated_at（可带 - 前缀）。',
+    ),
+    OpenApiParameter(
+        name='tags', type=str, location=OpenApiParameter.QUERY, required=False,
+        description='标签筛选，逗号分隔（中英文逗号 / 顿号 / 分号均可），最多取前 5 个；'
+                    '多个标签是 AND（必须同时命中）。',
+    ),
+    OpenApiParameter(
+        name='date_range', type=str, location=OpenApiParameter.QUERY, required=False,
+        description='时间范围：7d（近 7 天） / 30d（近 30 天） / all（默认，不限）。'
+                    '按"有效发布时间"筛：published_at 为空时用 created_at。',
+    ),
+    OpenApiParameter(
+        name='featured', type=str, location=OpenApiParameter.QUERY, required=False,
+        description='传 1 / true / yes 时，在响应里额外返回 featured 段'
+                    '（is_featured=True 的前 3 条，已从普通列表与 count 中剔除）；默认不返回该键。',
+    ),
+]
+
+#: 第 399 批：热门标签聚合接口的可选参数（同样推导不到，需显式登记）
+NEWS_TAGS_OPENAPI_PARAMETERS = [
+    OpenApiParameter(
+        name='category', type=str, location=OpenApiParameter.QUERY, required=False,
+        description='只聚合该分类下的标签（policy / tech / market / report / notice）。',
+    ),
+    OpenApiParameter(
+        name='limit', type=int, location=OpenApiParameter.QUERY, required=False,
+        description='返回条数，默认 30，有效范围 1..100；非法值回退默认值。',
+    ),
+]
+
+
+class InvalidQueryParam(Exception):
+    """第 399 批：列表查询参数非法 —— 统一转成 400，而不是落进 500 兜底。"""
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -44,6 +116,10 @@ class NewsViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
     parser_classes = (MultiPartParser, FormParser, JSONParser)
+    #: 第 399 批：头条段最多 3 条 —— 前端大卡片横排放不下更多，也避免头条区喧宾夺主
+    FEATURED_LIMIT = 3
+    #: 第 399 批：阅读量按"浏览者"去重的时间窗；6 小时内的重复打开只算一次
+    VIEW_DEDUPE_SECONDS = 6 * 3600
 
     def get_serializer_context(self):
         """确保 request 对象被传入序列化器（用于拼接完整图片地址）"""
@@ -66,12 +142,12 @@ class NewsViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """
         权限划分：
-        - 列表 / 详情：任何人可读
+        - 列表 / 详情 / 热门标签：任何人可读
         - 新增：仅内容维护者
         - 修改 / 删除：**内容维护者**或该新闻作者
         """
-        # 只读动作对所有人开放（含旧版兼容接口 legacy_detail）
-        if self.action in ['list', 'retrieve', 'recent', 'legacy_detail']:
+        # 只读动作对所有人开放（含旧版兼容接口 legacy_detail 与本批新增的 tags 聚合）
+        if self.action in ['list', 'retrieve', 'recent', 'legacy_detail', 'tags']:
             return [permissions.AllowAny()]
 
         user = self.request.user
@@ -110,6 +186,113 @@ class NewsViewSet(viewsets.ModelViewSet):
             Q(published_at__isnull=True) | Q(published_at__lte=timezone.now())
         )
 
+    # ------------------------------------------------------------------
+    # 第 399 批：列表公共筛选 / 排序（list 与 recent 共用，避免两个列表接口参数同名不同行为）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_flag(value):
+        """第 399 批：开关型查询参数的口径 —— 1 / true / yes 视为开启（与 is_published 一致）"""
+        return str(value or '').strip().lower() in ('1', 'true', 'yes')
+
+    @staticmethod
+    def _parse_tags(raw):
+        """
+        第 399 批：把 `tags` 参数拆成标签名列表。
+
+        分隔符同时认中英文逗号、顿号、中英文分号：标签是编辑手打的，
+        「小麦,病害」「小麦，病害」「小麦、病害」都要能拆开，不然前端只能
+        强迫用户记住某一种写法。最多取前 5 个，其余忽略（AND 条件堆太多没意义）。
+        """
+        if not raw:
+            return []
+        names = [name.strip() for name in TAG_SPLIT_RE.split(raw)]
+        return [name for name in names if name][:MAX_TAG_FILTERS]
+
+    @staticmethod
+    def _apply_ordering(queryset, ordering):
+        """
+        第 399 批：把 `ordering`（语义别名或裸字段）翻译成 order_by，非法值抛 400。
+
+        为什么不再直接 `queryset.order_by(ordering)`：recent 以前就是这么写的，
+        传一个不存在的字段会抛 FieldError 变成 500；白名单之外统一 400，
+        前端拼错参数时能看到原因，也不会把模型字段结构暴露给调用方。
+        """
+        raw = (ordering or '').strip()
+        if not raw:
+            return queryset.order_by('-created_at')
+        if raw in ORDERING_ALIASES:
+            return queryset.order_by(*ORDERING_ALIASES[raw])
+        field = raw[1:] if raw.startswith('-') else raw
+        if field in ORDERING_FIELDS:
+            return queryset.order_by(raw)
+        raise InvalidQueryParam(ORDERING_ERROR)
+
+    @staticmethod
+    def _apply_date_range(queryset, date_range):
+        """
+        第 399 批：时间快捷筛选（近 7 天 / 近 30 天 / 全部）。
+
+        "有效发布时间" = `published_at` 有值就用它，否则回退 `created_at`：
+        新闻有"立即发布（published_at=NULL）"与"定时发布"两种形态，只按
+        published_at 过滤会把**所有立即发布**的新闻漏掉 —— 用户看到的是
+        "近 7 天一条都没有"，而列表里明明有昨天刚发的。
+
+        必须显式写 null 分支：SQL 里 `NULL >= 时间` 的结果是 NULL（不命中），
+        单靠 `published_at__gte=cutoff` 天然漏掉立即发布的新闻。
+        """
+        value = (date_range or '').strip().lower() or 'all'
+        if value == 'all':
+            return queryset
+        if value not in DATE_RANGE_DAYS:
+            raise InvalidQueryParam(DATE_RANGE_ERROR)
+        cutoff = timezone.now() - timezone.timedelta(days=DATE_RANGE_DAYS[value])
+        return queryset.filter(
+            Q(published_at__gte=cutoff)
+            | Q(published_at__isnull=True, created_at__gte=cutoff)
+        )
+
+    def _apply_common_filters(self, queryset, params):
+        """
+        第 399 批：list 与 recent 共用的筛选（搜索 / 分类 / 发布状态 / 标签 / 时间范围）。
+
+        抽出来的原因：recent 是给旧前端留的列表接口，如果只有 list 认识新参数，
+        同一个 `tags` 在 recent 上会被静默忽略 —— 这种"参数名对、行为不对"
+        的问题最难排查。公共筛选 + 公共排序后，两个接口的口径完全一致。
+
+        params 既可能是 QueryDict（list 直接传 request.query_params），
+        也可能是 recent 解析出来的 dict，统一用 `.get()` 读取。
+        """
+        search_query = params.get('search', '')
+        search_type = params.get('search_type', 'title')
+
+        if search_query:
+            if search_type == 'title':
+                queryset = queryset.filter(title__icontains=search_query)
+            elif search_type == 'content':
+                queryset = queryset.filter(content__icontains=search_query)
+            else:
+                queryset = queryset.filter(
+                    Q(title__icontains=search_query) | Q(content__icontains=search_query)
+                )
+
+        category = params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+
+        is_published = params.get('is_published')
+        if is_published not in (None, ''):
+            queryset = queryset.filter(
+                is_published=str(is_published).lower() in ('true', '1', 'yes')
+            )
+
+        # 第 399 批：标签筛选是 **AND** —— 多个标签要同时命中，逐次 filter
+        #（tags 是单个逗号分隔的字符串字段，没法用一条 SQL 干净地做多值匹配）。
+        for tag in self._parse_tags(params.get('tags')):
+            queryset = queryset.filter(tags__icontains=tag)
+
+        return self._apply_date_range(queryset, params.get('date_range'))
+
     def create(self, request, *args, **kwargs):
         """
         新增新闻
@@ -130,6 +313,7 @@ class NewsViewSet(viewsets.ModelViewSet):
         """自动把当前用户设为发布人"""
         serializer.save(author=self.request.user)
 
+    @extend_schema(parameters=NEWS_LIST_OPENAPI_PARAMETERS)
     def list(self, request, *args, **kwargs):
         """
         新闻列表
@@ -137,39 +321,93 @@ class NewsViewSet(viewsets.ModelViewSet):
         - 支持按标题 / 内容 / 全部搜索（search + search_type）
         - 支持按分类筛选（category）
         - 支持按发布状态筛选（is_published=true/false，仅对管理员有意义）
+        - 第 399 批：支持排序（ordering）、标签（tags）、时间范围（date_range），
+          以及仅在 featured=1 时返回的"头条精选"段（featured）
         """
         queryset = self.get_queryset()
 
-        search_query = request.query_params.get('search', '')
-        search_type = request.query_params.get('search_type', 'title')
-        category = request.query_params.get('category')
-        is_published = request.query_params.get('is_published')
-
-        if search_query:
-            if search_type == 'title':
-                queryset = queryset.filter(title__icontains=search_query)
-            elif search_type == 'content':
-                queryset = queryset.filter(content__icontains=search_query)
-            else:
-                queryset = queryset.filter(
-                    Q(title__icontains=search_query) | Q(content__icontains=search_query)
-                )
-
-        if category:
-            queryset = queryset.filter(category=category)
-
-        if is_published not in (None, ''):
-            queryset = queryset.filter(
-                is_published=str(is_published).lower() in ('true', '1', 'yes')
+        try:
+            queryset = self._apply_common_filters(queryset, request.query_params)
+            queryset = self._apply_ordering(
+                queryset, request.query_params.get('ordering', 'recent'),
             )
+        except InvalidQueryParam as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 第 399 批：只有显式 featured=1 才注入头条段 —— 默认关闭是为了让旧客户端
+        #（管理页 / 移动端 / 旧版前端缓存）拿到的响应结构与改版前**完全一致**：
+        # 凭空多一个 featured 键，可能让按结构解析的旧代码误判。
+        featured_enabled = self._parse_flag(request.query_params.get('featured'))
+        featured_data = None
+        if featured_enabled:
+            # 头条从"经过全部筛选与可见性"的查询集里取：草稿 / 未到点 / 被分类或
+            # 搜索筛掉的精选不能出现在头条区（普通用户看不到，管理员传
+            # is_published=false 时也不该再冒出来）。
+            featured_items = list(
+                queryset.filter(is_featured=True).order_by('-created_at')[:self.FEATURED_LIMIT]
+            )
+            if featured_items:
+                # 头条已经单独展示，普通列表里必须剔除，否则同一篇会被渲染两次；
+                # 分页器的 count 也要同步，否则"共 N 条"和实际能翻到的条目对不上。
+                queryset = queryset.exclude(pk__in=[item.pk for item in featured_items])
+            featured_data = self.get_serializer(featured_items, many=True).data
 
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            response = self.get_paginated_response(serializer.data)
+            if featured_enabled:
+                response.data['featured'] = featured_data
+            return response
 
+        # 非分页兜底分支（pagination_class 被置空时才会走到）：列表型响应塞不下
+        # 自定义键，改用与分页一致的 results/count 形状，保证 featured 一定带得出去。
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        if not featured_enabled:
+            return Response(serializer.data)
+        return Response({
+            'count': queryset.count(),
+            'next': None,
+            'previous': None,
+            'results': serializer.data,
+            'featured': featured_data,
+        })
+
+    def _record_view(self, instance):
+        """
+        第 399 批：详情阅读量 +1，同一浏览者 6 小时内只计一次。
+
+        为什么去重：详情页每次打开（F5、返回再进、分享链接被反复点）都 +1 的话，
+        阅读量就成了"谁刷新得多"，用它排"最热"毫无意义。
+
+        用 `cache.add()` 判"这个浏览者是不是 6 小时内第一次看"：add 只在 key
+        不存在时写入并返回 True，本地内存 / Redis 后端下都是原子操作，并发也不会
+        重复计数，不需要额外加锁。
+
+        浏览者标识优先级（同一账号换设备也应只算一次，所以登录用户优先用 pk）：
+          · 登录用户 → user.pk；
+          · 匿名 → session_key（同一浏览器会话内去重；
+            未登录访客首次请求还没有会话，回退 REMOTE_ADDR）。
+        """
+        request = self.request
+        user = getattr(request, 'user', None)
+        if user is not None and user.is_authenticated:
+            viewer = f'user:{user.pk}'
+        else:
+            session_key = getattr(getattr(request, 'session', None), 'session_key', None)
+            viewer = f'anon:{session_key or request.META.get("REMOTE_ADDR") or "unknown"}'
+
+        try:
+            if not cache.add(
+                f'news:view:{instance.pk}:{viewer}', 1, self.VIEW_DEDUPE_SECONDS,
+            ):
+                return
+            # 用 F() 在数据库层自增，避免"读-改-写"在并发下丢计数
+            News.objects.filter(pk=instance.pk).update(views=F('views') + 1)
+            instance.refresh_from_db(fields=['views'])
+        except Exception as exc:
+            # 阅读量只是展示数据：缓存/统计出错不该把"读新闻"这条主路径变成 500。
+            logger.warning('新闻阅读量计数失败（pk=%s）: %s', instance.pk, exc)
 
     def retrieve(self, request, *args, **kwargs):
         """
@@ -189,6 +427,8 @@ class NewsViewSet(viewsets.ModelViewSet):
         """
         try:
             instance = self.get_object()
+            # 第 399 批：确认对象可见后才计阅读量（404 的请求不该刷量）
+            self._record_view(instance)
             serializer = self.get_serializer(instance)
             return Response(serializer.data)
         except (Http404, News.DoesNotExist):
@@ -220,6 +460,8 @@ class NewsViewSet(viewsets.ModelViewSet):
         """
         新闻列表（兼容旧版接口）
         - 支持 params[key]=value 与 key=value 两种参数写法
+        - 第 399 批：筛选 / 排序复用 list 的公共实现 —— recent 上 tags / date_range /
+          ordering 同样生效；非法 ordering 由原来的 500 改为 400
         """
         params = {}
         for key in request.query_params:
@@ -229,8 +471,6 @@ class NewsViewSet(viewsets.ModelViewSet):
                 params[key] = request.query_params[key]
 
         page_size = int(params.get('page_size', 12))
-        search = params.get('search', '')
-        category = params.get('category')
         is_published = params.get('is_published', 'true').lower() == 'true'
 
         queryset = self.get_queryset()
@@ -243,17 +483,20 @@ class NewsViewSet(viewsets.ModelViewSet):
         else:
             queryset = queryset.filter(is_published=True)
 
-        if search:
-            queryset = queryset.filter(
-                Q(title__icontains=search) | Q(content__icontains=search)
+        # 第 399 批：is_published 已按上面的管理员/非管理员分支处理 —— 非管理员
+        # 无论如何只能看已发布；若再把它交给公共筛选，"非管理员传
+        # is_published=false"就会从"已发布列表"变成空列表，与旧 recent 行为不符。
+        # search_type 固定 'all'：recent 历史上一直是标题 + 正文一起搜。
+        filter_params = {key: value for key, value in params.items() if key != 'is_published'}
+        filter_params['search_type'] = 'all'
+
+        try:
+            queryset = self._apply_common_filters(queryset, filter_params)
+            queryset = self._apply_ordering(
+                queryset, params.get('ordering', '-created_at'),
             )
-
-        if category:
-            queryset = queryset.filter(category=category)
-
-        ordering = params.get('ordering', '-created_at')
-        if ordering:
-            queryset = queryset.order_by(ordering)
+        except InvalidQueryParam as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         paginator = self.pagination_class()
         paginator.page_size = page_size
@@ -266,10 +509,64 @@ class NewsViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @extend_schema(parameters=NEWS_TAGS_OPENAPI_PARAMETERS)
+    @action(detail=False, methods=['get'])
+    def tags(self, request):
+        """
+        第 399 批：热门标签聚合（`GET /api/news/tags/`）
+
+        为什么由后端聚合：`tags` 是编辑手打的逗号分隔字符串，前端要自己统计就得
+        先把整个列表拉下来遍历一遍；而且"哪些算一个标签、按什么分隔"会散落在
+        每个客户端里，口径迟早不一致。
+
+        可见性直接沿用 `get_queryset()`：匿名 / 普通用户只统计"已发布且到点"的
+        新闻 —— 否则草稿里的标签会出现在筛选条上，用户点进去却一条都看不到。
+        可选 `category` 让标签条跟着当前分类走。
+
+        `limit` 默认 30、有效范围 1..100，非法值**回退默认值**而不是报 400：
+        标签条是装饰性筛选，参数写错不该让整页报错（与 ordering 那种"语义错误
+        必须让调用方知道"的取舍不同）。
+        """
+        queryset = self.get_queryset()
+
+        category = request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+
+        try:
+            limit = int(request.query_params.get('limit', 30))
+        except (TypeError, ValueError):
+            limit = 30
+        if not 1 <= limit <= 100:
+            limit = 30
+
+        counter = {}
+        # 只取 tags 列（不实例化整条新闻），大数据量下内存占用可控
+        for raw_tags in queryset.values_list('tags', flat=True).iterator():
+            seen = set()
+            for name in TAG_SPLIT_RE.split(raw_tags or ''):
+                name = name.strip()
+                if not name or name in seen:
+                    continue
+                # 同一篇新闻里重复写同一个标签只算一次，否则编辑复制粘贴一下
+                # 就能把这个标签刷到榜首，聚合结果就失真了。
+                seen.add(name)
+                counter[name] = counter.get(name, 0) + 1
+
+        # 先按出现次数降序，次数相同按名称升序（保证同一份数据每次返回顺序稳定）
+        rows = sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        return Response({
+            'tags': [{'name': name, 'count': count} for name, count in rows],
+            'count': len(rows),
+        })
+
     @action(detail=True, methods=['get'], url_path='detail')
     def legacy_detail(self, request, pk=None):
         """
         获取新闻详情（兼容旧版接口 `GET /api/news/{pk}/detail/`）
+
+        第 399 批：本接口**不**计阅读量 —— 它只为老客户端保留，纯读；
+        若这里也计数，同一次阅读（前端轮询主详情 + 触发兼容接口）会被算两次。
 
         ⚠️ 本动作**绝对不能**命名为 `detail`：
         DRF 的路由在创建视图时会传入 `initkwargs={'detail': True/False, ...}`，

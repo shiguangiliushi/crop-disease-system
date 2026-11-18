@@ -1021,6 +1021,24 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
         return attrs
 
 
+class EmptyToNullDateTimeField(serializers.DateTimeField):
+    """
+    第 399 批：把"空字符串 / 纯空白"解释成"没有值"（None），其余交给父类解析。
+
+    为什么需要它：行业动态页的编辑表单走 multipart（同一请求还要传封面图），
+    而 multipart **没有 JSON null** —— 把一条已设定时发布时间的新闻改回
+    "立即发布"，前端只能提交 `published_at=''`。DRF 默认的 DateTimeField 会把
+    空串当成非法时间返回 400（"日期时间格式错误"），于是"定时发布时间"
+    永远清不掉。空值语义单独放在字段里，而不是在视图里预处理 request.data：
+    视图那边直接改 data 会影响 create / partial_update 两条路径（第 399 批）。
+    """
+
+    def to_internal_value(self, data):
+        if isinstance(data, str) and not data.strip():
+            return None
+        return super().to_internal_value(data)
+
+
 # 行业新闻序列化器
 class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列化器
     author_name = serializers.ReadOnlyField(source='author.username')  # 定义作者名字段为只读
@@ -1031,13 +1049,25 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
     clear_image = serializers.BooleanField(required=False, write_only=True, default=False)  # 置 true 表示移除封面图
     # 第 38 批：定时发布状态（前端用来显示"定时"角标）
     is_pending_schedule = serializers.BooleanField(read_only=True)
+    # 第 399 批：阅读量由详情接口自增，客户端只能读 —— IntegerField 默认可写，
+    # 不显式 read_only 的话任何人都能把 views 改成任意数字（"最热"排序就失真了）。
+    views = serializers.IntegerField(read_only=True)
+    # 第 399 批：multipart 表单清空定时发布时间只能传空串，见 EmptyToNullDateTimeField。
+    # label / help_text 与模型字段保持一致：显式声明字段后 DRF 不再自动带出
+    # verbose_name 与 help_text，不补的话 docs/openapi.yaml 里这一项会丢掉名称与说明。
+    published_at = EmptyToNullDateTimeField(
+        required=False, allow_null=True,
+        label='定时发布时间',
+        help_text='留空表示立即发布；填未来时间则到点才对外可见',
+    )
 
     class Meta:  # 定义元数据
         model = News  # 关联行业新闻模型
         fields = [  # 包含的字段
             'id', 'title', 'title_en', 'content', 'content_en',
             'image', 'image_url', 'source', 'source_en', 'author_name',
-            'is_published', 'published_at', 'is_pending_schedule',
+            'is_published', 'is_featured', 'published_at', 'is_pending_schedule',
+            'summary', 'views',
             'created_at', 'created_at_formatted', 'updated_at',
             'category', 'tags', 'clear_image'
         ]
@@ -1063,6 +1093,16 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
         if hasattr(obj, 'created_at') and obj.created_at:  # 检查created_at是否存在
             return obj.created_at.strftime('%Y-%m-%d %H:%M')  # 返回格式化时间
         return None  # 返回空值
+
+    def validate_summary(self, value):
+        """
+        第 399 批：摘要首尾空白要 trim 掉。
+
+        为什么不能只把原值存库：前端判断"这条新闻有没有摘要"用的是
+        `summary ? summary : 正文截断`，纯空白串（如 '   '）在 JS 里是 truthy，
+        会被当成"有摘要"渲染出一块空白；这里统一折成空串，回退逻辑才能生效。
+        """
+        return (value or '').strip()
 
     def validate_title(self, value):
         """

@@ -763,6 +763,18 @@ class News(models.Model):  # 定义新闻模型
         null=True, blank=True, verbose_name="定时发布时间",
         help_text="留空表示立即发布；填未来时间则到点才对外可见",
     )
+    # 第 399 批：行业动态页 P0 改造 —— 头条精选 / 手工摘要 / 阅读量。
+    # 为什么这三个字段要一起加：
+    #   · is_featured：列表页要把"头条精选"从普通网格里提出来做大卡片，
+    #     没有显式标记就只能按分类/时间猜，运营无法指定哪一条更重要；
+    #     db_index 是因为列表接口每次打开都会按它筛一遍（featured=1）。
+    #   · summary：卡片摘要原本由正文硬截断前 160 字得到，长文语义断裂、卡片高矮不齐；
+    #     让编辑用一句话写清重点，为空时前端仍回退正文截断（兼容历史数据）。
+    #   · views：前端卡片一直留着阅读量位置，但模型从未存过这个值（所以一直没显示）；
+    #     "最热"排序也需要一个真实数据源，由详情接口按浏览者去重累加。
+    is_featured = models.BooleanField(default=False, db_index=True, verbose_name="头条精选")
+    summary = models.CharField(max_length=200, blank=True, default='', verbose_name="摘要")
+    views = models.IntegerField(default=0, verbose_name="阅读量")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")  # 创建时间字段
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")  # 更新时间字段
 

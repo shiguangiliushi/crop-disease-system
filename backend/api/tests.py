@@ -2256,6 +2256,516 @@ class NewsScheduleTests(TestCase):
         self.assertTrue(news.is_pending_schedule)
         self.assertFalse(news.is_visible_to_public)
 
+    def test_multipart_empty_published_at_clears_schedule(self):
+        """
+        第 399 批：multipart 表单清空「定时发布时间」只能传空串，要能改回立即发布。
+
+        为什么这是必须的：编辑弹窗是 multipart（同一请求还要传封面图），
+        multipart **没有 JSON null**；DRF 默认的 DateTimeField 会把 '' 当成非法
+        时间返回 400，也就是"定时发布时间一旦设过就再也清不掉"。
+        """
+        news = News.objects.create(
+            title='待清空定时新闻', content='内容', is_published=True,
+            published_at=timezone.now() + timezone.timedelta(days=1),
+        )
+        self.assertTrue(news.is_pending_schedule)
+
+        response = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'published_at': ''}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data['published_at'], '空串应序列化成 null')
+        news.refresh_from_db()
+        self.assertIsNone(news.published_at, '空串应被解释为"没有定时发布时间"（立即发布）')
+        self.assertFalse(news.is_pending_schedule)
+
+        # 纯空白（用户手滑敲了空格）与空串等价 —— 前端 FormData 里很容易出现
+        News.objects.filter(pk=news.pk).update(
+            published_at=timezone.now() + timezone.timedelta(days=1),
+        )
+        whitespace = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'published_at': '   '}, format='multipart',
+        )
+        self.assertEqual(whitespace.status_code, 200, whitespace.data)
+        news.refresh_from_db()
+        self.assertIsNone(news.published_at)
+
+
+class NewsListEnhancementTests(TestCase):
+    """
+    第 399 批：行业动态页 P0 改造 —— 列表排序 / 标签 / 时间范围 / 头条精选 /
+    摘要 / 阅读量。
+
+    背景：前端行业动态页要加「头条大卡片 + 排序下拉 + 标签条 + 时间快捷筛选」，
+    后端此前只有写死的 `-created_at` 排序与 `search/category/is_published` 筛选，
+    模型也没有摘要与阅读量字段（前端卡片有阅读量位置，但一直显示不出来）。
+    本组用例锁死新接口契约，同时覆盖"只改精选不能误清封面/正文/标签"的回归。
+    """
+
+    def setUp(self):
+        # 阅读量去重依赖缓存；不清会串到别的用例（新闻 id 每轮重建后可能重复）
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='le_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        self.user = User.objects.create_user(username='le_user', password='pw123456')
+
+        self.anon = APIClient()
+        self.anon.raise_request_exception = False
+        self.client_admin = APIClient()
+        self.client_admin.raise_request_exception = False
+        self.client_admin.force_authenticate(user=self.admin)
+        self.client_user = APIClient()
+        self.client_user.raise_request_exception = False
+        self.client_user.force_authenticate(user=self.user)
+
+    def tearDown(self):
+        cache.clear()
+
+    # ---------- 造数据 / 断言小工具 ----------
+
+    def _news(self, title, *, days_ago=1, **fields):
+        """
+        造一条新闻并把 `created_at` 拨到 N 天前。
+
+        为什么不用 auto_now_add 的自然时间：排序与时间范围用例需要**确定的先后**，
+        同一秒内创建的多条新闻只差毫秒，断言顺序会变成"看运气"。
+        """
+        news = News.objects.create(title=title, content=f'{title}的正文内容', **fields)
+        News.objects.filter(pk=news.pk).update(
+            created_at=timezone.now() - timezone.timedelta(days=days_ago),
+        )
+        news.refresh_from_db()
+        return news
+
+    @staticmethod
+    def _set_published_days_ago(news, days_ago):
+        """把 published_at 拨到 N 天前（模拟"定时发布时间已到点"）"""
+        News.objects.filter(pk=news.pk).update(
+            published_at=timezone.now() - timezone.timedelta(days=days_ago),
+        )
+        news.refresh_from_db()
+        return news
+
+    @staticmethod
+    def _ids(response):
+        return [item['id'] for item in response.data['results']]
+
+    @staticmethod
+    def _featured_ids(response):
+        return [item['id'] for item in response.data['featured']]
+
+    # ---------- a) 头条精选 ----------
+
+    def test_featured_segment_contains_at_most_three_and_is_excluded_from_results(self):
+        """
+        头条段至多 3 条、按 -created_at 取；它们必须从普通列表和 count 里剔除，
+        否则同一篇新闻会被渲染两次、分页器显示的条数也对不上。
+        """
+        newest = self._news('精选一', days_ago=1, is_featured=True)
+        second = self._news('精选二', days_ago=2, is_featured=True)
+        third = self._news('精选三', days_ago=3, is_featured=True)
+        fourth = self._news('精选四', days_ago=4, is_featured=True)
+        plain = self._news('普通新闻', days_ago=5)
+
+        response = self.anon.get('/api/news/', {'featured': '1', 'page_size': 100})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self._featured_ids(response), [newest.id, second.id, third.id],
+            '头条应按 -created_at 取前 3 条',
+        )
+
+        ids = self._ids(response)
+        for item in (newest, second, third):
+            self.assertNotIn(item.id, ids, '头条不能同时出现在普通列表里')
+        self.assertIn(fourth.id, ids, '第 4 条精选不属于头条，应留在普通列表')
+        self.assertIn(plain.id, ids)
+        self.assertEqual(
+            response.data['count'], 2,
+            '分页 count 要同步剔除头条，否则与页面实际能翻到的条目数对不上',
+        )
+
+    def test_featured_key_is_absent_unless_requested(self):
+        """未开启 featured 时响应必须与改版前完全一致（旧客户端/管理页依赖现有结构）"""
+        self._news('精选新闻', days_ago=1, is_featured=True)
+        for params in ({}, {'featured': '0'}, {'featured': 'false'}):
+            response = self.anon.get('/api/news/', params)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn(
+                'featured', response.data,
+                f'未开启 featured 时不该注入该键（{params}）',
+            )
+
+    def test_featured_never_exposes_drafts_or_scheduled_to_public(self):
+        """
+        头条取自"经过全部筛选与可见性"的查询集：草稿、未到点定时新闻对匿名不可见；
+        普通用户显式传 is_published=false 也不能把草稿精选捞出来。
+        """
+        published = self._news('已发布精选', days_ago=1, is_featured=True)
+        News.objects.create(
+            title='草稿精选', content='内容', is_published=False, is_featured=True,
+        )
+        News.objects.create(
+            title='未到点精选', content='内容', is_published=True, is_featured=True,
+            published_at=timezone.now() + timezone.timedelta(days=1),
+        )
+
+        response = self.anon.get('/api/news/', {'featured': '1'})
+        self.assertEqual(
+            self._featured_ids(response), [published.id],
+            '匿名只能看到已发布且到点的精选',
+        )
+        self.assertEqual(self._ids(response), [], '草稿 / 未到点精选也不能出现在普通列表里')
+
+        forced = self.anon.get('/api/news/', {'featured': '1', 'is_published': 'false'})
+        self.assertEqual(forced.data['featured'], [], '普通用户传 is_published=false 也不能拿到草稿精选')
+        self.assertEqual(forced.data['count'], 0)
+
+    def test_featured_follows_category_and_search_filters(self):
+        """头条区要跟着当前筛选走，否则会出现"筛了政策分类、头条却是技术新闻" """
+        policy = self._news('政策精选', days_ago=1, is_featured=True, category='policy')
+        tech = self._news('技术精选', days_ago=2, is_featured=True, category='tech')
+
+        by_category = self.anon.get('/api/news/', {'featured': '1', 'category': 'policy'})
+        self.assertEqual(self._featured_ids(by_category), [policy.id])
+        self.assertEqual(self._ids(by_category), [], '被分类筛掉的精选不能留在普通列表里')
+
+        by_search = self.anon.get('/api/news/', {'featured': '1', 'search': '技术'})
+        self.assertEqual(self._featured_ids(by_search), [tech.id])
+        self.assertEqual(self._ids(by_search), [])
+
+    # ---------- b) 排序 ----------
+
+    def test_ordering_recent_hot_oldest(self):
+        hot_old = self._news('最热旧闻', days_ago=3, views=100)
+        middle = self._news('中间新闻', days_ago=2, views=10)
+        newest = self._news('最新新闻', days_ago=1, views=1)
+
+        default_order = self.anon.get('/api/news/', {'page_size': 100})
+        self.assertEqual(
+            self._ids(default_order), [newest.id, middle.id, hot_old.id],
+            '不传 ordering 时默认按 -created_at（与改版前一致）',
+        )
+        recent = self.anon.get('/api/news/', {'ordering': 'recent', 'page_size': 100})
+        self.assertEqual(self._ids(recent), [newest.id, middle.id, hot_old.id], 'recent 应按创建时间倒序')
+        hot = self.anon.get('/api/news/', {'ordering': 'hot', 'page_size': 100})
+        self.assertEqual(self._ids(hot), [hot_old.id, middle.id, newest.id], 'hot 应按阅读量降序')
+        oldest = self.anon.get('/api/news/', {'ordering': 'oldest', 'page_size': 100})
+        self.assertEqual(self._ids(oldest), [hot_old.id, middle.id, newest.id], 'oldest 应按创建时间升序')
+
+    def test_hot_ordering_ties_break_by_created_at(self):
+        older = self._news('同阅读量旧闻', days_ago=2, views=50)
+        newer = self._news('同阅读量新闻', days_ago=1, views=50)
+        response = self.anon.get('/api/news/', {'ordering': 'hot', 'page_size': 100})
+        self.assertEqual(
+            self._ids(response), [newer.id, older.id],
+            '阅读量相同时应按创建时间倒序（新增的更靠前）',
+        )
+
+    def test_ordering_accepts_bare_field_names(self):
+        """旧的 recent 调用方会直接传 -created_at 这类裸字段，要兼容"""
+        older = self._news('旧闻', days_ago=2, views=5)
+        newer = self._news('新闻', days_ago=1, views=9)
+
+        by_created = self.anon.get('/api/news/', {'ordering': '-created_at', 'page_size': 100})
+        self.assertEqual(self._ids(by_created), [newer.id, older.id])
+        by_views = self.anon.get('/api/news/', {'ordering': 'views', 'page_size': 100})
+        self.assertEqual(self._ids(by_views), [older.id, newer.id], '裸字段 views 按升序')
+
+    def test_ordering_invalid_value_returns_400(self):
+        """非法排序不能落进 500（否则前端拼错参数只会看到"服务器错误"）"""
+        for value in ('nonsense', 'title', '-', 'views;drop'):
+            response = self.anon.get('/api/news/', {'ordering': value})
+            self.assertEqual(response.status_code, 400, f'非法排序 {value} 应返回 400')
+            self.assertIn('error', response.data)
+            self.assertIn(
+                'recent', response.data['error'],
+                '错误文案要列出合法取值，方便前端排查',
+            )
+
+    def test_recent_invalid_ordering_returns_400_not_500(self):
+        """
+        原实现把 ordering 直接塞进 order_by()：传不存在的字段抛 FieldError → 500。
+        本批抽公共 _apply_ordering 后统一成 400。
+        """
+        response = self.anon.get('/api/news/recent/', {'ordering': 'not_a_field'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.data)
+
+    def test_recent_reuses_new_filters_and_ordering(self):
+        """recent 与 list 复用同一套筛选/排序，避免同名参数在两个接口行为不同"""
+        hot_old = self._news('recent 最热', days_ago=2, views=30, tags='小麦')
+        cold_new = self._news('recent 最新', days_ago=1, views=1, tags='玉米')
+
+        hot = self.anon.get('/api/news/recent/', {'ordering': 'hot'})
+        self.assertEqual(self._ids(hot), [hot_old.id, cold_new.id], 'recent 也要支持 hot 排序')
+        tagged = self.anon.get('/api/news/recent/', {'tags': '小麦'})
+        self.assertEqual(self._ids(tagged), [hot_old.id], 'recent 也要支持标签筛选')
+
+    # ---------- c) 标签筛选 / 标签聚合 ----------
+
+    def test_tag_filter_is_and_across_multiple_tags(self):
+        both = self._news('小麦病害新闻', days_ago=1, tags='小麦,病害')
+        wheat_only = self._news('小麦虫害新闻', days_ago=2, tags='小麦,虫害')
+        self._news('玉米新闻', days_ago=3, tags='玉米')
+
+        single = self.anon.get('/api/news/', {'tags': '小麦', 'page_size': 100})
+        self.assertEqual(
+            set(self._ids(single)), {both.id, wheat_only.id},
+            '单选标签应命中所有含该标签的新闻',
+        )
+        and_result = self.anon.get('/api/news/', {'tags': '小麦,病害', 'page_size': 100})
+        self.assertEqual(self._ids(and_result), [both.id], '多个标签是 AND：必须同时命中')
+
+    def test_tag_filter_accepts_chinese_separators(self):
+        both = self._news('分隔符新闻', days_ago=1, tags='小麦,病害')
+        for raw in ('小麦，病害', '小麦、病害', '小麦;病害', '小麦；病害'):
+            response = self.anon.get('/api/news/', {'tags': raw, 'page_size': 100})
+            self.assertEqual(self._ids(response), [both.id], f'中文分隔符 {raw} 应能正确拆分')
+
+    def test_tags_endpoint_aggregates_and_respects_visibility(self):
+        """
+        标签聚合：匿名只统计已发布新闻的标签（草稿标签不能出现在筛选条上），
+        同一篇新闻里重复写同一个标签只算一次，结果按 (-count, name) 排序。
+        """
+        News.objects.create(
+            title='聚合一', content='正文', is_published=True, tags='小麦,小麦,病害',
+        )
+        News.objects.create(title='聚合二', content='正文', is_published=True, tags='小麦,玉米')
+        News.objects.create(title='聚合草稿', content='正文', is_published=False, tags='草稿标签')
+
+        response = self.anon.get('/api/news/tags/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data['tags'],
+            [
+                {'name': '小麦', 'count': 2},
+                {'name': '玉米', 'count': 1},
+                {'name': '病害', 'count': 1},
+            ],
+            '匿名聚合不该包含草稿标签；同篇重复标签只算一次；按 (-count, name) 排序',
+        )
+        self.assertEqual(response.data['count'], 3)
+
+        admin_tags = {row['name'] for row in self.client_admin.get('/api/news/tags/').data['tags']}
+        self.assertIn('草稿标签', admin_tags, '管理员应能聚合到草稿里的标签')
+
+    def test_tags_endpoint_filters_by_category_and_honours_limit(self):
+        News.objects.create(
+            title='政策一', content='正文', is_published=True,
+            category='policy', tags='政策,补贴',
+        )
+        News.objects.create(
+            title='技术一', content='正文', is_published=True,
+            category='tech', tags='技术,补贴',
+        )
+
+        policy = self.anon.get('/api/news/tags/', {'category': 'policy'})
+        self.assertEqual(
+            {row['name'] for row in policy.data['tags']}, {'政策', '补贴'},
+            '应该只聚合该分类下的标签',
+        )
+
+        limited = self.anon.get('/api/news/tags/', {'limit': 1})
+        self.assertEqual(limited.data['count'], 1)
+        self.assertEqual(len(limited.data['tags']), 1)
+        self.assertEqual(limited.data['tags'][0]['name'], '补贴', 'limit 应按 count 优先截断')
+
+        # 非法 limit 回退默认值 30，而不是 400/500（标签条是装饰性筛选）
+        for bad in ('0', '999', 'abc'):
+            fallback = self.anon.get('/api/news/tags/', {'limit': bad})
+            self.assertEqual(fallback.status_code, 200)
+            self.assertEqual(fallback.data['count'], 3, f'非法 limit={bad} 应回退默认值')
+
+    # ---------- d) 时间范围 ----------
+
+    def test_date_range_7d_30d_uses_effective_publish_time(self):
+        """
+        "有效发布时间" = published_at 有值就用它，否则回退 created_at。
+
+        关键分支：published_at 为空的"立即发布"新闻必须靠 created_at 命中 ——
+        只写 published_at__gte 的话，近 7 天里一条立即发布的新闻都看不到。
+        """
+        recent_immediate = self._news('近两天立即发布', days_ago=2)
+        ten_days = self._news('十天前发布', days_ago=10)
+        old_created_new_published = self._set_published_days_ago(
+            self._news('很久前创建三天前发布', days_ago=40), 3,
+        )
+        old = self._set_published_days_ago(self._news('四十天前发布', days_ago=40), 40)
+
+        seven = self.anon.get('/api/news/', {'date_range': '7d', 'page_size': 100})
+        self.assertEqual(
+            set(self._ids(seven)),
+            {recent_immediate.id, old_created_new_published.id},
+            '近 7 天应包含立即发布（按 created_at）以及 published_at 在 7 天内的新闻',
+        )
+        thirty = self.anon.get('/api/news/', {'date_range': '30d', 'page_size': 100})
+        self.assertEqual(
+            set(self._ids(thirty)),
+            {recent_immediate.id, ten_days.id, old_created_new_published.id},
+        )
+        all_time = self.anon.get('/api/news/', {'date_range': 'all', 'page_size': 100})
+        self.assertEqual(
+            set(self._ids(all_time)),
+            {
+                recent_immediate.id, ten_days.id,
+                old_created_new_published.id, old.id,
+            },
+        )
+
+    def test_date_range_invalid_value_returns_400(self):
+        for value in ('90d', 'week', '7'):
+            response = self.anon.get('/api/news/', {'date_range': value})
+            self.assertEqual(response.status_code, 400, f'非法时间范围 {value} 应返回 400')
+            self.assertIn('error', response.data)
+
+    # ---------- e) 摘要 / 精选字段 ----------
+
+    def test_summary_and_is_featured_persist_and_are_returned(self):
+        create = self.client_admin.post(
+            '/api/news/',
+            {
+                'title': '带摘要新闻', 'content': '正文内容够长了，超过十个字', 'category': 'notice',
+                'summary': '  一句话摘要  ', 'is_featured': 'true', 'views': '999',
+                'is_published': 'true',
+            },
+            format='multipart',
+        )
+        self.assertEqual(create.status_code, 201, create.data)
+        news = News.objects.get(title='带摘要新闻')
+        self.assertEqual(news.summary, '一句话摘要', '摘要首尾空白应被 trim 掉')
+        self.assertEqual(news.views, 0, 'views 是只读字段，客户端传的值不能生效')
+        self.assertTrue(news.is_featured, "multipart 的 'true' 应能设置 is_featured")
+        self.assertEqual(create.data['summary'], '一句话摘要')
+        self.assertEqual(create.data['views'], 0)
+
+        patch = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'summary': '改过的摘要'}, format='multipart',
+        )
+        self.assertEqual(patch.status_code, 200, patch.data)
+        news.refresh_from_db()
+        self.assertEqual(news.summary, '改过的摘要', '部分更新也要能改摘要')
+
+        listed = self.anon.get('/api/news/', {'page_size': 100})
+        self.assertEqual(
+            listed.data['results'][0]['summary'], '改过的摘要',
+            '列表要返回摘要（前端优先展示它，为空才回退正文截断）',
+        )
+        detail = self.anon.get(f'/api/news/{news.id}/')
+        self.assertEqual(detail.data['summary'], '改过的摘要', '详情也要返回摘要')
+
+    def test_blank_summary_is_saved_as_empty_string(self):
+        """纯空白摘要要折成空串，否则前端 `summary ? ... : 截断` 会渲染一块空白"""
+        response = self.client_admin.post(
+            '/api/news/',
+            {
+                'title': '空白摘要新闻', 'content': '正文内容够长了，超过十个字',
+                'category': 'notice', 'summary': '   ',
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(News.objects.get(title='空白摘要新闻').summary, '')
+
+    def test_summary_longer_than_200_chars_is_rejected(self):
+        response = self.client_admin.post(
+            '/api/news/',
+            {
+                'title': '超长摘要新闻', 'content': '正文内容够长了，超过十个字',
+                'category': 'notice', 'summary': '摘' * 201,
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('summary', response.data)
+        self.assertEqual(News.objects.filter(title='超长摘要新闻').count(), 0)
+
+    def test_is_featured_can_be_toggled_via_multipart(self):
+        news = self._news('精选开关新闻', days_ago=1, is_featured=True)
+
+        off = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'is_featured': 'false'}, format='multipart',
+        )
+        self.assertEqual(off.status_code, 200, off.data)
+        self.assertIs(off.data['is_featured'], False)
+        news.refresh_from_db()
+        self.assertFalse(news.is_featured)
+        self.assertEqual(
+            self.anon.get('/api/news/', {'featured': '1'}).data['featured'], [],
+            '取消精选后不应再出现在头条段',
+        )
+
+        on = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'is_featured': 'true'}, format='multipart',
+        )
+        self.assertEqual(on.status_code, 200)
+        self.assertIs(on.data['is_featured'], True)
+
+    # ---------- g) 回归 ----------
+
+    def test_patch_is_featured_keeps_cover_content_and_tags(self):
+        """
+        管理端点「设为精选」只提交 is_featured 一个字段时，不能把封面 / 正文 / 标签弄丢。
+
+        与 test_patch_without_image_field_keeps_cover_and_content 同一类回归：
+        前端把详情字段整体塞进 FormData 时曾把 image 置空导致"编辑成功但封面没了"。
+        """
+        news = self._news('精选回归新闻', days_ago=1, tags='小麦,病害')
+        news.image = 'news_images/test-cover.png'  # 只给路径不落盘，够序列化与"是否清空"判断
+        news.save(update_fields=['image'])
+
+        response = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'is_featured': 'true'}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        news.refresh_from_db()
+        self.assertTrue(news.is_featured)
+        self.assertEqual(news.content, '精选回归新闻的正文内容', '只改精选不能把正文弄丢')
+        self.assertTrue(news.image, '只改精选不能把封面清空')
+        self.assertEqual(news.tags, '小麦,病害', '只改精选不能把标签清空')
+
+    # ---------- f) 阅读量 ----------
+
+    def test_detail_counts_one_view_per_client_within_six_hours(self):
+        news = self._news('阅读量新闻', days_ago=1)
+        url = f'/api/news/{news.id}/'
+
+        first = self.anon.get(url, REMOTE_ADDR='10.9.9.1')
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.data['views'], 1, '首次打开详情应把阅读量 +1 并返回新值')
+
+        second = self.anon.get(url, REMOTE_ADDR='10.9.9.1')
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.data['views'], 1, '同一浏览者 6 小时内重复打开不应再次 +1')
+
+        other = self.anon.get(url, REMOTE_ADDR='10.9.9.2')
+        self.assertEqual(other.data['views'], 2, '不同浏览者应各计一次')
+
+        news.refresh_from_db()
+        self.assertEqual(news.views, 2, '库里的阅读量应与响应一致')
+
+    def test_detail_counts_once_per_logged_in_user(self):
+        news = self._news('登录阅读量新闻', days_ago=1)
+        url = f'/api/news/{news.id}/'
+
+        self.assertEqual(self.client_user.get(url).data['views'], 1)
+        self.assertEqual(
+            self.client_user.get(url).data['views'], 1,
+            '登录用户 6 小时内只计一次（按 user.pk 去重，换 IP 也不重复）',
+        )
+        news.refresh_from_db()
+        self.assertEqual(news.views, 1)
+
+    def test_legacy_detail_does_not_count_views(self):
+        """兼容详情接口保持纯读：若也 +1，同一次阅读会被算两次"""
+        news = self._news('兼容接口新闻', days_ago=1)
+        response = self.anon.get(f'/api/news/{news.id}/detail/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['views'], 0)
+        news.refresh_from_db()
+        self.assertEqual(news.views, 0)
+
 
 # ============================================================================
 # 第 39 批：管理员数据看板

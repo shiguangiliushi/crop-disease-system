@@ -6369,7 +6369,21 @@ paths:
         - 支持按标题 / 内容 / 全部搜索（search + search_type）
         - 支持按分类筛选（category）
         - 支持按发布状态筛选（is_published=true/false，仅对管理员有意义）
+        - 第 399 批：支持排序（ordering）、标签（tags）、时间范围（date_range），
+          以及仅在 featured=1 时返回的"头条精选"段（featured）
       parameters:
+      - in: query
+        name: date_range
+        schema:
+          type: string
+        description: 时间范围：7d（近 7 天） / 30d（近 30 天） / all（默认，不限）。按"有效发布时间"筛：published_at
+          为空时用 created_at。
+      - in: query
+        name: featured
+        schema:
+          type: string
+        description: 传 1 / true / yes 时，在响应里额外返回 featured 段（is_featured=True 的前 3
+          条，已从普通列表与 count 中剔除）；默认不返回该键。
       - in: query
         name: format
         schema:
@@ -6377,6 +6391,12 @@ paths:
           enum:
           - json
           - txt
+      - in: query
+        name: ordering
+        schema:
+          type: string
+        description: 排序方式：recent（默认，最新） / hot（最热） / oldest（最早）；也兼容裸字段 created_at /
+          views / published_at / updated_at（可带 - 前缀）。
       - name: page
         required: false
         in: query
@@ -6389,6 +6409,11 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - in: query
+        name: tags
+        schema:
+          type: string
+        description: 标签筛选，逗号分隔（中英文逗号 / 顿号 / 分号均可），最多取前 5 个；多个标签是 AND（必须同时命中）。
       tags:
       - api
       security:
@@ -6621,6 +6646,9 @@ paths:
       description: |-
         获取新闻详情（兼容旧版接口 `GET /api/news/{pk}/detail/`）
 
+        第 399 批：本接口**不**计阅读量 —— 它只为老客户端保留，纯读；
+        若这里也计数，同一次阅读（前端轮询主详情 + 触发兼容接口）会被算两次。
+
         ⚠️ 本动作**绝对不能**命名为 `detail`：
         DRF 的路由在创建视图时会传入 `initkwargs={'detail': True/False, ...}`，
         视图实例上因此存在一个布尔属性 `self.detail = True`，它会把**同名的 action
@@ -6667,6 +6695,8 @@ paths:
       description: |-
         新闻列表（兼容旧版接口）
         - 支持 params[key]=value 与 key=value 两种参数写法
+        - 第 399 批：筛选 / 排序复用 list 的公共实现 —— recent 上 tags / date_range /
+          ordering 同样生效；非法 ordering 由原来的 500 改为 400
       parameters:
       - in: query
         name: format
@@ -6675,6 +6705,57 @@ paths:
           enum:
           - json
           - txt
+      tags:
+      - api
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/News'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/News'
+          description: ''
+  /api/news/tags/:
+    get:
+      operationId: api_news_tags_retrieve
+      description: |-
+        第 399 批：热门标签聚合（`GET /api/news/tags/`）
+
+        为什么由后端聚合：`tags` 是编辑手打的逗号分隔字符串，前端要自己统计就得
+        先把整个列表拉下来遍历一遍；而且"哪些算一个标签、按什么分隔"会散落在
+        每个客户端里，口径迟早不一致。
+
+        可见性直接沿用 `get_queryset()`：匿名 / 普通用户只统计"已发布且到点"的
+        新闻 —— 否则草稿里的标签会出现在筛选条上，用户点进去却一条都看不到。
+        可选 `category` 让标签条跟着当前分类走。
+
+        `limit` 默认 30、有效范围 1..100，非法值**回退默认值**而不是报 400：
+        标签条是装饰性筛选，参数写错不该让整页报错（与 ordering 那种"语义错误
+        必须让调用方知道"的取舍不同）。
+      parameters:
+      - in: query
+        name: category
+        schema:
+          type: string
+        description: 只聚合该分类下的标签（policy / tech / market / report / notice）。
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      - in: query
+        name: limit
+        schema:
+          type: integer
+        description: 返回条数，默认 30，有效范围 1..100；非法值回退默认值。
       tags:
       - api
       security:
@@ -10370,6 +10451,9 @@ components:
         is_published:
           type: boolean
           title: 是否发布
+        is_featured:
+          type: boolean
+          title: 头条精选
         published_at:
           type: string
           format: date-time
@@ -10378,6 +10462,13 @@ components:
           description: 留空表示立即发布；填未来时间则到点才对外可见
         is_pending_schedule:
           type: boolean
+          readOnly: true
+        summary:
+          type: string
+          title: 摘要
+          maxLength: 200
+        views:
+          type: integer
           readOnly: true
         created_at:
           type: string
@@ -10412,6 +10503,7 @@ components:
       - is_pending_schedule
       - title
       - updated_at
+      - views
     NewsCategoryEnum:
       enum:
       - policy
@@ -10973,6 +11065,9 @@ components:
         is_published:
           type: boolean
           title: 是否发布
+        is_featured:
+          type: boolean
+          title: 头条精选
         published_at:
           type: string
           format: date-time
@@ -10981,6 +11076,13 @@ components:
           description: 留空表示立即发布；填未来时间则到点才对外可见
         is_pending_schedule:
           type: boolean
+          readOnly: true
+        summary:
+          type: string
+          title: 摘要
+          maxLength: 200
+        views:
+          type: integer
           readOnly: true
         created_at:
           type: string
