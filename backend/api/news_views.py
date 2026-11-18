@@ -9,14 +9,14 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.conf import settings
 from django.core.cache import cache
 from django.core.files.storage import default_storage
-from django.db.models import F, Q
+from django.db.models import Case, F, IntegerField, Q, Value, When
 from django.http import Http404
 from django.utils import timezone
 import logging
 import re
 
 from .models import News
-from .serializers import NewsSerializer
+from .serializers import NewsRelatedResponseSerializer, NewsSerializer
 # 第 124 批：能力判定统一收口（新闻维护 = CONTENT，信息编辑员可）
 from .capabilities import MODULE_NEWS, has_content_module
 # 第 91 批：图片上传统一校验（大小上限 + 按文件头探测真实格式 + 随机文件名）
@@ -77,6 +77,10 @@ NEWS_LIST_OPENAPI_PARAMETERS = [
         description='传 1 / true / yes 时，在响应里额外返回 featured 段'
                     '（is_featured=True 的前 3 条，已从普通列表与 count 中剔除）；默认不返回该键。',
     ),
+    OpenApiParameter(
+        name='pest', type=int, location=OpenApiParameter.QUERY, required=False,
+        description='按关联病害 id 过滤（第 401 批新增）；非数字 / 非正数 id 返回 400。',
+    ),
 ]
 
 #: 第 399 批：热门标签聚合接口的可选参数（同样推导不到，需显式登记）
@@ -90,6 +94,31 @@ NEWS_TAGS_OPENAPI_PARAMETERS = [
         description='返回条数，默认 30，有效范围 1..100；非法值回退默认值。',
     ),
 ]
+
+#: 第 401 批：相关推荐接口的可选参数
+NEWS_RELATED_OPENAPI_PARAMETERS = [
+    OpenApiParameter(
+        name='limit', type=int, location=OpenApiParameter.QUERY, required=False,
+        description='返回条数，默认 4，有效范围 1..10；非法值回退默认值。',
+    ),
+]
+
+#: 第 401 批：`pest` 参数（按关联病害 id 过滤）的错误文案
+PEST_PARAM_ERROR = '病害参数不合法，必须是数字 id'
+
+#: 第 401 批：相关推荐打分权重 —— 病害重合最"硬"（同一作物/病害的资讯更相关），
+#: 同分类次之，标签重叠最弱；标签分最多累计 3 分，避免"标签多"的新闻通吃。
+RELATED_PEST_WEIGHT = 3
+RELATED_CATEGORY_WEIGHT = 2
+RELATED_TAG_WEIGHT = 1
+RELATED_TAG_WEIGHT_CAP = 3
+#: 自身标签最多取前 3 个参与"候选筛选 / 打分"，与清单里"最多取前 3 个"一致
+RELATED_SELF_TAG_LIMIT = 3
+#: 候选集上限：打分在 Python 侧做，先按上限截断避免大数据量下把整表拉进内存
+RELATED_CANDIDATE_LIMIT = 200
+#: limit 默认 4、范围 1..10（首页"相关推荐"卡片一屏放不下更多）
+RELATED_DEFAULT_LIMIT = 4
+RELATED_MAX_LIMIT = 10
 
 
 class InvalidQueryParam(Exception):
@@ -142,12 +171,12 @@ class NewsViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """
         权限划分：
-        - 列表 / 详情 / 热门标签：任何人可读
+        - 列表 / 详情 / 热门标签 / 相关推荐：任何人可读
         - 新增：仅内容维护者
         - 修改 / 删除：**内容维护者**或该新闻作者
         """
-        # 只读动作对所有人开放（含旧版兼容接口 legacy_detail 与本批新增的 tags 聚合）
-        if self.action in ['list', 'retrieve', 'recent', 'legacy_detail', 'tags']:
+        # 只读动作对所有人开放（含旧版兼容接口 legacy_detail、tags 聚合与第 401 批的 related）
+        if self.action in ['list', 'retrieve', 'recent', 'legacy_detail', 'tags', 'related']:
             return [permissions.AllowAny()]
 
         user = self.request.user
@@ -179,7 +208,9 @@ class NewsViewSet(viewsets.ModelViewSet):
         from django.db.models import Q
         from django.utils import timezone
 
-        queryset = News.objects.all().order_by('-created_at')
+        # 第 401 批：列表 / 详情都会带出 related_pest_details（关联病害 chip），
+        # 不预取的话每篇新闻多一次查询（列表一页 10 条就是 10 次 N+1）。
+        queryset = News.objects.all().prefetch_related('related_pests').order_by('-created_at')
         if self._can_manage_news(self.request.user):
             return queryset
         return queryset.filter(is_published=True).filter(
@@ -210,23 +241,32 @@ class NewsViewSet(viewsets.ModelViewSet):
         return [name for name in names if name][:MAX_TAG_FILTERS]
 
     @staticmethod
-    def _apply_ordering(queryset, ordering):
+    def _apply_ordering(queryset, ordering, title_rank_field=None):
         """
         第 399 批：把 `ordering`（语义别名或裸字段）翻译成 order_by，非法值抛 400。
 
         为什么不再直接 `queryset.order_by(ordering)`：recent 以前就是这么写的，
         传一个不存在的字段会抛 FieldError 变成 500；白名单之外统一 400，
         前端拼错参数时能看到原因，也不会把模型字段结构暴露给调用方。
+
+        第 401 批：`title_rank_field` 非空时（搜索场景）把它插到第一排序键 ——
+        "标题命中"比"只有正文/摘要命中"更相关，必须优先；同组内再按用户选的
+        recent / hot / oldest / 裸字段排（这个"组内排序"是需求明确保留的）。
         """
         raw = (ordering or '').strip()
         if not raw:
-            return queryset.order_by('-created_at')
-        if raw in ORDERING_ALIASES:
-            return queryset.order_by(*ORDERING_ALIASES[raw])
-        field = raw[1:] if raw.startswith('-') else raw
-        if field in ORDERING_FIELDS:
-            return queryset.order_by(raw)
-        raise InvalidQueryParam(ORDERING_ERROR)
+            order_fields = ('-created_at',)
+        elif raw in ORDERING_ALIASES:
+            order_fields = ORDERING_ALIASES[raw]
+        else:
+            field = raw[1:] if raw.startswith('-') else raw
+            if field not in ORDERING_FIELDS:
+                raise InvalidQueryParam(ORDERING_ERROR)
+            order_fields = (raw,)
+
+        if title_rank_field:
+            order_fields = (title_rank_field,) + order_fields
+        return queryset.order_by(*order_fields)
 
     @staticmethod
     def _apply_date_range(queryset, date_range):
@@ -262,19 +302,45 @@ class NewsViewSet(viewsets.ModelViewSet):
 
         params 既可能是 QueryDict（list 直接传 request.query_params），
         也可能是 recent 解析出来的 dict，统一用 `.get()` 读取。
+
+        第 401 批：
+          · 搜索纳入 `summary`（P0 新增了摘要字段，用户按正文里的词搜不到
+            写在摘要里的内容会显得"搜索失灵"）；
+          · 搜索非空时给查询集加 `title_hit` 注解并返回（标题命中=0、其余=1），
+            由 `_apply_ordering` 拼成第一排序键 —— 相关度优先于用户选的排序；
+          · 新增 `pest` 参数：按关联病害 id 过滤（M2M，必须 distinct 防重复行）。
+
+        返回值：(queryset, title_rank_field)；未搜索时 title_rank_field 为 None。
         """
         search_query = params.get('search', '')
         search_type = params.get('search_type', 'title')
+        title_rank_field = None
 
         if search_query:
             if search_type == 'title':
                 queryset = queryset.filter(title__icontains=search_query)
             elif search_type == 'content':
-                queryset = queryset.filter(content__icontains=search_query)
+                # 第 401 批：正文搜索同时覆盖摘要（摘要也是"内容"的一部分）
+                queryset = queryset.filter(
+                    Q(content__icontains=search_query) | Q(summary__icontains=search_query)
+                )
             else:
                 queryset = queryset.filter(
-                    Q(title__icontains=search_query) | Q(content__icontains=search_query)
+                    Q(title__icontains=search_query)
+                    | Q(content__icontains=search_query)
+                    | Q(summary__icontains=search_query)
                 )
+
+            # 第 401 批：标题命中优先。注解值 0 排在 1 前面（升序），
+            # 排序在 _apply_ordering 里完成，这里只负责把"是否命中标题"算出来。
+            queryset = queryset.annotate(
+                title_hit=Case(
+                    When(title__icontains=search_query, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            )
+            title_rank_field = 'title_hit'
 
         category = params.get('category')
         if category:
@@ -286,12 +352,26 @@ class NewsViewSet(viewsets.ModelViewSet):
                 is_published=str(is_published).lower() in ('true', '1', 'yes')
             )
 
+        # 第 401 批：按关联病害过滤。合法 id 才进查询；非整数 / 非正数 / 超出
+        # 32 位整型范围一律 400 —— 让前端知道参数拼错了，而不是静默返回全表。
+        raw_pest = params.get('pest')
+        if raw_pest not in (None, ''):
+            try:
+                pest_id = int(raw_pest)
+            except (TypeError, ValueError):
+                raise InvalidQueryParam(PEST_PARAM_ERROR)
+            if pest_id <= 0 or pest_id > 2147483647:
+                raise InvalidQueryParam(PEST_PARAM_ERROR)
+            # M2M 过滤会按"命中的关联行"给出重复新闻，必须 distinct
+            queryset = queryset.filter(related_pests__id=pest_id).distinct()
+
         # 第 399 批：标签筛选是 **AND** —— 多个标签要同时命中，逐次 filter
         #（tags 是单个逗号分隔的字符串字段，没法用一条 SQL 干净地做多值匹配）。
         for tag in self._parse_tags(params.get('tags')):
             queryset = queryset.filter(tags__icontains=tag)
 
-        return self._apply_date_range(queryset, params.get('date_range'))
+        queryset = self._apply_date_range(queryset, params.get('date_range'))
+        return queryset, title_rank_field
 
     def create(self, request, *args, **kwargs):
         """
@@ -318,18 +398,22 @@ class NewsViewSet(viewsets.ModelViewSet):
         """
         新闻列表
         - 支持分页
-        - 支持按标题 / 内容 / 全部搜索（search + search_type）
+        - 支持按标题 / 内容 / 全部搜索（search + search_type；第 401 批起 content/all
+          也会搜摘要，且标题命中的条目整体排在前面）
         - 支持按分类筛选（category）
         - 支持按发布状态筛选（is_published=true/false，仅对管理员有意义）
         - 第 399 批：支持排序（ordering）、标签（tags）、时间范围（date_range），
           以及仅在 featured=1 时返回的"头条精选"段（featured）
+        - 第 401 批：支持按关联病害过滤（pest=<id>）
         """
         queryset = self.get_queryset()
 
         try:
-            queryset = self._apply_common_filters(queryset, request.query_params)
+            queryset, title_rank_field = self._apply_common_filters(
+                queryset, request.query_params,
+            )
             queryset = self._apply_ordering(
-                queryset, request.query_params.get('ordering', 'recent'),
+                queryset, request.query_params.get('ordering', 'recent'), title_rank_field,
             )
         except InvalidQueryParam as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -409,6 +493,37 @@ class NewsViewSet(viewsets.ModelViewSet):
             # 阅读量只是展示数据：缓存/统计出错不该把"读新闻"这条主路径变成 500。
             logger.warning('新闻阅读量计数失败（pk=%s）: %s', instance.pk, exc)
 
+    @staticmethod
+    def _brief_news(obj):
+        """第 401 批：上一篇 / 下一篇只需要跳转用的最小信息，不返回整条新闻"""
+        if obj is None:
+            return None
+        return {'id': obj.pk, 'title': obj.title, 'title_en': obj.title_en}
+
+    def _get_neighbors(self, instance):
+        """
+        第 401 批：详情页的"上一篇 / 下一篇"。
+
+        口径：
+          · 只在 `get_queryset()` 里找 —— 匿名不能通过"上一篇"点进一篇草稿
+            或还没到点的定时新闻（可见性必须与列表完全一致）；
+          · 按 created_at 排序，created_at 相同用 pk 兜底（批量导入常出现同秒）；
+          · prev = 更早的一条里最近的那条（`-created_at, -pk` 取 1），
+            next = 更晚的一条里最近的那条（`created_at, pk` 取 1）。
+        """
+        # get_queryset() 的 related_pests 预取是给序列化用的；这里只要标题三件套，
+        # 清掉预取避免每次上一篇/下一篇都多查一次多对多表。
+        base = self.get_queryset().prefetch_related(None)
+        older = base.filter(
+            Q(created_at__lt=instance.created_at)
+            | Q(created_at=instance.created_at, pk__lt=instance.pk)
+        ).order_by('-created_at', '-pk').first()
+        newer = base.filter(
+            Q(created_at__gt=instance.created_at)
+            | Q(created_at=instance.created_at, pk__gt=instance.pk)
+        ).order_by('created_at', 'pk').first()
+        return self._brief_news(older), self._brief_news(newer)
+
     def retrieve(self, request, *args, **kwargs):
         """
         新闻详情
@@ -430,7 +545,13 @@ class NewsViewSet(viewsets.ModelViewSet):
             # 第 399 批：确认对象可见后才计阅读量（404 的请求不该刷量）
             self._record_view(instance)
             serializer = self.get_serializer(instance)
-            return Response(serializer.data)
+            # 第 401 批：上一篇 / 下一篇只加在详情响应里（列表不加 —— 每页 N 条
+            # 各算两次邻居查询，而列表页用不到这两个字段）。
+            payload = dict(serializer.data)
+            prev_news, next_news = self._get_neighbors(instance)
+            payload['prev_news'] = prev_news
+            payload['next_news'] = next_news
+            return Response(payload)
         except (Http404, News.DoesNotExist):
             return Response(
                 {'error': '新闻不存在或未发布'},
@@ -491,9 +612,9 @@ class NewsViewSet(viewsets.ModelViewSet):
         filter_params['search_type'] = 'all'
 
         try:
-            queryset = self._apply_common_filters(queryset, filter_params)
+            queryset, title_rank_field = self._apply_common_filters(queryset, filter_params)
             queryset = self._apply_ordering(
-                queryset, params.get('ordering', '-created_at'),
+                queryset, params.get('ordering', '-created_at'), title_rank_field,
             )
         except InvalidQueryParam as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -541,8 +662,11 @@ class NewsViewSet(viewsets.ModelViewSet):
             limit = 30
 
         counter = {}
-        # 只取 tags 列（不实例化整条新闻），大数据量下内存占用可控
-        for raw_tags in queryset.values_list('tags', flat=True).iterator():
+        # 只取 tags 列（不实例化整条新闻），大数据量下内存占用可控。
+        # get_queryset() 为列表带出了 related_pests 预取，而预取与 values_list().iterator()
+        # 冲突（ValueError: chunk_size must be provided...），这里清掉 —— 本接口只读 tags。
+        tags_qs = queryset.prefetch_related(None).values_list('tags', flat=True)
+        for raw_tags in tags_qs.iterator():
             seen = set()
             for name in TAG_SPLIT_RE.split(raw_tags or ''):
                 name = name.strip()
@@ -558,6 +682,84 @@ class NewsViewSet(viewsets.ModelViewSet):
         return Response({
             'tags': [{'name': name, 'count': count} for name, count in rows],
             'count': len(rows),
+        })
+
+    @extend_schema(
+        parameters=NEWS_RELATED_OPENAPI_PARAMETERS,
+        responses={200: NewsRelatedResponseSerializer},
+    )
+    @action(detail=True, methods=['get'])
+    def related(self, request, pk=None):
+        """
+        第 401 批：相关推荐（`GET /api/news/{pk}/related/`）
+
+        为什么放在后端：相关推荐要综合"同病害 / 同分类 / 标签重叠"三类信号，
+        前端要自己算就得先把整库新闻拉下来；打分权重也会随运营策略调整，
+        收口在后端才能一处改、全端生效。
+
+        口径：
+          · 候选从 `self.get_queryset()` 出发并排除自身 —— 匿名拿不到草稿 / 未到点；
+          · SQL 只做**候选初筛**（同分类 | 关联病害命中 | 自身前 3 个标签命中）
+            并 distinct，最多取 200 条；精排在 Python 侧做 —— "病害重合几个、
+            标签重合几个"用 SQL 表达既别扭又难维护；
+          · 打分：每重合 1 个关联病害 +3、同分类 +2、每重合 1 个标签 +1（最多 +3）；
+          · 只返回 score>0 的，按 (-score, -created_at) 排序，limit 默认 4、范围 1..10。
+        """
+        news = self.get_object()
+
+        news_pest_ids = set(news.related_pests.values_list('id', flat=True))
+        # 自身标签最多取前 3 个参与候选筛选与打分（与清单口径一致）
+        self_tags = self._parse_tags(news.tags)[:RELATED_SELF_TAG_LIMIT]
+
+        candidate_q = Q(category=news.category)
+        if news_pest_ids:
+            # 注意：related_pests__in=[] 不会产生匹配，这里显式判断，避免生成
+            # 一个恒假条件（也避免让人误以为"没有关联病害就查不到候选"）。
+            # 用子查询而不是直接 Q(related_pests__in=...)：直接写 M2M 条件时，
+            # 它和 tags/category 的 OR 会退化成 INNER JOIN，把"仅标签重合"的候选
+            # 整个丢掉（实测过）；换成 pk 子查询后所有条件都是本表单列条件。
+            candidate_q |= Q(pk__in=News.objects.filter(
+                related_pests__in=news_pest_ids,
+            ).values('pk'))
+        for tag in self_tags:
+            candidate_q |= Q(tags__icontains=tag)
+
+        candidates = list(
+            self.get_queryset()
+            .exclude(pk=news.pk)
+            .filter(candidate_q)
+            .distinct()
+            .order_by('-created_at', '-pk')[:RELATED_CANDIDATE_LIMIT]
+        )
+
+        scored = []
+        for candidate in candidates:
+            candidate_pest_ids = {pest.pk for pest in candidate.related_pests.all()}
+            score = RELATED_PEST_WEIGHT * len(news_pest_ids & candidate_pest_ids)
+            if candidate.category == news.category:
+                score += RELATED_CATEGORY_WEIGHT
+            candidate_tags = set(self._parse_tags(candidate.tags))
+            tag_overlap = len(set(self_tags) & candidate_tags)
+            score += min(tag_overlap, RELATED_TAG_WEIGHT_CAP) * RELATED_TAG_WEIGHT
+            if score > 0:
+                scored.append((score, candidate))
+
+        # 先按创建时间倒序、再按分数倒序（两次稳定排序）：同分时新的在前。
+        # 不用单次 key=(-score, -timestamp) 是为了保留 datetime 精度、不依赖时区换算。
+        scored.sort(key=lambda item: (item[1].created_at, item[1].pk), reverse=True)
+        scored.sort(key=lambda item: item[0], reverse=True)
+
+        try:
+            limit = int(request.query_params.get('limit', RELATED_DEFAULT_LIMIT))
+        except (TypeError, ValueError):
+            limit = RELATED_DEFAULT_LIMIT
+        if not 1 <= limit <= RELATED_MAX_LIMIT:
+            limit = RELATED_DEFAULT_LIMIT
+
+        results = [candidate for _, candidate in scored[:limit]]
+        return Response({
+            'results': self.get_serializer(results, many=True).data,
+            'count': len(results),
         })
 
     @action(detail=True, methods=['get'], url_path='detail')

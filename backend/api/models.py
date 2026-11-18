@@ -775,6 +775,18 @@ class News(models.Model):  # 定义新闻模型
     is_featured = models.BooleanField(default=False, db_index=True, verbose_name="头条精选")
     summary = models.CharField(max_length=200, blank=True, default='', verbose_name="摘要")
     views = models.IntegerField(default=0, verbose_name="阅读量")
+    # 第 401 批：行业动态清单第二轮 P1 —— 原文链接 / 关联病害。
+    # 为什么加：
+    #   · external_url：新闻多是转载的行业资讯，读者需要能跳到原文核对；
+    #     同时"来源"只是一个机构名，无法定位到具体文章。
+    #   · related_pests：把行业动态接进病害知识体系（P1-5）—— 用户看到
+    #     "番茄晚疫病预警"的新闻时，可以从卡片直达百科词条；反向由
+    #     PestDetailView 用 related_name='related_news' 取相关新闻。
+    #     多对多而不是单个外键：一条新闻经常同时提到多个作物/病害。
+    external_url = models.URLField(max_length=500, blank=True, default='', verbose_name="原文链接")
+    related_pests = models.ManyToManyField(
+        PestInfo, blank=True, related_name='related_news', verbose_name="关联病害",
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")  # 创建时间字段
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")  # 更新时间字段
 

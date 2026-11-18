@@ -6366,11 +6366,13 @@ paths:
       description: |-
         新闻列表
         - 支持分页
-        - 支持按标题 / 内容 / 全部搜索（search + search_type）
+        - 支持按标题 / 内容 / 全部搜索（search + search_type；第 401 批起 content/all
+          也会搜摘要，且标题命中的条目整体排在前面）
         - 支持按分类筛选（category）
         - 支持按发布状态筛选（is_published=true/false，仅对管理员有意义）
         - 第 399 批：支持排序（ordering）、标签（tags）、时间范围（date_range），
           以及仅在 featured=1 时返回的"头条精选"段（featured）
+        - 第 401 批：支持按关联病害过滤（pest=<id>）
       parameters:
       - in: query
         name: date_range
@@ -6409,6 +6411,11 @@ paths:
         description: Number of results to return per page.
         schema:
           type: integer
+      - in: query
+        name: pest
+        schema:
+          type: integer
+        description: 按关联病害 id 过滤（第 401 批新增）；非数字 / 非正数 id 返回 400。
       - in: query
         name: tags
         schema:
@@ -6688,6 +6695,58 @@ paths:
             text/event-stream:
               schema:
                 $ref: '#/components/schemas/News'
+          description: ''
+  /api/news/{id}/related/:
+    get:
+      operationId: api_news_related_retrieve
+      description: |-
+        第 401 批：相关推荐（`GET /api/news/{pk}/related/`）
+
+        为什么放在后端：相关推荐要综合"同病害 / 同分类 / 标签重叠"三类信号，
+        前端要自己算就得先把整库新闻拉下来；打分权重也会随运营策略调整，
+        收口在后端才能一处改、全端生效。
+
+        口径：
+          · 候选从 `self.get_queryset()` 出发并排除自身 —— 匿名拿不到草稿 / 未到点；
+          · SQL 只做**候选初筛**（同分类 | 关联病害命中 | 自身前 3 个标签命中）
+            并 distinct，最多取 200 条；精排在 Python 侧做 —— "病害重合几个、
+            标签重合几个"用 SQL 表达既别扭又难维护；
+          · 打分：每重合 1 个关联病害 +3、同分类 +2、每重合 1 个标签 +1（最多 +3）；
+          · 只返回 score>0 的，按 (-score, -created_at) 排序，limit 默认 4、范围 1..10。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this 行业新闻.
+        required: true
+      - in: query
+        name: limit
+        schema:
+          type: integer
+        description: 返回条数，默认 4，有效范围 1..10；非法值回退默认值。
+      tags:
+      - api
+      security:
+      - deviceTokenAuth: []
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewsRelatedResponse'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/NewsRelatedResponse'
           description: ''
   /api/news/recent/:
     get:
@@ -10470,6 +10529,32 @@ components:
         views:
           type: integer
           readOnly: true
+        external_url:
+          nullable: true
+          title: 原文链接
+          description: 非空时必须是 http/https 链接
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 500
+          - type: string
+            maxLength: 0
+        related_pests:
+          type: array
+          items:
+            type: integer
+            title: 关联病害
+          title: 关联病害
+        related_pest_details:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedPestBrief'
+          readOnly: true
+        clear_related_pests:
+          type: boolean
+          writeOnly: true
+          default: false
+          title: 清空关联病害
         created_at:
           type: string
           format: date-time
@@ -10501,6 +10586,7 @@ components:
       - id
       - image_url
       - is_pending_schedule
+      - related_pest_details
       - title
       - updated_at
       - views
@@ -10518,6 +10604,24 @@ components:
         * `market` - 市场动态
         * `report` - 行业报告
         * `notice` - 通知公告
+    NewsRelatedResponse:
+      type: object
+      description: |-
+        第 401 批：`GET /api/news/{id}/related/` 的响应外壳。
+
+        为什么要单独定义：该接口返回 `{'results': [...], 'count': N}` 而不是分页结构，
+        drf-spectacular 若按默认 serializer_class 推导会把响应写成单个 News，
+        与真实结构不符；这里显式声明，openapi 里的类型才准确。
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/News'
+        count:
+          type: integer
+      required:
+      - count
+      - results
     Notification:
       type: object
       properties:
@@ -11084,6 +11188,32 @@ components:
         views:
           type: integer
           readOnly: true
+        external_url:
+          nullable: true
+          title: 原文链接
+          description: 非空时必须是 http/https 链接
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 500
+          - type: string
+            maxLength: 0
+        related_pests:
+          type: array
+          items:
+            type: integer
+            title: 关联病害
+          title: 关联病害
+        related_pest_details:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedPestBrief'
+          readOnly: true
+        clear_related_pests:
+          type: boolean
+          writeOnly: true
+          default: false
+          title: 清空关联病害
         created_at:
           type: string
           format: date-time
@@ -11850,6 +11980,34 @@ components:
         * `ECOLOGICAL` - 生态防治
         * `PHYSICAL` - 物理防治
         * `MONITORING` - 监测预警
+    RelatedPestBrief:
+      type: object
+      description: |-
+        第 401 批：新闻卡片上的"关联病害"轻量条目。
+
+        为什么单独做一个只读序列化器、而不是直接嵌套 PestInfo 的完整序列化器：
+        卡片只需要 chip 文案与跳转用的标识，塞进 image / symptoms / description
+        会让列表响应膨胀好几倍（一条新闻可能挂多个病害）。
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        name_en:
+          type: string
+        crop_type:
+          type: string
+        crop_type_en:
+          type: string
+        english_identifier:
+          type: string
+      required:
+      - crop_type
+      - crop_type_en
+      - english_identifier
+      - id
+      - name
+      - name_en
     RoleEnum:
       enum:
       - ADMIN

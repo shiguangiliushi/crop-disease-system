@@ -2767,6 +2767,433 @@ class NewsListEnhancementTests(TestCase):
         self.assertEqual(news.views, 0)
 
 
+class NewsLinkageTests(TestCase):
+    """
+    第 401 批：行业动态清单第二轮 P1 —— 新闻与病害知识体系打通 / 相关推荐 /
+    原文链接 / 检索标题权重。
+
+    背景：P0 把列表做得能看了，但新闻仍是"孤岛" —— 读者看到"番茄晚疫病预警"
+    无法跳到病害百科，编辑也没法标注这条资讯涉及哪些病害；检索只有标题/正文
+    两个字段且没有相关度（正文命中的新条目会盖过标题命中的关键政策）。
+    本组用例锁死新契约，同时覆盖"清空关联 / 只改其他字段不能误清"这类写入回归。
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='nl_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        self.user = User.objects.create_user(username='nl_user', password='pw123456')
+
+        self.anon = APIClient()
+        self.anon.raise_request_exception = False
+        self.client_admin = APIClient()
+        self.client_admin.raise_request_exception = False
+        self.client_admin.force_authenticate(user=self.admin)
+        self.client_user = APIClient()
+        self.client_user.raise_request_exception = False
+        self.client_user.force_authenticate(user=self.user)
+
+        # 两株作物/名称都不同的病害：用来验证 related_pest_details 的
+        # (crop_type, name) 排序 —— SQLite 的 TEXT 排序按 UTF-8 码点，
+        # "小麦" 排在 "番茄" 前面。
+        self.wheat_pest = PestInfo.objects.create(
+            name='小麦锈病', name_en='Wheat rust', crop_type='小麦', crop_type_en='Wheat',
+            english_identifier='Wheat___Rust_linkage',
+        )
+        self.tomato_pest = PestInfo.objects.create(
+            name='番茄晚疫病', name_en='Tomato late blight', crop_type='番茄',
+            crop_type_en='Tomato', english_identifier='Tomato___Late_blight_linkage',
+        )
+
+    def tearDown(self):
+        cache.clear()
+
+    # ---------- 造数据 / 断言小工具 ----------
+
+    def _news(self, title, *, days_ago=1, content=None, **fields):
+        """造一条新闻并把 created_at 拨到 N 天前（排序/相邻/时间用例需要确定的先后）"""
+        news = News.objects.create(
+            title=title,
+            content=content or f'{title}的正文内容',
+            **fields,
+        )
+        News.objects.filter(pk=news.pk).update(
+            created_at=timezone.now() - timezone.timedelta(days=days_ago),
+        )
+        news.refresh_from_db()
+        return news
+
+    @staticmethod
+    def _ids(response):
+        data = response.data
+        results = data['results'] if isinstance(data, dict) else data
+        return [item['id'] for item in results]
+
+    # ---------- a) 原文链接 ----------
+
+    def test_external_url_persists_and_appears_in_list_and_detail(self):
+        create = self.client_admin.post(
+            '/api/news/',
+            {
+                'title': '带原文链接新闻', 'content': '正文内容够长了，超过十个字',
+                'category': 'notice', 'is_published': 'true',
+                'external_url': 'https://example.com/agri/1',
+            },
+            format='multipart',
+        )
+        self.assertEqual(create.status_code, 201, create.data)
+        news = News.objects.get(title='带原文链接新闻')
+        self.assertEqual(news.external_url, 'https://example.com/agri/1')
+
+        listed = self.anon.get('/api/news/', {'page_size': 100})
+        row = next(item for item in listed.data['results'] if item['id'] == news.id)
+        self.assertEqual(row['external_url'], 'https://example.com/agri/1', '列表要返回原文链接（卡片 meta 用）')
+
+        detail = self.anon.get(f'/api/news/{news.id}/')
+        self.assertEqual(detail.data['external_url'], 'https://example.com/agri/1')
+
+        patch = self.client_admin.patch(
+            f'/api/news/{news.id}/',
+            {'external_url': 'https://example.org/2'},
+            format='multipart',
+        )
+        self.assertEqual(patch.status_code, 200, patch.data)
+        news.refresh_from_db()
+        self.assertEqual(news.external_url, 'https://example.org/2', '部分更新也要能改原文链接')
+
+    def test_invalid_external_url_is_rejected(self):
+        for bad in ('not-a-url', 'javascript:alert(1)', 'ftp://example.com/a', '//example.com/a'):
+            response = self.client_admin.post(
+                '/api/news/',
+                {
+                    'title': f'非法链接新闻-{bad}', 'content': '正文内容够长了，超过十个字',
+                    'category': 'notice', 'is_published': 'true', 'external_url': bad,
+                },
+                format='multipart',
+            )
+            self.assertEqual(response.status_code, 400, f'非法原文链接 {bad} 应返回 400')
+            self.assertIn('external_url', response.data)
+
+    def test_external_url_blank_and_json_null_clear_it(self):
+        news = self._news('清空链接新闻', days_ago=1)
+        News.objects.filter(pk=news.pk).update(external_url='https://example.com/old')
+
+        blank = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'external_url': '   '}, format='multipart',
+        )
+        self.assertEqual(blank.status_code, 200, blank.data)
+        self.assertEqual(blank.data['external_url'], '')
+        news.refresh_from_db()
+        self.assertEqual(news.external_url, '', '纯空白应视同"没有原文链接"')
+
+        News.objects.filter(pk=news.pk).update(external_url='https://example.com/again')
+        as_json = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'external_url': None}, format='json',
+        )
+        self.assertEqual(as_json.status_code, 200, as_json.data)
+        news.refresh_from_db()
+        self.assertEqual(
+            news.external_url, '',
+            'JSON null 语义是清空，不能把 None 写进 NOT NULL 字段（会触发数据库约束错误）',
+        )
+
+    # ---------- b) 关联病害 ----------
+
+    def test_related_pests_can_be_set_and_details_are_sorted(self):
+        response = self.client_admin.post(
+            '/api/news/',
+            {
+                'title': '关联病害新闻', 'content': '正文内容够长了，超过十个字',
+                'category': 'notice', 'is_published': 'true',
+                'related_pests': [self.tomato_pest.id, self.wheat_pest.id],
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        news = News.objects.get(title='关联病害新闻')
+        self.assertEqual(
+            sorted(news.related_pests.values_list('id', flat=True)),
+            sorted([self.wheat_pest.id, self.tomato_pest.id]),
+            'multipart 传多个病害 id 应全部写入',
+        )
+        self.assertEqual(
+            [item['id'] for item in response.data['related_pest_details']],
+            [self.wheat_pest.id, self.tomato_pest.id],
+            'related_pest_details 要按 (crop_type, name) 排序',
+        )
+        brief = response.data['related_pest_details'][0]
+        self.assertEqual(
+            set(brief),
+            {'id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier'},
+            '卡片只需要轻量字段，不能把 image / symptoms 等大字段塞进列表响应',
+        )
+        self.assertEqual(brief['name'], '小麦锈病')
+        self.assertEqual(brief['name_en'], 'Wheat rust')
+        self.assertEqual(brief['crop_type_en'], 'Wheat')
+        self.assertEqual(brief['english_identifier'], 'Wheat___Rust_linkage')
+
+        detail = self.anon.get(f'/api/news/{news.id}/')
+        self.assertEqual(len(detail.data['related_pest_details']), 2, '详情也要带出关联病害 chip')
+
+    def test_clear_related_pests_flag_clears_all_links(self):
+        news = self._news('待清空关联新闻', days_ago=1)
+        news.related_pests.set([self.wheat_pest, self.tomato_pest])
+
+        response = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'clear_related_pests': 'true'}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['related_pests'], [])
+        self.assertEqual(news.related_pests.count(), 0, 'clear_related_pests=true 必须清空关联病害')
+
+    def test_patch_other_field_keeps_related_pests(self):
+        news = self._news('保留关联新闻', days_ago=1)
+        news.related_pests.set([self.wheat_pest])
+
+        response = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'summary': '只改摘要'}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [pest.id for pest in news.related_pests.all()], [self.wheat_pest.id],
+            '只改其他字段不能把关联病害清空',
+        )
+
+    def test_clear_wins_over_related_pests_in_same_request(self):
+        news = self._news('冲突语义新闻', days_ago=1)
+        news.related_pests.set([self.wheat_pest])
+
+        response = self.client_admin.patch(
+            f'/api/news/{news.id}/',
+            {'related_pests': [self.tomato_pest.id], 'clear_related_pests': 'true'},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            news.related_pests.count(), 0,
+            'clear_related_pests 与 related_pests 同时出现时以 clear 为准（结果为空）',
+        )
+
+    def test_related_pests_can_be_replaced(self):
+        news = self._news('替换关联新闻', days_ago=1)
+        news.related_pests.set([self.wheat_pest])
+
+        response = self.client_admin.patch(
+            f'/api/news/{news.id}/', {'related_pests': [self.tomato_pest.id]}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([pest.id for pest in news.related_pests.all()], [self.tomato_pest.id])
+
+    # ---------- c) pest 过滤 ----------
+
+    def test_pest_filter_matches_linked_news(self):
+        wheat_news = self._news('小麦锈病动态', days_ago=1)
+        wheat_news.related_pests.set([self.wheat_pest])
+        tomato_news = self._news('番茄晚疫病动态', days_ago=2)
+        tomato_news.related_pests.set([self.tomato_pest])
+        self._news('无关联动态', days_ago=3)
+
+        response = self.anon.get('/api/news/', {'pest': self.wheat_pest.id, 'page_size': 100})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._ids(response), [wheat_news.id], 'pest=<id> 应只返回关联了该病害的新闻')
+
+        recent = self.anon.get('/api/news/recent/', {'pest': self.wheat_pest.id})
+        self.assertEqual(self._ids(recent), [wheat_news.id], 'recent 复用公共筛选，也要支持 pest')
+
+    def test_pest_filter_invalid_value_returns_400(self):
+        for bad in ('abc', '0', '-1', '1.5'):
+            response = self.anon.get('/api/news/', {'pest': bad})
+            self.assertEqual(response.status_code, 400, f'非法 pest={bad} 应返回 400')
+            self.assertIn('病害参数不合法', response.data['error'])
+
+    def test_pest_filter_hides_drafts_from_anonymous(self):
+        draft = self._news('草稿病害动态', days_ago=1, is_published=False)
+        draft.related_pests.set([self.wheat_pest])
+
+        anon = self.anon.get('/api/news/', {'pest': self.wheat_pest.id})
+        self.assertEqual(anon.data['count'], 0, '匿名不能通过 pest 过滤看到草稿')
+        admin = self.client_admin.get('/api/news/', {'pest': self.wheat_pest.id})
+        self.assertEqual([item['id'] for item in admin.data['results']], [draft.id])
+
+    # ---------- d) 搜索：覆盖摘要 + 标题命中优先 ----------
+
+    def test_search_title_hit_ranks_first(self):
+        title_hit = self._news('小麦锈病最新预警', days_ago=5, views=10)
+        content_hit = self._news(
+            '行业动态', days_ago=1, views=100,
+            content='今年小麦锈病扩散较快，需重点防治',
+        )
+        summary_hit = self._news('另一条动态', days_ago=2, summary='小麦锈病防治要点')
+
+        for ordering in ('recent', 'hot', 'oldest'):
+            response = self.anon.get('/api/news/', {
+                'search': '小麦锈病', 'search_type': 'all',
+                'ordering': ordering, 'page_size': 100,
+            })
+            self.assertEqual(response.status_code, 200)
+            ids = self._ids(response)
+            self.assertEqual(
+                ids[0], title_hit.id,
+                f'ordering={ordering} 时标题命中仍要排第一（title_hit 是第一排序键）',
+            )
+            self.assertEqual(
+                set(ids), {title_hit.id, content_hit.id, summary_hit.id},
+                '只有正文 / 摘要命中的新闻也要保留',
+            )
+
+    def test_search_content_and_all_include_summary(self):
+        summary_news = self._news('摘要关键词新闻', days_ago=1, summary='马铃薯晚疫病防控形势')
+        self._news('无关新闻', days_ago=2)
+
+        all_hit = self.anon.get(
+            '/api/news/', {'search': '马铃薯晚疫病', 'search_type': 'all', 'page_size': 100},
+        )
+        self.assertEqual(self._ids(all_hit), [summary_news.id], 'search_type=all 应能命中摘要')
+
+        content_hit = self.anon.get(
+            '/api/news/', {'search': '马铃薯晚疫病', 'search_type': 'content', 'page_size': 100},
+        )
+        self.assertEqual(self._ids(content_hit), [summary_news.id], 'search_type=content 也要覆盖摘要')
+
+        title_only = self.anon.get(
+            '/api/news/', {'search': '马铃薯晚疫病', 'search_type': 'title', 'page_size': 100},
+        )
+        self.assertEqual(self._ids(title_only), [], 'title 搜索不应该命中摘要')
+
+    def test_recent_search_also_prefers_title_hits(self):
+        title_hit = self._news('稻飞虱预警', days_ago=5)
+        self._news('植保动态', days_ago=1, content='稻飞虱发生面积扩大')
+
+        response = self.anon.get('/api/news/recent/', {'search': '稻飞虱', 'ordering': 'recent'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._ids(response)[0], title_hit.id, 'recent 的搜索也要标题命中优先')
+
+    # ---------- e) 相关推荐 ----------
+
+    def test_related_scoring_orders_by_score_then_created_at(self):
+        center = self._news('中心新闻', days_ago=10, category='tech', tags='小麦,病害')
+        center.related_pests.set([self.wheat_pest])
+
+        best = self._news('同病害同分类同标签', days_ago=1, category='tech', tags='小麦,病害')
+        best.related_pests.set([self.wheat_pest])
+        pest_only = self._news('仅同病害', days_ago=2, category='market', tags='玉米')
+        pest_only.related_pests.set([self.wheat_pest])
+        category_new = self._news('仅同分类新闻', days_ago=3, category='tech')
+        category_old = self._news('仅同分类旧闻', days_ago=5, category='tech')
+        tag_only = self._news('仅标签重合', days_ago=4, category='market', tags='小麦')
+        unrelated = self._news('完全无关新闻', days_ago=6, category='policy')
+
+        response = self.anon.get(f'/api/news/{center.id}/related/', {'limit': 10})
+        self.assertEqual(response.status_code, 200)
+        ids = [item['id'] for item in response.data['results']]
+        self.assertEqual(ids[0], best.id, '病害+分类+标签全重合的应排第一')
+        self.assertEqual(ids[1], pest_only.id, '同病害(3 分) 应比仅同分类(2 分) 靠前')
+        self.assertEqual(ids[2], category_new.id, '同分时较新的在前（-created_at 兜底）')
+        self.assertEqual(ids[3], category_old.id)
+        self.assertEqual(ids[4], tag_only.id, '标签重合只值 1 分')
+        self.assertNotIn(center.id, ids, '相关推荐不能把自己推荐给自己')
+        self.assertNotIn(unrelated.id, ids, '同类信号一个都不沾的新闻不该出现')
+        self.assertEqual(response.data['count'], 5)
+
+    def test_related_limit_and_invalid_fallback(self):
+        center = self._news('相关推荐中心', days_ago=10, category='tech')
+        for index in range(6):
+            self._news(f'同分类新闻{index}', days_ago=index + 1, category='tech')
+
+        two = self.anon.get(f'/api/news/{center.id}/related/', {'limit': 2})
+        self.assertEqual(two.data['count'], 2, 'limit 应截断返回条数')
+        self.assertEqual(len(two.data['results']), 2)
+
+        max_limit = self.anon.get(f'/api/news/{center.id}/related/', {'limit': 10})
+        self.assertEqual(max_limit.data['count'], 6, '候选不足时返回全部')
+
+        for bad in ('0', '11', 'abc'):
+            fallback = self.anon.get(f'/api/news/{center.id}/related/', {'limit': bad})
+            self.assertEqual(fallback.status_code, 200)
+            self.assertEqual(fallback.data['count'], 4, f'非法 limit={bad} 应回退默认值 4')
+
+    def test_related_returns_empty_when_no_candidates(self):
+        only = self._news('唯一新闻', days_ago=1, category='tech')
+        response = self.anon.get(f'/api/news/{only.id}/related/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {'results': [], 'count': 0})
+
+    def test_related_hides_drafts_from_anonymous(self):
+        center = self._news('相关推荐中心新闻', days_ago=1, category='tech')
+        draft = self._news('相关推荐草稿', days_ago=2, category='tech', is_published=False)
+
+        anon = self.anon.get(f'/api/news/{center.id}/related/')
+        self.assertEqual(anon.data['results'], [], '匿名不能从相关推荐里看到草稿')
+        self.assertEqual(anon.data['count'], 0)
+
+        admin = self.client_admin.get(f'/api/news/{center.id}/related/')
+        self.assertEqual([item['id'] for item in admin.data['results']], [draft.id])
+
+        self.assertEqual(
+            self.anon.get(f'/api/news/{draft.id}/related/').status_code, 404,
+            '草稿自身的相关推荐对匿名应为 404（与详情可见性口径一致）',
+        )
+
+    # ---------- f) 上一篇 / 下一篇 ----------
+
+    def test_prev_and_next_neighbors(self):
+        old = self._news('较早新闻', days_ago=3)
+        middle = self._news('中间新闻', days_ago=2)
+        new = self._news('较新新闻', days_ago=1)
+
+        middle_detail = self.anon.get(f'/api/news/{middle.id}/')
+        self.assertEqual(
+            middle_detail.data['prev_news'],
+            {'id': old.id, 'title': old.title, 'title_en': old.title_en},
+        )
+        self.assertEqual(
+            middle_detail.data['next_news'],
+            {'id': new.id, 'title': new.title, 'title_en': new.title_en},
+        )
+
+        old_detail = self.anon.get(f'/api/news/{old.id}/')
+        self.assertIsNone(old_detail.data['prev_news'], '最早的一条没有上一篇')
+        self.assertEqual(old_detail.data['next_news']['id'], middle.id, '第二篇的下一篇是中间那条')
+
+        new_detail = self.anon.get(f'/api/news/{new.id}/')
+        self.assertEqual(new_detail.data['prev_news']['id'], middle.id)
+        self.assertIsNone(new_detail.data['next_news'], '最新的一条没有下一篇')
+
+        self.assertNotIn(
+            'prev_news', self.anon.get('/api/news/').data,
+            'prev/next 只加在详情响应，不能污染列表结构',
+        )
+        self.assertNotIn(
+            'prev_news', self.anon.get(f'/api/news/{middle.id}/detail/').data,
+            '兼容详情接口不加 prev/next',
+        )
+
+    def test_prev_next_skip_drafts_for_anonymous(self):
+        old = self._news('早新闻', days_ago=3)
+        draft = self._news('中间草稿', days_ago=2, is_published=False)
+        new = self._news('新新闻', days_ago=1)
+
+        anon = self.anon.get(f'/api/news/{new.id}/')
+        self.assertEqual(anon.data['prev_news']['id'], old.id, '匿名看到的上一篇要跳过草稿')
+        self.assertIsNone(anon.data['next_news'])
+
+        admin = self.client_admin.get(f'/api/news/{new.id}/')
+        self.assertEqual(admin.data['prev_news']['id'], draft.id, '管理员视角里草稿也参与上一篇/下一篇')
+
+    def test_prev_next_tie_break_by_pk(self):
+        first = self._news('同秒新闻一', days_ago=1)
+        second = self._news('同秒新闻二', days_ago=1)
+        same_moment = timezone.now() - timezone.timedelta(days=1)
+        News.objects.filter(pk__in=[first.pk, second.pk]).update(created_at=same_moment)
+        first.refresh_from_db()
+        second.refresh_from_db()
+
+        detail = self.anon.get(f'/api/news/{first.id}/')
+        self.assertIsNone(detail.data['prev_news'], 'created_at 相同时按 pk 兜底：pk 最小的是第一篇')
+        self.assertEqual(detail.data['next_news']['id'], second.id, 'created_at 相同时下一篇取 pk 更大的')
+
+
 # ============================================================================
 # 第 39 批：管理员数据看板
 # ============================================================================

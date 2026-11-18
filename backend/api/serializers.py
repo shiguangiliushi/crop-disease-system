@@ -19,7 +19,9 @@
 import json
 import re
 import time
+from urllib.parse import urlparse  # 第 401 批：原文链接只允许 http/https
 from rest_framework import serializers  # 导入DRF序列化器模块
+from drf_spectacular.utils import extend_schema_field  # 第 401 批：轻量病害列表的 schema 类型
 from django.db.models import Count  # 导入Django计数聚合函数
 from django.utils import timezone  # 第 91 批：反馈里的识别摘要要按本地时区展示
 from .models import (
@@ -1039,6 +1041,23 @@ class EmptyToNullDateTimeField(serializers.DateTimeField):
         return super().to_internal_value(data)
 
 
+class RelatedPestBriefSerializer(serializers.Serializer):
+    """
+    第 401 批：新闻卡片上的"关联病害"轻量条目。
+
+    为什么单独做一个只读序列化器、而不是直接嵌套 PestInfo 的完整序列化器：
+    卡片只需要 chip 文案与跳转用的标识，塞进 image / symptoms / description
+    会让列表响应膨胀好几倍（一条新闻可能挂多个病害）。
+    """
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    name_en = serializers.CharField()
+    crop_type = serializers.CharField()
+    crop_type_en = serializers.CharField()
+    english_identifier = serializers.CharField()
+
+
 # 行业新闻序列化器
 class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列化器
     author_name = serializers.ReadOnlyField(source='author.username')  # 定义作者名字段为只读
@@ -1060,6 +1079,28 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
         label='定时发布时间',
         help_text='留空表示立即发布；填未来时间则到点才对外可见',
     )
+    # 第 401 批：原文链接 / 关联病害。
+    # allow_null=True 是为了让 JSON 客户端能传 null 表示"清空"（见下方 validate）；
+    # allow_blank=True 让 multipart 的空串也能直接表达"没有原文链接"。
+    external_url = serializers.URLField(
+        required=False, allow_blank=True, allow_null=True,
+        max_length=500,
+        label='原文链接',
+        help_text='非空时必须是 http/https 链接',
+    )
+    # 写：病害 id 列表（multipart 用重复 key）；读：同一字段名返回 id 列表，
+    # 卡片需要的名称/作物等由只读的 related_pest_details 提供。
+    related_pests = serializers.PrimaryKeyRelatedField(
+        many=True, required=False, queryset=PestInfo.objects.all(),
+        label='关联病害',
+    )
+    related_pest_details = serializers.SerializerMethodField()
+    # 第 401 批：multipart 无法用"空数组"表达"清空关联病害" —— 前端清空时传
+    # clear_related_pests=true；它与 related_pests 同时出现时以 clear 为准（结果为空）。
+    clear_related_pests = serializers.BooleanField(
+        write_only=True, required=False, default=False,
+        label='清空关联病害',
+    )
 
     class Meta:  # 定义元数据
         model = News  # 关联行业新闻模型
@@ -1067,7 +1108,8 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
             'id', 'title', 'title_en', 'content', 'content_en',
             'image', 'image_url', 'source', 'source_en', 'author_name',
             'is_published', 'is_featured', 'published_at', 'is_pending_schedule',
-            'summary', 'views',
+            'summary', 'views', 'external_url', 'related_pests',
+            'related_pest_details', 'clear_related_pests',
             'created_at', 'created_at_formatted', 'updated_at',
             'category', 'tags', 'clear_image'
         ]
@@ -1093,6 +1135,44 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
         if hasattr(obj, 'created_at') and obj.created_at:  # 检查created_at是否存在
             return obj.created_at.strftime('%Y-%m-%d %H:%M')  # 返回格式化时间
         return None  # 返回空值
+
+    @extend_schema_field(RelatedPestBriefSerializer(many=True))
+    def get_related_pest_details(self, obj):
+        """
+        第 401 批：关联病害的轻量列表（按 `(crop_type, name)` 排序）。
+
+        排序是为了响应稳定：前端把 chip 直接渲染，顺序随机会让同一篇新闻
+        两次打开时标签顺序跳来跳去；按作物再按病害名排也便于人工核对。
+        """
+        pests = obj.related_pests.all().order_by('crop_type', 'name')
+        return RelatedPestBriefSerializer(pests, many=True).data
+
+    def validate_external_url(self, value):
+        """
+        第 401 批：原文链接去空白，且只接受 http/https。
+
+        URLField 已经挡掉了"根本不是 URL"的输入，但它的默认协议白名单里还有
+        ftp/ftps —— 原文链接点开应该是网页，ftp 链接对普通读者没有意义，
+        这里统一直到 http/https（也避免 `javascript:` 这类伪协议混进来）。
+        """
+        url = (value or '').strip()
+        if not url:
+            return ''
+        if urlparse(url).scheme.lower() not in ('http', 'https'):
+            raise serializers.ValidationError('原文链接必须以 http:// 或 https:// 开头')
+        return url
+
+    def validate(self, attrs):
+        """
+        第 401 批：`external_url=null` 语义是"清空原文链接"。
+
+        模型字段是 NOT NULL（blank + default ''），JSON 客户端传 null 时若原样写入
+        会触发数据库约束错误；这里在对象级校验里归一成空串。
+        字段级 validate_external_url 拿不到 None（DRF 对 allow_null 的值会提前返回）。
+        """
+        if 'external_url' in attrs and attrs['external_url'] is None:
+            attrs['external_url'] = ''
+        return super().validate(attrs)
 
     def validate_summary(self, value):
         """
@@ -1148,6 +1228,12 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
         """创建新闻（图片由 ModelSerializer 默认逻辑写入）"""
         validated_data.pop('clear_image', None)
 
+        # 第 401 批：multipart 没法用"空数组"表达清空，前端清空关联病害时传
+        # clear_related_pests=true。新建时本来就没有关联，与 related_pests 同时
+        # 出现时以 clear 为准（结果为空），保持与编辑一致的语义。
+        if validated_data.pop('clear_related_pests', False):
+            validated_data.pop('related_pests', None)
+
         # 处理tags字段（兼容传入数组的情况）
         tags = validated_data.get('tags')
         if tags and isinstance(tags, list):
@@ -1167,6 +1253,11 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
         has_image_field = 'image' in validated_data
         image = validated_data.pop('image', None)
 
+        # 第 401 批：多对多关系不能走下面的 setattr 循环（Django 禁止直接赋值），
+        # 必须先 pop 出来、在 instance.save() 之后用 set()/clear() 处理。
+        clear_related_pests = validated_data.pop('clear_related_pests', False)
+        related_pests = validated_data.pop('related_pests', None)
+
         # 处理tags字段（兼容传入数组的情况）
         if 'tags' in validated_data and isinstance(validated_data['tags'], list):
             validated_data['tags'] = ','.join(validated_data['tags'])
@@ -1185,7 +1276,27 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
             instance.image = image
 
         instance.save()
+
+        # 第 401 批：clear 与 related_pests 同时出现时以 clear 为准（contract 约定）；
+        # 只传其中一个时按各自语义处理，两者都不传则保持原关联不动。
+        if clear_related_pests:
+            instance.related_pests.clear()
+        elif related_pests is not None:
+            instance.related_pests.set(related_pests)
         return instance
+
+
+class NewsRelatedResponseSerializer(serializers.Serializer):
+    """
+    第 401 批：`GET /api/news/{id}/related/` 的响应外壳。
+
+    为什么要单独定义：该接口返回 `{'results': [...], 'count': N}` 而不是分页结构，
+    drf-spectacular 若按默认 serializer_class 推导会把响应写成单个 News，
+    与真实结构不符；这里显式声明，openapi 里的类型才准确。
+    """
+
+    results = NewsSerializer(many=True)
+    count = serializers.IntegerField()
 
 
 class PostListSerializer(serializers.ModelSerializer):
