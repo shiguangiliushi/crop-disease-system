@@ -15,6 +15,24 @@
       <div class="card-header">
         <h1 class="pest-name">{{ localizedField(pest, 'name') || t('pestDetail.title') }}</h1>
         <div class="header-actions">
+          <!-- 第 402 批：病害订阅开关（仅登录用户可见；点击即订阅/取消，不跳转） -->
+          <button
+            v-if="isLoggedIn && pest"
+            type="button"
+            class="btn-subscribe"
+            :class="{ 'is-subscribed': pestSubscribed }"
+            :disabled="pestSubscriptionLoading || pestSubscriptionChecking"
+            :aria-pressed="pestSubscribed"
+            :title="pestSubscribed ? t('pestDetail.unsubscribePest') : t('pestDetail.subscribePest')"
+            @click="togglePestSubscription"
+          >
+            <i
+              :class="pestSubscriptionLoading || pestSubscriptionChecking
+                ? 'fas fa-spinner fa-spin'
+                : pestSubscribed ? 'fas fa-bell' : 'fas fa-bell-plus'"
+            ></i>
+            {{ pestSubscribed ? t('pestDetail.subscribedPest') : t('pestDetail.subscribePest') }}
+          </button>
           <button v-if="canManage" @click="editDialogVisible = true" class="btn-edit">
             <i class="bi bi-pencil-square"></i> {{ t('pestDetail.editPest') }}
           </button>
@@ -83,17 +101,24 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ElMessage } from 'element-plus';  // 第 402 批：订阅成功/失败提示
 import api from '@/api'; // Using the api object instead of apiClient
 import { useAuthStore } from '@/stores/auth';
 import PestEditDialog from '@/components/PestEditDialog.vue';
-import { toAbsoluteMediaUrl } from '@/api/http';
+import { toAbsoluteMediaUrl, formatApiError } from '@/api/http';
 import { useI18n } from '@/i18n';  // 第 60 批：多语言
 import { useLocalized } from '@/utils/localized';  // 第 69 批：内容数据多语言
 // 第 401 批：病害详情页底部的「相关行业动态」（按 pest=<id> 过滤）
 import { fetchNewsList, getNewsCategoryLabel } from '@/api/news';
 import { stripHtmlText } from '@/utils/newsContent';
+// 第 402 批：病害订阅（状态查询 / 新建 / 取消）—— 接口未上线时按钮按未订阅降级
+import {
+  checkNewsSubscription,
+  createNewsSubscription,
+  deleteNewsSubscription,
+} from '@/api/newsSubscription';
 
 const { t, locale } = useI18n();
 const { localizedField } = useLocalized();
@@ -115,6 +140,81 @@ const canManage = computed(() => {
 
 // 编辑接口需要数字主键
 const pestId = computed(() => pest.value?.id ?? null);
+
+/**
+ * 第 402 批：病害订阅
+ * ------------------------------------------------------------------
+ * 订阅某个病害后，该病害相关的新行业动态会以 type='news' 的站内通知投递。
+ * 与列表页的分类订阅同一套约定：
+ *   · 仅登录用户可见（`authStore.user` 与 canManage 同源，不另造登录判断）；
+ *   · 状态以 check 接口为准，并用**序号**防止慢响应覆盖新目标；
+ *   · 未登录 / 接口未上线（404）/ 网络失败 → 静默降级为「未订阅」，不阻断词条浏览；
+ *   · 点击失败只弹提示，不动词条内容。
+ */
+const isLoggedIn = computed(() => Boolean(authStore.user));
+const pestSubscribed = ref(false);
+const pestSubscriptionId = ref(null);
+const pestSubscriptionLoading = ref(false);
+const pestSubscriptionChecking = ref(false);
+let pestSubscriptionSeq = 0;
+
+const resetPestSubscription = () => {
+  pestSubscribed.value = false;
+  pestSubscriptionId.value = null;
+};
+
+const refreshPestSubscription = async () => {
+  const id = pest.value?.id;
+  const seq = ++pestSubscriptionSeq;
+
+  if (!isLoggedIn.value || !id) {
+    resetPestSubscription();
+    pestSubscriptionChecking.value = false;
+    return;
+  }
+
+  resetPestSubscription();
+  pestSubscriptionChecking.value = true;
+  try {
+    const data = await checkNewsSubscription({ target_type: 'pest', pest: id });
+    if (seq !== pestSubscriptionSeq) return;
+    pestSubscribed.value = data.subscribed;
+    pestSubscriptionId.value = data.id;
+  } catch (error) {
+    if (seq !== pestSubscriptionSeq) return;
+    console.warn('获取病害订阅状态失败（按未订阅处理）:', error);
+    resetPestSubscription();
+  } finally {
+    if (seq === pestSubscriptionSeq) pestSubscriptionChecking.value = false;
+  }
+};
+
+const togglePestSubscription = async () => {
+  const id = pest.value?.id;
+  if (!isLoggedIn.value || !id || pestSubscriptionLoading.value) return;
+
+  if (pestSubscribed.value && !pestSubscriptionId.value) {
+    await refreshPestSubscription();
+    return;
+  }
+
+  pestSubscriptionLoading.value = true;
+  try {
+    if (pestSubscribed.value) {
+      await deleteNewsSubscription(pestSubscriptionId.value);
+      ElMessage.success(t('pestDetail.unsubscribePestOk'));
+    } else {
+      await createNewsSubscription({ target_type: 'pest', pest: id });
+      ElMessage.success(t('pestDetail.subscribePestOk'));
+    }
+    await refreshPestSubscription();
+  } catch (error) {
+    console.error('切换病害订阅失败:', error);
+    ElMessage.error(formatApiError(error, t('pestDetail.subscribeFailed')));
+  } finally {
+    pestSubscriptionLoading.value = false;
+  }
+};
 
 /**
  * 第 401 批：底部「相关行业动态」
@@ -213,6 +313,8 @@ const loadPest = async () => {
     pest.value = response.data;
     // 第 401 批：病害加载成功后按它的 id 拉相关行业动态（内部静默兜底）
     loadRelatedNews();
+    // 第 402 批：核对当前病害的订阅状态（未登录/接口未上线时静默降级）
+    refreshPestSubscription();
   } catch (err) {
     console.error('Failed to fetch pest details:', err);
     if (err.response) {
@@ -227,6 +329,11 @@ const loadPest = async () => {
 
 onMounted(loadPest);
 
+// 第 402 批：登录态变化时刷新「订阅该病害动态」按钮（与列表页分类订阅同一口径）
+watch(() => Boolean(authStore.user), () => {
+  refreshPestSubscription();
+});
+
 /** 编辑保存后：直接使用接口返回的最新数据，若英文标识符变更则同步地址栏 */
 const handleSaved = (updated) => {
   if (!updated || typeof updated !== 'object') {
@@ -237,6 +344,8 @@ const handleSaved = (updated) => {
   pest.value = updated;
   // 第 401 批：词条被编辑后作物/名称可能变了，相关动态按当前 id 再拉一次
   loadRelatedNews();
+  // 第 402 批：病害 id 若变化，订阅状态跟着重查
+  refreshPestSubscription();
 
   const newIdentifier = updated.english_identifier;
   if (newIdentifier && newIdentifier !== route.params.english_identifier) {
@@ -515,6 +624,49 @@ const goBack = () => {
 .btn-edit:hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 24px rgba(31, 99, 67, 0.28);
+}
+
+/* 第 402 批：订阅该病害动态（描边胶囊；已订阅转实心品牌色） */
+.btn-subscribe {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 9px 20px;
+  border: 1px solid var(--brand-400);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--brand-700);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--dur) var(--ease);
+}
+
+.btn-subscribe i {
+  font-size: 12px;
+}
+
+.btn-subscribe:hover {
+  border-color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+.btn-subscribe.is-subscribed {
+  border-color: var(--brand-600);
+  background: var(--brand-600);
+  color: #fff;
+}
+
+.btn-subscribe.is-subscribed:hover {
+  border-color: var(--brand-700);
+  background: var(--brand-700);
+}
+
+.btn-subscribe:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
 }
 
 .pest-content {

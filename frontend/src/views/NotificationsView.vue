@@ -145,8 +145,42 @@
         </div>
       </section>
 
-      <!-- 侧栏：公告 + 管理员发布 -->
+      <!-- 侧栏：我的订阅 + 公告 + 管理员发布 -->
       <aside class="notify-side">
+        <!-- 第 402 批：我的订阅（分类 / 病害）—— 只在这里管理；新建入口在行业动态列表与病害详情页 -->
+        <section class="panel-card">
+          <div class="panel-head">
+            <span class="panel-icon"><i class="fas fa-bell"></i></span>
+            <h3 class="panel-title">{{ t('notify.mySubscriptions') }}</h3>
+            <span class="panel-count">{{ t('notify.subscriptionCount', { count: subscriptions.length }) }}</span>
+          </div>
+          <div class="panel-body">
+            <el-skeleton v-if="subscriptionsLoading" :rows="2" animated />
+            <ul v-else-if="subscriptions.length" class="subscription-list">
+              <li v-for="item in subscriptions" :key="item.id" class="subscription-item">
+                <span class="subscription-tag">
+                  {{ item.target_type === 'pest' ? t('notify.subscriptionPestTag') : t('notify.subscriptionCategoryTag') }}
+                </span>
+                <span class="subscription-name">{{ subscriptionLabel(item) }}</span>
+                <el-button
+                  size="small"
+                  text
+                  type="danger"
+                  :loading="removingSubscriptionId === item.id"
+                  @click="removeSubscription(item)"
+                >
+                  {{ t('notify.removeSubscription') }}
+                </el-button>
+              </li>
+            </ul>
+            <div v-else class="subscription-empty">
+              <i class="fas fa-bell-slash"></i>
+              <p>{{ t('notify.subscriptionEmpty') }}</p>
+              <p class="subscription-hint">{{ t('notify.subscriptionHint') }}</p>
+            </div>
+          </div>
+        </section>
+
         <section class="panel-card">
           <div class="panel-head">
             <span class="panel-icon"><i class="fas fa-bullhorn"></i></span>
@@ -277,6 +311,8 @@ const TYPE_KEYS = {
   message: 'notify.typeMessage',
   announcement: 'notify.typeAnnouncement',
   system: 'notify.typeSystem',
+  // 第 402 批：行业动态订阅推送（type='news'，标题「行业动态：…」，url=/news/:id）
+  news: 'notify.typeNews',
 };
 import {
   createAnnouncement,
@@ -289,6 +325,9 @@ import {
   markNotificationRead,
   updateAnnouncement,
 } from '@/api/notify';
+// 第 402 批：我的订阅（分类 / 病害）+ 分类名的中英文映射
+import { deleteNewsSubscription, fetchNewsSubscriptions } from '@/api/newsSubscription';
+import { getNewsCategoryLabel } from '@/api/news';
 
 const ICONS = {
   reply: 'fas fa-comment-dots',
@@ -299,6 +338,8 @@ const ICONS = {
   message: 'fas fa-envelope',  // 第 42 批：私信
   announcement: 'fas fa-bullhorn',
   system: 'fas fa-circle-info',
+  // 第 402 批：订阅的行业动态推送
+  news: 'fas fa-newspaper',
 };
 
 export default {
@@ -325,6 +366,61 @@ export default {
     const editingAnnouncement = ref(null);
     const savingAnnouncement = ref(false);
     const announcementForm = reactive({ title: '', content: '', is_active: true, is_pinned: false });
+
+    // ---------- 第 402 批：我的订阅 ----------
+    // 只做「查看 + 移除」：新建订阅的入口在行业动态列表（分类）与病害详情页（病害），
+    // 这里不重复造入口，避免两处交互口径不一致。
+    const subscriptions = ref([]);
+    const subscriptionsLoading = ref(false);
+    const removingSubscriptionId = ref(null);
+
+    /** 一条订阅的展示名：分类 → 当前语言的分类名；病害 → 「作物 - 病害名」 */
+    const subscriptionLabel = (item) => {
+      if (!item) return '';
+      if (item.target_type === 'pest') {
+        const detail = item.pest_detail || {};
+        const crop = localizedField(detail, 'crop_type');
+        const name = localizedField(detail, 'name');
+        const label = [crop, name].filter(Boolean).join(' - ');
+        return label || detail.english_identifier || (item.pest ? `#${item.pest}` : '');
+      }
+      const translated = getNewsCategoryLabel(item.category, t);
+      return translated || item.category_label || '';
+    };
+
+    /**
+     * 拉取我的订阅（一次 100 条，足够覆盖每人 50 条上限）。
+     * 接口未上线 / 网络失败都静默按空列表处理：订阅管理是辅助卡片，
+     * 不能因为后端还没部署就把整个通知中心变成错误页。
+     */
+    const loadSubscriptions = async () => {
+      subscriptionsLoading.value = true;
+      try {
+        const data = await fetchNewsSubscriptions({ page_size: 100 });
+        subscriptions.value = data?.results || [];
+      } catch (error) {
+        console.warn('加载我的订阅失败（按空列表处理）:', error);
+        subscriptions.value = [];
+      } finally {
+        subscriptionsLoading.value = false;
+      }
+    };
+
+    /** 移除一条订阅：服务端删除成功后再从本地列表移除（面板上的计数随之刷新） */
+    const removeSubscription = async (item) => {
+      if (!item?.id || removingSubscriptionId.value) return;
+      removingSubscriptionId.value = item.id;
+      try {
+        await deleteNewsSubscription(item.id);
+        subscriptions.value = subscriptions.value.filter((row) => row.id !== item.id);
+        ElMessage.success(t('notify.removeSubscriptionOk'));
+      } catch (error) {
+        console.error('移除订阅失败:', error);
+        ElMessage.error(error?.response?.data?.detail || t('notify.removeSubscriptionFailed'));
+      } finally {
+        removingSubscriptionId.value = null;
+      }
+    };
 
     const isAdmin = computed(() => Boolean(authStore.isAdmin));
 
@@ -490,6 +586,8 @@ export default {
     onMounted(() => {
       load();
       loadAnnouncements();
+      // 第 402 批：我的订阅（失败静默，不影响通知列表）
+      loadSubscriptions();
     });
 
     return {
@@ -509,6 +607,12 @@ export default {
       editingAnnouncement,
       savingAnnouncement,
       announcementForm,
+      // 第 402 批：我的订阅
+      subscriptions,
+      subscriptionsLoading,
+      removingSubscriptionId,
+      subscriptionLabel,
+      removeSubscription,
       isAdmin,
       isMine,
       replyCount,
@@ -615,6 +719,8 @@ export default {
 .notify-icon.is-favorite { color: #b8761b; background: #fdf3e3; }
 .notify-icon.is-announcement { color: #fff; background: linear-gradient(135deg, #3d9a68, #1f6343); }
 .notify-icon.is-comment_like { color: #cf4436; background: #fdecea; }
+/* 第 402 批：订阅的行业动态推送（type='news'） */
+.notify-icon.is-news { color: #1f7a8c; background: #e6f4f7; }
 
 .notify-body {
   flex: 1;
@@ -687,6 +793,73 @@ export default {
   display: flex;
   justify-content: center;
   margin-top: 16px;
+}
+
+/* 第 402 批：我的订阅（分类 / 病害） */
+.subscription-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subscription-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--brand-100);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.subscription-tag {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-100);
+  color: var(--brand-700);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.subscription-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subscription-empty {
+  padding: 18px 8px;
+  text-align: center;
+  color: var(--ink-400);
+}
+
+.subscription-empty i {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 22px;
+}
+
+.subscription-empty p {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.subscription-hint {
+  margin: 0;
+  color: var(--ink-400);
+  font-size: 11.5px;
+  line-height: 1.7;
 }
 
 /* 公告 */

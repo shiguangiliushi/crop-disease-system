@@ -31,6 +31,26 @@
           </el-radio-button>
         </el-radio-group>
 
+        <!-- 第 402 批：分类订阅开关（仅登录用户、且选中具体分类时出现）。
+             它是独立 button，不放进 el-radio-group，所以点击不会触发筛选/翻页。 -->
+        <button
+          v-if="isLoggedIn && activeCategory"
+          type="button"
+          class="subscribe-btn"
+          :class="{ 'is-subscribed': categorySubscribed }"
+          :disabled="categorySubscriptionLoading || categorySubscriptionChecking"
+          :aria-pressed="categorySubscribed"
+          :title="categorySubscribed ? t('news.unsubscribeCategory') : t('news.subscribeCategory')"
+          @click="toggleCategorySubscription"
+        >
+          <i
+            :class="categorySubscriptionLoading || categorySubscriptionChecking
+              ? 'fas fa-spinner fa-spin'
+              : categorySubscribed ? 'fas fa-bell' : 'fas fa-bell-plus'"
+          ></i>
+          {{ categorySubscribed ? t('news.subscribedCategory') : t('news.subscribeCategory') }}
+        </button>
+
         <el-select
           v-model="publishStatus"
           :placeholder="t('news.publishStatus')"
@@ -683,12 +703,18 @@ import { Picture, Delete, Edit } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
 import axios from 'axios';
-import { toAbsoluteMediaUrl } from '@/api/http';
+import { toAbsoluteMediaUrl, formatApiError } from '@/api/http';
 import api from '@/api';
 // 与管理端「新闻管理」页共用同一套提交逻辑（字段白名单 + multipart 组装 + 错误文案）
 import { createNews, updateNews, formatNewsError, fetchNewsTags } from '@/api/news';
 // 第 401 批：管理员编辑弹窗的「关联病害」下拉选项（病害百科词条）
 import { fetchPestList } from '@/api/pest';
+// 第 402 批：分类订阅（状态查询 / 新建 / 取消）—— 接口未上线时按钮按未订阅降级
+import {
+  checkNewsSubscription,
+  createNewsSubscription,
+  deleteNewsSubscription,
+} from '@/api/newsSubscription';
 // 身份读写统一走适配器（sessionStorage 优先），避免"本标签页是 A、请求却带 B 的 token"
 import { getToken, clearIdentity } from '@/utils/authStorage';
 // 第 31 批：页面底部"怎么用好行业动态"补充信息区
@@ -809,6 +835,88 @@ const authStore = useAuthStore();
 
 // 检查是否是管理员
 const isAdmin = computed(() => authStore.isAdmin);
+
+/**
+ * 第 402 批：分类订阅
+ * ------------------------------------------------------------------
+ * 读者选中某个分类时，可以订阅"该分类有新动态就通知我"。几个关键约定：
+ *   · 只对**登录用户**展示（`authStore.user` 与页面 isAdmin 同源，不另造一套登录判断）；
+ *   · 「全部分类」不是一个可订阅目标 → activeCategory 为空时隐藏按钮；
+ *   · 订阅状态由 check 接口确认（不能只看本地，别的标签页/设备可能已订/已退）；
+ *   · **序号防竞态**：快速切分类时两个 check 并发，先发的慢响应可能后返回，
+ *     不拦的话会把 A 分类的「已订阅」显示到 B 分类上；
+ *   · 订阅接口失败只弹一条错误，不影响列表加载（辅助功能不能拖垮主流程）。
+ */
+const isLoggedIn = computed(() => Boolean(authStore.user));
+const categorySubscribed = ref(false);
+const categorySubscriptionId = ref(null);
+const categorySubscriptionLoading = ref(false);
+const categorySubscriptionChecking = ref(false);
+let categorySubscriptionSeq = 0;
+
+const resetCategorySubscription = () => {
+  categorySubscribed.value = false;
+  categorySubscriptionId.value = null;
+};
+
+const refreshCategorySubscription = async () => {
+  const category = activeCategory.value;
+  const seq = ++categorySubscriptionSeq;
+
+  if (!isLoggedIn.value || !category) {
+    resetCategorySubscription();
+    categorySubscriptionChecking.value = false;
+    return;
+  }
+
+  // 切到新分类先把旧状态清掉：避免上一个分类的「已订阅」闪现在这个分类上
+  resetCategorySubscription();
+  categorySubscriptionChecking.value = true;
+  try {
+    const data = await checkNewsSubscription({ target_type: 'category', category });
+    if (seq !== categorySubscriptionSeq) return;
+    categorySubscribed.value = data.subscribed;
+    categorySubscriptionId.value = data.id;
+  } catch (error) {
+    if (seq !== categorySubscriptionSeq) return;
+    // 接口未上线（404）/ 未登录（401）/ 网络失败：静默降级为「未订阅」，
+    // 按钮仍可点（用户点的时候会看到明确的失败提示）
+    console.warn('获取分类订阅状态失败（按未订阅处理）:', error);
+    resetCategorySubscription();
+  } finally {
+    if (seq === categorySubscriptionSeq) categorySubscriptionChecking.value = false;
+  }
+};
+
+const toggleCategorySubscription = async () => {
+  const category = activeCategory.value;
+  if (!isLoggedIn.value || !category || categorySubscriptionLoading.value) return;
+
+  // 状态说"已订阅"却没有 id：数据不完整，先重新核对，避免误发一次重复订阅（后端会 400）
+  if (categorySubscribed.value && !categorySubscriptionId.value) {
+    await refreshCategorySubscription();
+    return;
+  }
+
+  categorySubscriptionLoading.value = true;
+  try {
+    if (categorySubscribed.value) {
+      await deleteNewsSubscription(categorySubscriptionId.value);
+      ElMessage.success(t('news.unsubscribeCategoryOk'));
+    } else {
+      await createNewsSubscription({ target_type: 'category', category });
+      ElMessage.success(t('news.subscribeCategoryOk'));
+    }
+    // 以接口重新核对结果为准（后端可能有上限/去重规则，本地取反不一定对）
+    await refreshCategorySubscription();
+  } catch (error) {
+    console.error('切换分类订阅失败:', error);
+    // 重复订阅（400）的中文原因原样显示；英文技术文案由 formatApiError 回落到友好提示
+    ElMessage.error(formatApiError(error, t('news.subscribeFailed')));
+  } finally {
+    categorySubscriptionLoading.value = false;
+  }
+};
 
 /**
  * 第 401 批：关联病害下拉的选项
@@ -1553,6 +1661,8 @@ onMounted(() => {
   fetchNews();
   // 第 399 批：热门标签条与列表并行加载（loadHotTags 内部已兜底，失败不影响列表）
   loadHotTags();
+  // 第 402 批：进入页面时核对当前分类的订阅状态（"全部分类"时内部直接跳过）
+  refreshCategorySubscription();
 });
 
 // 监听路由变化：从任何"新闻相关"的深链回到本页列表时，把弹窗收起来并刷新列表
@@ -1562,6 +1672,16 @@ watch(() => route.name, (newVal) => {
     showAddDialog.value = false;
     fetchNews();
   }
+});
+
+// 第 402 批：切换分类 / 登录态变化时刷新「订阅该分类」按钮的状态。
+// 放在 watch 而不是 handleFilterChange 里：分类除了点按钮，还可能被其它逻辑改动，
+// watch 是唯一入口；且登录态变化（例如另一个标签页登录/退出后本页状态同步）也走这里。
+watch(activeCategory, () => {
+  refreshCategorySubscription();
+});
+watch(() => Boolean(authStore.user), () => {
+  refreshCategorySubscription();
 });
 
 </script>
@@ -2869,5 +2989,61 @@ watch(() => route.name, (newVal) => {
   background: var(--surface-muted);
   color: var(--ink-500);
   cursor: default;
+}
+
+/* ================= 第 402 批：分类订阅按钮 ================= */
+.subscribe-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px dashed var(--brand-300);
+  border-radius: var(--radius-pill);
+  background: var(--brand-50);
+  color: var(--brand-700);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease),
+    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.subscribe-btn:hover {
+  border-style: solid;
+  border-color: var(--brand-400);
+  background: var(--brand-100);
+}
+
+.subscribe-btn i {
+  font-size: 12px;
+}
+
+/* 已订阅：实心品牌色，和「可订阅」的虚线胶囊形成明确区分 */
+.subscribe-btn.is-subscribed {
+  border-style: solid;
+  border-color: var(--brand-600);
+  background: var(--brand-600);
+  color: #fff;
+}
+
+.subscribe-btn.is-subscribed:hover {
+  border-color: var(--brand-700);
+  background: var(--brand-700);
+}
+
+.subscribe-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+}
+
+@media (max-width: 768px) {
+  /* 375px：筛选栏元素都允许换行；按钮文字不换行但自身可占一整行 */
+  .subscribe-btn {
+    flex: 0 1 auto;
+  }
 }
 </style>

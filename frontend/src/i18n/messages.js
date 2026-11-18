@@ -2194,6 +2194,13 @@ export const zhCN = {
     relatedPestsPlaceholder: '选择这条新闻提到的病害（可多选）',
     relatedPestsHint: '选中的病害会显示在新闻卡片上，读者可点进病害详情',
     pestsMore: '另有 {count} 个关联病害',
+    // 第 402 批：分类订阅（订阅后该分类有新动态会收到站内通知）
+    subscribeCategory: '订阅该分类',
+    unsubscribeCategory: '取消订阅该分类',
+    subscribedCategory: '已订阅该分类',
+    subscribeCategoryOk: '已订阅该分类，有新动态会通知你',
+    unsubscribeCategoryOk: '已取消订阅该分类',
+    subscribeFailed: '订阅操作失败，请稍后重试',
   },
   preventPage: {
     backHome: '返回首页',
@@ -2375,6 +2382,13 @@ export const zhCN = {
     // 第 401 批：底部「相关行业动态」
     relatedNews: '相关行业动态',
     viewAllNews: '查看全部动态',
+    // 第 402 批：病害订阅（订阅后该病害相关的新动态会收到站内通知）
+    subscribePest: '订阅该病害动态',
+    unsubscribePest: '取消订阅该病害动态',
+    subscribedPest: '已订阅该病害',
+    subscribePestOk: '已订阅该病害动态',
+    unsubscribePestOk: '已取消该病害动态订阅',
+    subscribeFailed: '订阅操作失败，请稍后重试',
   },
   // 第 75 批：应用内拍照（getUserMedia 实时取景 + 快门）
   camera: {
@@ -2826,6 +2840,18 @@ export const zhCN = {
     announcementUpdated: '公告已更新',
     announcementPublished: '公告已发布，已给全体用户发送通知',
     deleteConfirm: '确定删除公告「{title}」吗？',
+    // 第 402 批：我的订阅（分类 / 病害；新建入口在行业动态与病害详情页）
+    mySubscriptions: '我的订阅',
+    subscriptionCount: '共 {count} 条',
+    subscriptionEmpty: '还没有订阅任何分类或病害',
+    subscriptionHint: '在行业动态里选中一个分类、或在病害详情页点「订阅」，订阅会显示在这里。',
+    removeSubscription: '移除',
+    removeSubscriptionOk: '已移除该订阅',
+    removeSubscriptionFailed: '移除订阅失败，请稍后重试',
+    subscriptionCategoryTag: '分类',
+    subscriptionPestTag: '病害',
+    // 第 402 批：订阅推送的通知类型（type='news'）
+    typeNews: '行业动态推送',
   },
   status: {
     draft: '草稿',
@@ -5451,6 +5477,13 @@ export const en = {
     relatedPestsPlaceholder: 'Select diseases mentioned in this story (multiple)',
     relatedPestsHint: 'Selected diseases appear as chips on the news card and link to the disease wiki',
     pestsMore: '{count} more related diseases',
+    // Batch 402: category subscription (new stories in the category arrive as notifications)
+    subscribeCategory: 'Subscribe to this category',
+    unsubscribeCategory: 'Unsubscribe from this category',
+    subscribedCategory: 'Subscribed to this category',
+    subscribeCategoryOk: 'Subscribed — you will be notified about new stories in this category',
+    unsubscribeCategoryOk: 'Unsubscribed from this category',
+    subscribeFailed: 'Could not update the subscription, please try again later',
   },
   preventPage: {
     backHome: 'Back to home',
@@ -5629,6 +5662,13 @@ export const en = {
     // Batch 401: related industry news at the bottom
     relatedNews: 'Related industry news',
     viewAllNews: 'View all news',
+    // Batch 402: disease subscription (new related stories arrive as notifications)
+    subscribePest: 'Subscribe to updates',
+    unsubscribePest: 'Unsubscribe from updates',
+    subscribedPest: 'Subscribed to updates',
+    subscribePestOk: 'Subscribed to updates for this disease',
+    unsubscribePestOk: 'Unsubscribed from updates for this disease',
+    subscribeFailed: 'Could not update the subscription, please try again later',
   },
   // Batch 75: in-app camera (getUserMedia live preview + shutter)
   camera: {
@@ -6067,6 +6107,18 @@ export const en = {
     announcementUpdated: 'Announcement updated',
     announcementPublished: 'Announcement published and sent to all users',
     deleteConfirm: 'Delete the announcement “{title}”?',
+    // Batch 402: my subscriptions (categories / diseases; created from the news list and disease pages)
+    mySubscriptions: 'My subscriptions',
+    subscriptionCount: '{count} total',
+    subscriptionEmpty: 'You have not subscribed to any category or disease yet',
+    subscriptionHint: 'Pick a category in Industry News, or use Subscribe on a disease page — your subscriptions show up here.',
+    removeSubscription: 'Remove',
+    removeSubscriptionOk: 'Subscription removed',
+    removeSubscriptionFailed: 'Could not remove the subscription, please try again later',
+    subscriptionCategoryTag: 'Category',
+    subscriptionPestTag: 'Disease',
+    // Batch 402: notification type for subscription pushes (type='news')
+    typeNews: 'Industry news alert',
   },
   status: {
     draft: 'Draft',
