@@ -114,6 +114,10 @@
               <span class="title-text">{{ localizedField(row, 'title') }}</span>
               <div class="title-meta">
                 <el-tag size="small" effect="plain" type="success">{{ getNewsCategoryLabel(row.category, t) }}</el-tag>
+                <!-- 第 399 批：管理员一眼能认出头条条目（读者端头条区只会取前 3 条） -->
+                <el-tag v-if="row.is_featured" size="small" effect="light" type="warning">
+                  <i class="fas fa-star"></i> {{ t('news.featuredBadge') }}
+                </el-tag>
                 <span v-if="row.source" class="source-text">
                   {{ t('newsMgmt.sourceLabel', { source: localizedField(row, 'source') }) }}
                 </span>
@@ -175,10 +179,12 @@
       </div>
     </el-card>
 
-    <!-- 新增 / 编辑（第 33 批：与「行业动态」页的编辑弹窗统一成深绿头条 + 分段表单） -->
+    <!-- 新增 / 编辑（第 33 批：与「行业动态」页的编辑弹窗统一成深绿头条 + 分段表单）
+         第 399 批：width 改用 CSS min()（与行业动态页弹窗一致）—— 固定 720px 在
+         375px 手机上右侧溢出、弹窗内容被裁掉；min() 让桌面保持 720px、窄屏收成屏宽 - 24px。 -->
     <el-dialog
       v-model="dialogVisible"
-      width="720px"
+      width="min(720px, calc(100vw - 24px))"
       top="5vh"
       :close-on-click-modal="false"
       destroy-on-close
@@ -258,6 +264,19 @@
                 <RichTextEditor v-model="form.content" />
               </div>
             </el-form-item>
+
+            <!-- 第 399 批 · P0-3：列表摘要。留空时读者端回退正文截断；限 200 字与后端一致 -->
+            <el-form-item :label="t('news.fieldSummary')">
+              <el-input
+                v-model="form.summary"
+                type="textarea"
+                :rows="2"
+                resize="none"
+                maxlength="200"
+                show-word-limit
+                :placeholder="t('news.fieldSummaryPlaceholder')"
+              />
+            </el-form-item>
           </section>
 
           <!-- 封面与状态 -->
@@ -305,6 +324,15 @@
               <p class="field-hint">
                 <i class="fas fa-circle-info"></i>
                 {{ t('newsMgmt.draftHint') }}
+              </p>
+            </el-form-item>
+
+            <!-- 第 399 批 · P0-1：设为精选后读者端列表顶部头条区优先展示（至多 3 条） -->
+            <el-form-item :label="t('field.featured')">
+              <el-switch v-model="form.is_featured" />
+              <p class="field-hint">
+                <i class="fas fa-star"></i>
+                {{ t('news.featuredHint') }}
               </p>
             </el-form-item>
 
@@ -498,6 +526,10 @@ const form = reactive({
   tags: [],
   is_published: true,
   published_at: null,  // 第 38 批：定时发布（留空 = 立即发布）
+  // 第 399 批：摘要 / 精选。published_at 本来就在 payload 里，buildNewsFormData
+  // 补上对应 append 后，定时发布（含清空）才真正生效。
+  summary: '',
+  is_featured: false,
 });
 
 const imageFile = ref(null);
@@ -536,6 +568,8 @@ const resetForm = () => {
     tags: [],
     is_published: true,
     published_at: null,
+    summary: '',
+    is_featured: false,
   });
   imageFile.value = null;
   coverPreview.value = '';
@@ -561,6 +595,9 @@ const handleEdit = (row) => {
     tags: row.tags ? String(row.tags).split(',').filter(Boolean) : [],
     is_published: !!row.is_published,
     published_at: row.published_at || null,
+    // 第 399 批：列表行（后端序列化器）带 summary / is_featured；老数据给安全默认值
+    summary: row.summary || '',
+    is_featured: !!row.is_featured,
   });
   coverPreview.value = toAbsoluteMediaUrl(row.image_url || row.image);
   dialogVisible.value = true;
@@ -616,6 +653,10 @@ const submitForm = async () => {
       tags: form.tags,
       is_published: form.is_published,
       published_at: form.published_at || null,  // 第 38 批：定时发布
+      // 第 399 批：摘要（空串 = 清空）与精选开关；buildNewsFormData 按后端
+      // multipart 约定打成 'true'/'false'，published_at=null 会打成空串（清空定时）
+      summary: form.summary || '',
+      is_featured: !!form.is_featured,
       clear_image: clearImage.value,
     };
 

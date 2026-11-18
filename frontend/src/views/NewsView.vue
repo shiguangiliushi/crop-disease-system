@@ -20,7 +20,8 @@
       </div>
     </div>
 
-    <!-- 分类筛选 -->
+    <!-- 分类 / 排序 / 时间筛选（第 399 批 · P0-2：分类按钮旁补排序与时间范围，
+         热门标签条单独占一行（flex-basis:100%），避免把第一行挤乱） -->
     <div class="filter-container">
       <div class="filter-left">
         <el-radio-group v-model="activeCategory" size="default" @change="handleFilterChange">
@@ -42,14 +43,38 @@
           <el-option :label="t('news.published')" value="published" />
           <el-option :label="t('news.unpublished')" value="unpublished" />
         </el-select>
+
+        <!-- 第 399 批：排序（recent / hot / oldest）与时间范围（all / 7d / 30d）。
+             两个值都会原样进 fetchNews 的 params，任一变化都重置到第 1 页。 -->
+        <el-select
+          v-model="ordering"
+          class="filter-select"
+          :aria-label="t('news.orderingLabel')"
+          @change="handleFilterChange"
+        >
+          <el-option :label="t('news.orderingRecent')" value="recent" />
+          <el-option :label="t('news.orderingHot')" value="hot" />
+          <el-option :label="t('news.orderingOldest')" value="oldest" />
+        </el-select>
+
+        <el-select
+          v-model="dateRange"
+          class="filter-select"
+          :aria-label="t('news.dateRangeLabel')"
+          @change="handleFilterChange"
+        >
+          <el-option :label="t('news.dateRangeAll')" value="all" />
+          <el-option :label="t('news.dateRange7d')" value="7d" />
+          <el-option :label="t('news.dateRange30d')" value="30d" />
+        </el-select>
       </div>
 
       <div class="search-box">
         <el-input
           v-model="searchQuery"
+          class="news-search-input"
           :placeholder="t('news.searchPlaceholder')"
           clearable
-          style="width: 300px"
           @clear="handleSearch"
           @keyup.enter="handleSearch"
         >
@@ -64,6 +89,39 @@
             <el-button @click="handleSearch"><i class="fas fa-search"></i></el-button>
           </template>
         </el-input>
+      </div>
+
+      <!-- 第 399 批：热门标签多选条（标签聚合来自 /news/tags/，前端不硬编码）。
+           后端还没上这个接口时 fetchNewsTags 会失败 → hotTags 保持 []，
+           这里显示「暂无标签」，筛选功能其余部分不受影响。 -->
+      <div class="hot-tags-bar">
+        <span class="hot-tags-label">
+          <i class="fas fa-tags"></i> {{ t('news.hotTagsLabel') }}
+        </span>
+        <div class="hot-tags-list" v-if="hotTags.length">
+          <button
+            v-for="tag in hotTags"
+            :key="tag.name"
+            type="button"
+            class="hot-tag"
+            :class="{ 'is-active': selectedTags.includes(tag.name) }"
+            :aria-pressed="selectedTags.includes(tag.name)"
+            @click="toggleTag(tag.name)"
+          >
+            {{ tag.name }}
+            <span class="hot-tag-count">{{ tag.count }}</span>
+          </button>
+        </div>
+        <span v-else class="hot-tags-empty">{{ t('news.noTags') }}</span>
+        <el-button
+          v-if="selectedTags.length"
+          text
+          size="small"
+          class="clear-tags-btn"
+          @click="clearTags"
+        >
+          <i class="fas fa-xmark"></i> {{ t('news.clearTags') }}
+        </el-button>
       </div>
     </div>
 
@@ -92,6 +150,71 @@
       </div>
       <!-- News List -->
       <div class="news-list">
+        <!-- 第 399 批 · P0-1：头条精选区。只在第 1 页、且拿到 featured 段时出现；
+             后端已把这几条从 results/count 里剔除，所以下方网格不会重复展示。
+             老后端没有 featured 字段 → featuredList 恒为 []，整块不渲染。 -->
+        <section
+          v-if="currentPage === 1 && featuredList.length > 0 && !listLoading"
+          class="featured-section"
+          :aria-label="t('news.featuredTitle')"
+        >
+          <div class="featured-head">
+            <h2><i class="fas fa-star"></i> {{ t('news.featuredTitle') }}</h2>
+            <span class="featured-head-count">{{ featuredList.length }}</span>
+          </div>
+          <div class="featured-grid" :class="{ 'is-single': featuredList.length === 1 }">
+            <article
+              v-for="item in featuredList"
+              :key="item.id"
+              class="featured-card"
+              @click="goToNewsDetail(item.id)"
+            >
+              <div class="featured-cover">
+                <el-image
+                  v-if="item.image_url"
+                  :src="getFullImageUrl(item.image_url)"
+                  fit="cover"
+                  class="featured-cover-img"
+                >
+                  <template #error>
+                    <div class="image-slot">
+                      <i class="fas fa-image"></i>
+                    </div>
+                  </template>
+                </el-image>
+                <div v-else class="no-image">
+                  <el-icon><Picture /></el-icon>
+                  <span>{{ t('news.noImage') }}</span>
+                </div>
+                <div class="news-category" v-if="item.category">
+                  {{ getCategoryLabel(item.category) }}
+                </div>
+                <div class="featured-flag">
+                  <i class="fas fa-star"></i> {{ t('news.featuredBadge') }}
+                </div>
+              </div>
+              <div class="featured-body">
+                <h3 class="featured-title">{{ localizedField(item, 'title') }}</h3>
+                <p class="featured-summary">{{ summaryOf(item) }}</p>
+                <div class="featured-meta">
+                  <span v-if="item.source">
+                    <i class="fas fa-building-columns"></i> {{ localizedField(item, 'source') }}
+                  </span>
+                  <span>
+                    <i class="fas fa-clock"></i> {{ formatDate(item.created_at) }}
+                  </span>
+                  <span v-if="item.views !== undefined && item.views !== null">
+                    <i class="fas fa-eye"></i> {{ t('forum.readsShort', { count: item.views }) }}
+                  </span>
+                </div>
+                <span class="featured-read-more">
+                  {{ t('news.readMore') }} <i class="fas fa-arrow-right"></i>
+                </span>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <div class="news-grid">
           <el-card
             v-for="newsItem in newsList"
@@ -124,9 +247,19 @@
                 <div class="news-category" v-if="newsItem.category">
                   {{ getCategoryLabel(newsItem.category) }}
                 </div>
+                <!-- 第 399 批 · P0-4：封面层的精选标记（分类角标之外） -->
+                <div class="news-featured-flag" v-if="newsItem.is_featured">
+                  <i class="fas fa-star"></i> {{ t('news.featuredBadge') }}
+                </div>
               </div>
               <div class="news-details">
                 <h2 class="news-title">{{ localizedField(newsItem, 'title') }}</h2>
+                <!-- 第 399 批 · P0-3：优先后端摘要（summary），为空再由 summaryOf 回退正文 -->
+                <div class="news-summary">
+                  {{ summaryOf(newsItem) }}
+                </div>
+                <!-- 第 399 批 · P0-4：卡片分三层——封面 / 标题+摘要 / meta + 标签 + 操作区，
+                     meta 从标题下方移到这里，避免小屏时来源/日期/阅读量与标签挤在一起 -->
                 <div class="news-meta">
                   <span class="news-source" v-if="newsItem.source">
                     <i class="fas fa-building-columns"></i> {{ localizedField(newsItem, 'source') }}
@@ -137,9 +270,6 @@
                   <span class="news-views" v-if="newsItem.views !== undefined">
                     <i class="fas fa-eye"></i> {{ t('forum.readsShort', { count: newsItem.views }) }}
                   </span>
-                </div>
-                <div class="news-summary">
-                  {{ summaryOf(newsItem) }}
                 </div>
                 <div class="news-footer">
                   <div class="news-tags">
@@ -161,7 +291,9 @@
                       {{ t('news.unpublished') }}
                     </el-tag>
                   </div>
-                  <div class="news-actions">
+                  <!-- 第 399 批 · P0-4：操作区默认隐藏（hover / focus-within 才出现），
+                       管理员始终可见（.is-admin），触屏与窄屏由样式强制常显 -->
+                  <div class="news-actions" :class="{ 'is-admin': isAdmin }">
                     <el-button
                       v-if="isAdmin"
                       type="text"
@@ -222,10 +354,14 @@
       :items="guideItems"
     />
 
-    <!-- Add/Edit News Dialog（第 33 批：改成"深绿头条 + 分段表单 + 底部操作条"） -->
+    <!-- Add/Edit News Dialog（第 33 批：改成"深绿头条 + 分段表单 + 底部操作条"）
+         第 399 批：width 改用 CSS min() —— 手机（375px）上固定 680px 会让弹窗右侧
+         超出屏幕且关不掉，而 el-dialog 的宽度是内联 style，页面里的 scoped 媒体查询
+         覆盖不到（元素被 teleport 到 body）。min(680px, calc(100vw - 24px)) 在桌面
+         仍是 680px，窄屏自动收成"屏宽 - 24px"。 -->
     <el-dialog
       v-model="showAddDialog"
-      width="680px"
+      width="min(680px, calc(100vw - 24px))"
       top="6vh"
       :close-on-click-modal="false"
       class="form-dialog"
@@ -301,6 +437,19 @@
                 :rows="7"
                 resize="none"
                 :placeholder="t('news.bodyPlaceholder')"
+              />
+            </el-form-item>
+
+            <!-- 第 399 批 · P0-3：摘要替代"正文硬截断"；留空时列表仍回退正文 -->
+            <el-form-item :label="t('news.fieldSummary')">
+              <el-input
+                v-model="newsForm.summary"
+                type="textarea"
+                :rows="2"
+                resize="none"
+                maxlength="200"
+                show-word-limit
+                :placeholder="t('news.fieldSummaryPlaceholder')"
               />
             </el-form-item>
           </section>
@@ -388,6 +537,15 @@
                 {{ t('news.publishHint') }}
               </p>
             </el-form-item>
+
+            <!-- 第 399 批 · P0-1：设为精选后由列表接口放进 featured 段，显示在页面顶部头条区 -->
+            <el-form-item :label="t('field.featured')">
+              <el-switch v-model="newsForm.is_featured" />
+              <p class="field-hint">
+                <i class="fas fa-star"></i>
+                {{ t('news.featuredHint') }}
+              </p>
+            </el-form-item>
           </section>
         </el-form>
       </div>
@@ -422,7 +580,7 @@ import axios from 'axios';
 import { toAbsoluteMediaUrl } from '@/api/http';
 import api from '@/api';
 // 与管理端「新闻管理」页共用同一套提交逻辑（字段白名单 + multipart 组装 + 错误文案）
-import { createNews, updateNews, formatNewsError } from '@/api/news';
+import { createNews, updateNews, formatNewsError, fetchNewsTags } from '@/api/news';
 // 身份读写统一走适配器（sessionStorage 优先），避免"本标签页是 A、请求却带 B 的 token"
 import { getToken, clearIdentity } from '@/utils/authStorage';
 // 第 31 批：页面底部"怎么用好行业动态"补充信息区
@@ -433,11 +591,33 @@ import { useLocalized } from '@/utils/localized';  // 第 72 批：新闻正文�
 const { t } = useI18n();
 const { localizedField } = useLocalized();
 
-// 列表卡片摘要：英文界面下取英文正文（列表接口不返回 summary 字段，
-// 直接截取正文前 160 字，比原来的 100 字更能看出内容）
+/** 第 399 批：去掉富文本标签与常见 HTML 实体，得到可安全截断的纯文本 */
+const stripHtml = (html) =>
+  String(html || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * 列表卡片摘要（第 399 批 · P0-3）
+ * ------------------------------------------------------------------
+ * 优先用后端 `summary`（编辑时人工填写的 1~2 句概括）；没填再回退正文。
+ * 回退正文时**先去掉 HTML 标签再截断**：新闻正文是富文本，直接 substring 会把
+ * `<p>` / `&nbsp;` 截进卡片（旧实现就是这个毛病）。英文界面走 localizedField
+ * 既有的 `_en` 回落规则。只有真的超过 160 字才加省略号，短摘要不会被硬拼出 "..."
+ */
+const SUMMARY_MAX = 160;
 const summaryOf = (item) => {
-  const text = localizedField(item, 'content') || '';
-  return text ? text.substring(0, 160) + '...' : '';
+  if (!item) return '';
+  const provided = String(localizedField(item, 'summary') || '').trim();
+  const text = provided || stripHtml(localizedField(item, 'content'));
+  return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX)}...` : text;
 };
 
 // 第 63 批：底部"怎么用好行业动态"卡片（原来内联在模板里，无法随语言切换）
@@ -491,6 +671,14 @@ const searchQuery = ref('');
 const searchType = ref('title');
 const activeCategory = ref('');
 const publishStatus = ref('');
+// 第 399 批 · P0-2：排序 / 时间范围 / 热门标签多选。任一变化都先回到第 1 页再拉列表。
+const ordering = ref('recent');
+const dateRange = ref('all');
+const selectedTags = ref([]);
+const hotTags = ref([]);
+// 第 399 批 · P0-1：头条段。列表请求带 featured=1 时后端单独返回，
+// 且这几条已从 results/count 里剔除；老后端没有该字段时保持 []。
+const featuredList = ref([]);
 
 // 表单相关
 const showAddDialog = ref(false);
@@ -503,7 +691,11 @@ const newsForm = ref({
   category: '',
   tags: [],
   image: null,
-  is_published: true
+  is_published: true,
+  // 第 399 批：新增字段的后端契约是「缺键不 append」，因此表单里始终显式维护这两个键；
+  // summary 清空时提交空串是有意义的（表示清空摘要 → 列表回退正文）
+  summary: '',
+  is_featured: false
 });
 
 // 表单验证规则（文案走 i18n，第 63 批）
@@ -555,7 +747,9 @@ const resetForm = () => {
     category: '',
     tags: [],
     image: null,
-    is_published: true
+    is_published: true,
+    summary: '',
+    is_featured: false
   };
   editingNews.value = null;
   if (newsFormRef.value) {
@@ -604,6 +798,38 @@ const handleSearch = () => {
 
 // 处理筛选条件变化
 const handleFilterChange = () => {
+  currentPage.value = 1;
+  fetchNews();
+};
+
+/**
+ * 第 399 批 · P0-2：热门标签聚合
+ * 标签集合由后端按真实数据聚合，前端不硬编码。接口还没上线 / 请求失败时
+ * 静默降级为空标签条，列表本身不受影响（不能因为筛选辅助功能挂掉整页）。
+ */
+const loadHotTags = async () => {
+  try {
+    const data = await fetchNewsTags();
+    hotTags.value = data.tags;
+  } catch (error) {
+    console.warn('获取热门标签失败:', error);
+    hotTags.value = [];
+  }
+};
+
+// 第 399 批：点选 / 取消一个热门标签；多标签按 AND 语义交给后端（逗号分隔）
+const toggleTag = (name) => {
+  selectedTags.value = selectedTags.value.includes(name)
+    ? selectedTags.value.filter((tag) => tag !== name)
+    : [...selectedTags.value, name];
+  currentPage.value = 1;
+  fetchNews();
+};
+
+// 第 399 批：一键清除标签筛选
+const clearTags = () => {
+  if (selectedTags.value.length === 0) return;
+  selectedTags.value = [];
   currentPage.value = 1;
   fetchNews();
 };
@@ -667,7 +893,11 @@ const loadNewsDetail = async (id) => {
       image: null, // 重置为null，避免使用缓存的File对象
       image_url: imageUrl, // 确保image_url被正确设置
       image_preview: imageUrl ? getFullImageUrl(imageUrl) : null,  // 添加图片预览URL
-      is_published: data.is_published || false
+      is_published: data.is_published || false,
+      // 第 399 批：后端刚上线这两个字段时，老数据 / 老接口返回里可能没有，
+      // 显式给默认值，表单就不会出现 undefined（el-switch 会当成未开启）
+      summary: data.summary || '',
+      is_featured: !!data.is_featured
     };
 
     // 标记"正在编辑哪条新闻"，否则弹窗标题会显示成「添加新闻」
@@ -715,6 +945,14 @@ const fetchNews = async () => {
       search: searchQuery.value,
       search_type: searchType.value,
       category: activeCategory.value,
+      // 第 399 批 · P0-2：排序 / 时间范围 / 标签（多标签逗号分隔，后端按 AND 处理；
+      // 空数组序列化成空串后会被下面的"移除空参数"删掉，等于不筛选）
+      ordering: ordering.value,
+      date_range: dateRange.value,
+      tags: selectedTags.value.join(','),
+      // 第 399 批 · P0-1：读者列表页固定要头条段；后端会把这 1~3 条从
+      // results 与 count 里剔除，所以下方网格不会重复展示。
+      featured: '1',
       is_published: publishStatus.value === 'published' ? 'true' :
                    publishStatus.value === 'unpublished' ? 'false' : ''
     };
@@ -790,6 +1028,10 @@ const fetchNews = async () => {
       return data;
     }
 
+    // 第 399 批：featured 段和 results 来自同一次请求，必须一起落状态；
+    // 放在请求序号检查之后，旧请求的头条才不会盖掉新筛选的结果。
+    featuredList.value = Array.isArray(data?.featured) ? data.featured : [];
+
     // 处理响应数据
     if (data.results) {
       newsList.value = data.results;
@@ -815,6 +1057,8 @@ const fetchNews = async () => {
 
     newsList.value = [];
     total.value = 0;
+    // 第 399 批：列表拉失败时旧头条也不能留着，否则会出现"列表空、头条区还在"的错位画面
+    featuredList.value = [];
 
     if (error.response) {
       if (error.response.status === 401) {
@@ -871,6 +1115,10 @@ const submitNews = async () => {
       source: newsForm.value.source,
       tags: newsForm.value.tags,
       is_published: newsForm.value.is_published,
+      // 第 399 批：摘要 / 精选。本页表单没有定时发布字段，因此**不**传
+      // published_at —— buildNewsFormData 对缺省的键不 append，不会误清空管理页的定时发布。
+      summary: newsForm.value.summary || '',
+      is_featured: !!newsForm.value.is_featured,
       // 只有"用户确实移除了封面"（没有新文件、也没有预览）时才要求清空，
       // 否则保持原有封面不动
       clear_image: !imageFile && !newsForm.value.image_preview,
@@ -888,6 +1136,8 @@ const submitNews = async () => {
 
     // 刷新新闻列表并等待完成
     await fetchNews();
+    // 第 399 批：新建 / 编辑可能改变标签集合，热门标签条跟着刷新一次
+    loadHotTags();
 
     // 关闭对话框
     showAddDialog.value = false;
@@ -917,6 +1167,8 @@ const confirmDelete = (id) => {
       await api.delete(`news/${id}/`);
       ElMessage.success(t('msg.deleteOk'));
       fetchNews();
+      // 第 399 批：删除可能让某个标签从全站消失（或计数变化），标签条一起刷新
+      loadHotTags();
     } catch (error) {
       console.error('删除失败:', error);
       console.error('错误详情:', {
@@ -1056,6 +1308,8 @@ const goToNewsDetail = (id) => {
 // 初始化
 onMounted(() => {
   fetchNews();
+  // 第 399 批：热门标签条与列表并行加载（loadHotTags 内部已兜底，失败不影响列表）
+  loadHotTags();
 });
 
 // 监听路由变化：从任何"新闻相关"的深链回到本页列表时，把弹窗收起来并刷新列表
@@ -1858,6 +2112,434 @@ watch(() => route.name, (newVal) => {
   .add-news-btn {
     margin-left: 0;
     width: 100%;
+  }
+}
+
+/* ================= 第 399 批：头条精选 / 筛选栏 / 卡片交互（P0-1、P0-2、P0-4） ================= */
+
+/* ---- 筛选栏：排序 / 时间范围 / 热门标签条 ---- */
+.filter-select {
+  width: 128px;
+}
+
+/* 原来搜索框是内联 style="width:300px"，移动端没法用媒体查询覆盖；
+   改由 class 控制，窄屏下 100% */
+.news-search-input {
+  width: 300px;
+}
+
+/* 热门标签条独占第二行（flex-basis:100%），不把分类按钮与搜索框挤成多行 */
+.hot-tags-bar {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.hot-tags-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-500);
+  white-space: nowrap;
+}
+
+.hot-tags-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hot-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--ink-600);
+  font-size: 12.5px;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+.hot-tag:hover {
+  border-color: var(--brand-400);
+  color: var(--brand-700);
+}
+
+.hot-tag.is-active {
+  border-color: var(--brand-600);
+  background: var(--brand-600);
+  color: #fff;
+}
+
+.hot-tag-count {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.hot-tags-empty {
+  font-size: 12.5px;
+  color: var(--ink-400);
+}
+
+.clear-tags-btn {
+  margin-left: auto;
+  color: var(--brand-700);
+}
+
+/* ---- 头条精选区：1 条通栏，2~3 条两列；<=900px 纵向堆叠 ---- */
+.featured-section {
+  margin-bottom: 26px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--gradient-brand-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.featured-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.featured-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--brand-800);
+}
+
+.featured-head h2 i {
+  color: var(--brand-500);
+}
+
+.featured-head-count {
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-600);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.featured-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.featured-grid.is-single {
+  grid-template-columns: 1fr;
+}
+
+/* 只有 1 条头条时卡片通栏、封面列很宽：若仍按"填满卡片高度"拉伸，
+   图会被裁成 2.4:1 的横幅。这里用 16:9 定住图片比例并垂直居中。 */
+.featured-grid.is-single .featured-cover {
+  flex: 0 0 48%;
+  aspect-ratio: 16 / 9;
+  align-self: center;
+}
+
+/* 横向大卡片：左图 16:9 + 右侧标题/摘要/meta */
+.featured-card {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.featured-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+
+.featured-cover {
+  position: relative;
+  flex: 0 0 44%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--ink-50);
+}
+
+.featured-cover-img,
+.featured-cover .el-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.featured-cover-img :deep(img) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.45s var(--ease);
+}
+
+.featured-card:hover .featured-cover-img :deep(img) {
+  transform: scale(1.04);
+}
+
+.featured-cover .news-category {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.featured-flag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(31, 99, 67, 0.92);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.featured-cover .no-image {
+  /* aspect-ratio 算出来的高度对子元素 height:100% 不一定可解析，
+     用绝对定位保证占位图撑满整个封面框并居中 */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.featured-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 16px 18px;
+}
+
+.featured-title {
+  margin: 0 0 8px;
+  font-size: 16.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--ink-800);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.featured-summary {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-500);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.featured-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+.featured-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.featured-read-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand-700);
+}
+
+/* ---- 主卡片：封面精选标记 + 操作区交互（P0-4） ---- */
+.news-featured-flag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(31, 99, 67, 0.92);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* 操作按钮默认隐藏，hover / focus-within 出现；管理员身份始终可见（.is-admin）。
+   用 opacity 而不是 display:none —— 保留占位，悬停时卡片高度不跳动。 */
+.news-actions {
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.news-card:hover .news-actions,
+.news-card:focus-within .news-actions,
+.news-actions.is-admin {
+  opacity: 1;
+  transform: none;
+}
+
+/* 触屏设备没有 hover，操作区必须常显，否则按钮永远点不到 */
+@media (hover: none) {
+  .news-actions {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- 响应式：窄屏不横向溢出 ---- */
+@media (max-width: 900px) {
+  .featured-grid,
+  .featured-grid.is-single {
+    grid-template-columns: 1fr;
+  }
+
+  .featured-card {
+    flex-direction: column;
+  }
+
+  .featured-cover {
+    flex: none;
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .filter-container {
+    align-items: stretch;
+  }
+
+  .filter-left {
+    width: 100%;
+  }
+
+  .filter-select {
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .search-box {
+    width: 100%;
+  }
+
+  .news-search-input {
+    width: 100%;
+  }
+
+  /* 标签条在手机上是横向滚动条：不换行撑高、也不撑破页面
+     ------------------------------------------------------------------
+     第 399 批实测（375px + 9 个真实标签）：只写 width:100% + overflow-x:auto
+     还不够 —— `.hot-tags-bar` 作为 `.filter-container` 的 flex item，默认
+     `min-width:auto`（= 内容最小宽度），9 个 chip 的 nowrap 总宽把它撑到 524px，
+     子元素 width:100% 跟着变成 524，整页出现 187px 横向滚动条。
+     这里给父级补 min-width:0/max-width:100% 让它能真正收缩，子级再 max-width:100%
+     兜底，溢出才会被 `overflow-x:auto` 收进标签条内部而不是整页。 */
+  .hot-tags-bar {
+    align-items: flex-start;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .hot-tags-list {
+    flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .hot-tag {
+    flex: 0 0 auto;
+  }
+
+  .clear-tags-btn {
+    margin-left: 0;
+  }
+
+  /* 375px：total / sizes / jumper 全排开必然横向溢出，这里只留上一页/页码/下一页，
+     并允许换行（上一页 + 多个页码 + 下一页在 375px 仍可能换行） */
+  .pagination {
+    flex-wrap: wrap;
+  }
+
+  .pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 8px;
+  }
+
+  .pagination :deep(.el-pagination__sizes),
+  .pagination :deep(.el-pagination__jump) {
+    display: none;
+  }
+
+  .news-actions {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .featured-section {
+    padding: 14px;
+  }
+
+  .featured-body {
+    padding: 14px;
+  }
+
+  .featured-title {
+    font-size: 15.5px;
   }
 }
 </style>

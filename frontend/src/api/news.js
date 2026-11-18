@@ -23,6 +23,11 @@ const fieldLabels = () => ({
   source: t('field.source'),
   tags: t('field.tags'),
   is_published: t('field.publishState'),
+  // 第 399 批：新增字段也要有显示名，否则后端返回字段级校验错误时
+  // 英文界面会露出 `summary: ...` 这种原始字段名。
+  summary: t('field.summary'),
+  is_featured: t('field.featured'),
+  published_at: t('field.publishedAt'),
   detail: t('field.permission'),
   non_field_errors: t('field.validationFailed'),
 });
@@ -60,21 +65,47 @@ export function getNewsCategoryLabel(value, t) {
 
 /**
  * 查询新闻列表
- * @param {object} params { page, page_size, search, search_type, category }
- * @returns {Promise<{count:number,total_pages:number,results:Array}>}
+ * @param {object} params { page, page_size, search, search_type, category,
+ *                          ordering, date_range, tags, featured }
+ * @returns {Promise<{count:number,total_pages:number,results:Array,featured:Array}>}
  */
 export async function fetchNewsList(params = {}) {
   const response = await http.get('/news/', { params });
   const data = response.data;
 
+  // 第 399 批：读者列表页会传 featured=1，此时后端把 1~3 条头条从 results/count
+  // 里剔除、单独放在 featured 段。老后端（或管理端不传 featured 的请求）没有该字段，
+  // 这里统一归一化成 []，调用方不需要区分后端版本。
+  const featured = Array.isArray(data?.featured) ? data.featured : [];
+
   // 兼容分页与不分页两种返回
   if (Array.isArray(data)) {
-    return { count: data.length, total_pages: 1, results: data };
+    return { count: data.length, total_pages: 1, results: data, featured };
   }
   return {
     count: data?.count ?? 0,
     total_pages: data?.total_pages ?? Math.ceil((data?.count ?? 0) / (params.page_size || 10)),
     results: data?.results ?? [],
+    featured,
+  };
+}
+
+/**
+ * 查询热门标签聚合（第 399 批 · P0-2）
+ * ------------------------------------------------------------------
+ * 后端 `GET /news/tags/` 返回 `{ tags: [{ name, count }], count }`（匿名可访问）。
+ * 老后端还没有这个接口（404），调用方 catch 后按空标签处理即可，页面不会崩。
+ *
+ * @param {object} params { category, limit } 均为可选
+ * @returns {Promise<{tags: Array<{name:string,count:number}>, count:number}>}
+ */
+export async function fetchNewsTags(params = {}) {
+  const response = await http.get('/news/tags/', { params });
+  const data = response.data;
+  const tags = Array.isArray(data?.tags) ? data.tags : [];
+  return {
+    tags,
+    count: typeof data?.count === 'number' ? data.count : tags.length,
   };
 }
 
@@ -84,8 +115,18 @@ export async function fetchNewsDetail(id) {
   return response.data;
 }
 
-/** 组装 multipart 表单数据 */
-function buildFormData(payload = {}, imageFile = null) {
+/**
+ * 组装 multipart 表单数据（第 399 批：由私有 buildFormData 改为导出 buildNewsFormData，
+ * 便于单测直接断言"哪些键被 append"；创建/修改两个接口共用）
+ *
+ * 可选字段（summary / is_featured / published_at）**只在 payload 里存在该键时才追加**：
+ * 两个页面（行业动态弹窗、新闻管理页）各有自己关心的字段，若一律追加空值，
+ * 就会在 A 页面保存时把 B 页面维护的字段清空。
+ *
+ * @param {object} payload 表单字段
+ * @param {File|null} imageFile 新封面图（null 表示不改封面）
+ */
+export function buildNewsFormData(payload = {}, imageFile = null) {
   const formData = new FormData();
 
   formData.append('title', payload.title ?? '');
@@ -96,6 +137,19 @@ function buildFormData(payload = {}, imageFile = null) {
 
   const tags = payload.tags;
   formData.append('tags', Array.isArray(tags) ? tags.join(',') : tags ?? '');
+
+  // 第 399 批：摘要（可空字符串 = 清空摘要）
+  if (Object.prototype.hasOwnProperty.call(payload, 'summary')) {
+    formData.append('summary', payload.summary ?? '');
+  }
+  // 第 399 批：精选标记，后端按 'true'/'false' 解析
+  if (Object.prototype.hasOwnProperty.call(payload, 'is_featured')) {
+    formData.append('is_featured', payload.is_featured ? 'true' : 'false');
+  }
+  // 第 399 批：定时发布时间。传 null/空串表示清空定时发布（后端转 None，立即发布）
+  if (Object.prototype.hasOwnProperty.call(payload, 'published_at')) {
+    formData.append('published_at', payload.published_at || '');
+  }
 
   if (payload.clear_image) {
     formData.append('clear_image', 'true');
@@ -109,7 +163,7 @@ function buildFormData(payload = {}, imageFile = null) {
 
 /** 新增新闻（仅管理员） */
 export async function createNews(payload, imageFile = null) {
-  const response = await http.post('/news/', buildFormData(payload, imageFile), {
+  const response = await http.post('/news/', buildNewsFormData(payload, imageFile), {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return response.data;
@@ -117,7 +171,7 @@ export async function createNews(payload, imageFile = null) {
 
 /** 修改新闻 */
 export async function updateNews(id, payload, imageFile = null) {
-  const response = await http.patch(`/news/${id}/`, buildFormData(payload, imageFile), {
+  const response = await http.patch(`/news/${id}/`, buildNewsFormData(payload, imageFile), {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return response.data;
@@ -161,6 +215,7 @@ export async function uploadNewsImage(formData) {
 
 export default {
   fetchNewsList,
+  fetchNewsTags,
   fetchNewsDetail,
   createNews,
   updateNews,
