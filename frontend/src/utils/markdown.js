@@ -1,3 +1,9 @@
+/**
+ * 把 Markdown 渲染成可以安全塞进 v-html 的 HTML（marked 解析 + DOMPurify 白名单过滤）。
+ * ----------------------------------------------------------------------------
+ * ⚠️ 白名单是**逐项列出**的：想在正文里放 video/iframe/表格以外的标签，必须先加进
+ *    ALLOWED_TAGS/ALLOWED_ATTR，否则会被 DOMPurify 静默剥掉（不报错，只是"内容没了"）。
+ */
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js';

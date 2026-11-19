@@ -52,6 +52,11 @@ def _safe_url(value: str) -> bool:
 
 
 class _Sanitizer(HTMLParser):
+    """白名单重建器：只输出 `ALLOWED_TAGS` / `ALLOWED_ATTRS` 里的东西，其余标签丢弃、文本保留。
+
+    ⚠️ `convert_charrefs=False` 是关键：实体必须原样透传。交给 `handle_data` 解码后再
+    escape 会生成 `&amp;amp;`，同一条内容净化两次就越滚越长（幂等性全靠这一步）。
+    """
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.parts: list[str] = []

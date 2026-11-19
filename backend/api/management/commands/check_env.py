@@ -235,6 +235,11 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     def _check_requirements(self, req_path: Path, quiet: bool):
+        """对照 requirements 逐包核版本：未安装与版本不符都进 problems（--strict 据此退出码 1）。
+
+        ⚠️ 只比版本号，不问"导不导入得动"（那是 `_check_installed_apps` 的事）；
+        `packaging` 没装时会退化成字符串相等比较，这种情况下"版本不符"可能是误报。
+        """
         entries = _parse_requirements(req_path)
         if not entries:
             self.warnings.append(f'{req_path.name} 里没有解析到任何依赖')
@@ -277,6 +282,11 @@ class Command(BaseCommand):
                 self._bad(f'{entry} 导入失败：{exc}')
 
     def _check_runtime(self, quiet: bool):
+        """运行时能力：数据库、缓存、迁移、模型权重、目录可写、注销积压、备份新鲜度。
+
+        ⚠️ 每一节都各自 try/except：一条检查炸掉不能让整份自检中止 ——
+        否则最该看到的那条（通常是数据库或权重）反而被前面的异常挡掉了。
+        """
         # 1) 数据库
         try:
             from django.db import connection

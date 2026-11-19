@@ -137,6 +137,11 @@ def _trend(questions, answers, days: int, today) -> list[dict]:
     跨零点的那次全量测试里就红了）。
     """
     def _by_day(queryset):
+        """按日聚合成 `{本地日期: 条数}`，供下面按窗口逐日取值。
+
+        `TruncDate` 按 `TIME_ZONE` 切片而非 UTC，所以拿到的 key 必须与
+        `today`（`timezone.localdate()`）同一把尺子，否则跨零点会错一天。
+        """
         rows = (
             queryset.annotate(day=TruncDate('created_at'))
             .values('day').annotate(n=Count('id'))
@@ -338,6 +343,12 @@ class AdminAssistantStatsView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """聚合看板数据：总量、按语言分布、按日趋势、知识库缺口、引用榜。
+
+        统计窗口起点取"最早展示那天的本地 00:00"而不是 `now - days`：
+        否则跨零点时最早那天只算半天，趋势首尾两天会莫名凹下去。
+        所有分母都用**有内容的回答数**，流式空行不参与，否则降级率被稀释。
+        """
         if not is_full_admin(request.user):
             return Response(
                 {'detail': '仅全权管理员可查看助手质量看板'},

@@ -113,6 +113,13 @@ class PestImportView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """导入 xlsx/csv：先验文件本身，再逐行 upsert，坏行跳过而不整批失败。
+
+        ⚠️ 文件校验必须在解析之前（扩展名 → 体积 → xlsx 的 `PK` 文件头）：
+        改名成 .xlsx 的其它文件进到 openpyxl 里既慢又会抛怪异常，最后只能回
+        一句"解析失败"，管理员根本不知道错在哪。
+        每行独立事务：第 87 行坏掉时前 86 行必须已经进库，这是批量导入的底线。
+        """
         if not _can_import_pests(request.user):
             return Response({'detail': '只有管理员可以批量导入病害'}, status=403)
 
@@ -216,6 +223,13 @@ class PestImportView(APIView):
         return data
 
     def _save_row(self, data, mode):
+        """保存一行（upsert / 只新增），返回 `created` 或 `updated`。
+
+        校验失败一律抛 `ValueError`（调用方把它记成"第 N 行跳过"）——
+        这里**不要**返回错误码或静默跳过，否则响应里会出现"跳过了但没说原因"。
+        同理，`(name, crop_type)` 的唯一约束要提前查出来给中文提示，
+        让数据库抛 IntegrityError 的话管理员只会看到 500。
+        """
         name = data.get('name', '')
         crop_type = data.get('crop_type', '')
         identifier = data.get('english_identifier', '')

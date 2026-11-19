@@ -173,6 +173,10 @@ def split_chunks(text: str, limit: int = MAX_CHUNK_CHARS) -> list[str]:
 # 各 provider 的单块翻译
 # ============================================================================
 def _http_json(url: str, *, data=None, headers=None, method=None) -> dict:
+    """发一次 JSON 请求并解析响应；**所有**失败（HTTP 4xx/5xx、网络、非 JSON）都转成 TranslateError。
+
+    调用方因此能做到"翻译失败只写日志、不阻断发帖"，所以这里不返回半成品、也不抛别的异常类型。
+    """
     body = None
     if data is not None:
         body = json.dumps(data).encode('utf-8')

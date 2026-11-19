@@ -62,6 +62,7 @@ MAX_PAGE_SIZE = 200
 
 
 def _brief(user, request=None):
+    """会话里「对方」的展示摘要；user 为 None 是账号已注销，必须给占位而不是 None（调用方直接取字段）。"""
     if user is None:
         # 账号已注销
         return {'id': None, 'username': '已注销用户', 'avatar': None}
@@ -137,6 +138,7 @@ class ConversationListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """一条查询把与我相关的消息全读出来再在内存里按会话折叠 —— 所以这里没有分页，消息多时一次读很多行。"""
         me = request.user
         # 与我相关、且我没有删除的消息
         queryset = (
@@ -200,6 +202,7 @@ class ConversationDetailView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request, user_id):
+        """`before_id` 游标分页；标记已读必须在取数据之前做，否则返回的 `is_read` 还是旧值。"""
         me = request.user
         other, error = self._get_other(user_id, me)
         if error:
@@ -297,6 +300,7 @@ class ConversationDetailView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """新消息要清掉**收件人那侧**的软删标记（只清 `recipient_deleted`），否则对方视角里这条消息凭空消失。"""
         me = request.user
         other, error = self._get_other(user_id, me)
         if error:

@@ -1,3 +1,11 @@
+"""
+账号自助接口（资料 / 头像 / 密码 / 注销）与管理端用户管理（列表 / 删除 / 停用 / 改角色 / 重置链接）。
+
+⚠️ 三条「删除用户」路径（本人注销、管理员单删、管理员批量删）必须共用同一套护栏，
+否则批量入口就成了绕过单条校验的后门；取消注销是匿名接口，靠「用户名+密码」认身份，
+限流一旦去掉，它就是一个能被无限撞库的密码校验端点。
+"""
+
 # 用户相关接口（注册后的资料 / 密码 / 头像 / 注销 / 管理端用户列表）
 # ============================================================================
 # 按 APIView 分块，主要落点：
@@ -18,24 +26,24 @@
 #   · 这个文件里"删除用户"有三条不同语义的路径，别混：
 #     本人注销（进冷静期）、管理员单删、管理员批量删 ——
 #     三条都会走 `_check_delete_allowed`（不能删自己、不能删最后一个超管）。
-from rest_framework.views import APIView  # 导入DRF的API视图基类
+from rest_framework.views import APIView
 from drf_spectacular.types import OpenApiTypes  # 第 389 批
 from drf_spectacular.utils import OpenApiResponse, extend_schema  # 第 389 批：OpenAPI 标注
-from rest_framework.response import Response  # 导入DRF的响应类
-from rest_framework import status, permissions  # 导入DRF的状态码和权限类
-from rest_framework.generics import get_object_or_404  # 导入获取对象或404异常的函数
-from rest_framework.pagination import PageNumberPagination  # 导入分页类
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from rest_framework.generics import get_object_or_404
+from rest_framework.pagination import PageNumberPagination
 from .pagination import CustomPagination  # 第 76 批：认 page_size 的全站统一分页
 from rest_framework.parsers import MultiPartParser, FormParser  # 第23批：头像上传需要 multipart 解析
 # 第 231 批：改密码/停用时要吊销**所有设备**的凭证（含新的 DeviceToken）；
 # 轮换后给当前设备补发一张 —— 不再直接用 DRF 的 Token
 from .models_token import DeviceToken, device_of, revoke_all
 from django.db import IntegrityError  # 第 374 批
-from django.contrib.auth import get_user_model  # 导入获取用户模型的函数
+from django.contrib.auth import get_user_model
 from .audit import log_admin_action  # 第 146 批：管理操作日志
 from django.contrib.auth import logout  # 第 95 批：注销账号时清掉当前会话
-from django.db.models import Count  # 导入Django的计数聚合函数
-import logging  # 导入日志模块
+from django.db.models import Count
+import logging
 
 # 第 124 批：能力口径统一（用户管理 = USER_ADMIN；提权护栏 = is_full_admin）
 # 第 128 批：内容模块授权（改角色时同时勾选"内容审核/新闻管理/病害百科/意见反馈"）
@@ -51,9 +59,9 @@ from .serializers import (
     UserStatsSerializer,
     PostListSerializer,
     AdminUserSerializer,  # 第 76 批：管理端用户管理
-)  # 导入自定义序列化器
+)
 from .serializers_forum import UserCommentSerializer  # 第 25 批：用户评论列表（带"发在哪里"的上下文）
-from .models_forum import Post, Comment, Like  # 导入论坛相关模型
+from .models_forum import Post, Comment, Like
 from .models import EditorModuleGrant  # 第 128 批：编辑员的模块授权（改角色时一起写）
 from rest_framework import filters
 from django_filters.rest_framework import DjangoFilterBackend
@@ -70,9 +78,9 @@ from rest_framework.throttling import ScopedRateThrottle  # 按 scope 限流
 from .password_policy import MIN_LENGTH as PASSWORD_MIN_LENGTH, validate_password
 
 logger = logging.getLogger(__name__)
-from .i18n import render_for  # 第 276 批：用户可见文案多语言  # 获取日志记录器
+from .i18n import render_for  # 第 276 批：用户可见文案多语言
 
-User = get_user_model()  # 获取用户模型
+User = get_user_model()
 
 
 # ============================================================================
@@ -208,6 +216,7 @@ class PasswordResetRequestView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """未命中、未绑邮箱也回同一句话术：命中条件（账号存在 + 有邮箱 + 未禁用）不能从响应里读出来。"""
         account = (request.data.get('username_or_email') or request.data.get('account') or '').strip()
         if not account:
             return Response({'status': 'error', 'message': render_for(request, 'reset.missing_account')},
@@ -245,6 +254,7 @@ class PasswordResetConfirmView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """先验 token 再改密：token 与密码哈希绑定，先 `set_password` 会让刚收到的链接立刻失效。"""
         uid = request.data.get('uid') or ''
         token = request.data.get('token') or ''
         new_password = request.data.get('new_password') or ''
@@ -287,7 +297,7 @@ class PasswordResetConfirmView(APIView):
         return Response({'status': 'success', 'message': render_for(request, 'reset.done')})
 
 
-class UserProfileView(APIView):  # 定义用户资料视图类
+class UserProfileView(APIView):
     """
     用户资料API
     GET   /api/users/{user_id}/  - 查看用户资料
@@ -317,20 +327,20 @@ class UserProfileView(APIView):  # 定义用户资料视图类
     @extend_schema(
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
-    def get(self, request, user_id):  # 定义GET请求处理方法
-        user = get_object_or_404(User, id=user_id)  # 获取用户对象或返回404
+    def get(self, request, user_id):
+        user = get_object_or_404(User, id=user_id)
 
         if self._is_self_or_admin(request, user):
             serializer = UserProfileSerializer(user, context={'request': request})
         else:
             serializer = UserPublicProfileSerializer(user, context={'request': request})
-        return Response(serializer.data)  # 返回序列化后的数据
+        return Response(serializer.data)
 
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
-    def patch(self, request, user_id):  # 修改资料
+    def patch(self, request, user_id):
         if not request.user or not request.user.is_authenticated:
             return Response({'detail': '请先登录'}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -385,6 +395,7 @@ class UserAvatarView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """`content_type` 由客户端上报，必须先嗅探文件头；旧头像要等新文件落盘后再删。"""
         target, denied = self._resolve_target(request, user_id)
         if denied is not None:
             return denied
@@ -443,6 +454,7 @@ class UserAvatarView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def delete(self, request, user_id):
+        """没有头像时也回 200：前端把它当幂等操作，报错只会留下一个删不掉的按钮。"""
         target, denied = self._resolve_target(request, user_id)
         if denied is not None:
             return denied
@@ -493,6 +505,7 @@ class UserPasswordChangeView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """仅本人可改且要验旧密码；改完必须轮换 token —— 不轮换等于「密码泄露了，旧凭证却还有效」。"""
         target = get_object_or_404(User, id=user_id)
         if request.user.id != target.id:
             return Response(
@@ -586,6 +599,7 @@ class AccountDeleteView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """这里只登记删除计划：冷静期内资料不清、凭密码可撤回，真正清空由到期任务做。"""
         user = request.user
         password = request.data.get('password') or ''
         confirm = (request.data.get('confirm') or '').strip()
@@ -667,6 +681,7 @@ class AccountCancelDeletionView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """匿名接口：失败话术与登录一致，不透露账号是否存在、是否在冷静期，否则它就是账号探测器。"""
         from django.contrib.auth import get_user_model
         UserModel = get_user_model()
 
@@ -714,37 +729,32 @@ class AccountCancelDeletionView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class UserStatsView(APIView):  # 定义用户统计信息视图类
+class UserStatsView(APIView):
     """
     获取用户统计信息API
     GET /api/users/{user_id}/stats/
     """
-    permission_classes = [permissions.IsAuthenticated]  # 设置权限类为需要认证用户
+    permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
-    def get(self, request, user_id):  # 定义GET请求处理方法
-        user = get_object_or_404(User, id=user_id)  # 获取用户对象或返回404
+    def get(self, request, user_id):
+        user = get_object_or_404(User, id=user_id)
 
-        # 获取用户发布的帖子数量
         # 第 91 批：改用 Post.active —— 软删除的帖子不该继续算进用户的发帖数
-        post_count = Post.active.filter(author=user).count()  # 统计用户发布的帖子数量
+        post_count = Post.active.filter(author=user).count()
 
-        # 获取用户发布的评论数量
-        comment_count = Comment.objects.filter(author=user).count()  # 统计用户发布的评论数量
+        comment_count = Comment.objects.filter(author=user).count()
 
-        # 获取用户收到的点赞数量（用户发布的帖子收到的点赞）
-        like_count = Like.objects.filter(post__author=user).count()  # 统计用户收到的点赞数量
+        like_count = Like.objects.filter(post__author=user).count()
 
-        # 将统计信息添加到用户对象中
-        user.post_count = post_count  # 动态添加帖子数量属性
-        user.comment_count = comment_count  # 动态添加评论数量属性
-        user.like_count = like_count  # 动态添加点赞数量属性
+        user.post_count = post_count
+        user.comment_count = comment_count
+        user.like_count = like_count
 
-        # 使用 instance 参数序列化用户对象
-        serializer = UserStatsSerializer(instance=user, context={'request': request})  # 使用统计信息序列化器
-        return Response(serializer.data)  # 返回序列化后的数据
+        serializer = UserStatsSerializer(instance=user, context={'request': request})
+        return Response(serializer.data)
 
 
 class UserListView(ListAPIView):
@@ -941,6 +951,7 @@ class AdminUserListView(ListAPIView):
         return self._bulk_delete(request)
 
     def _bulk_delete(self, request):
+        """逐条复用单条删除的护栏（批量入口最容易成为绕过校验的后门）；头像攒到最后统一清理。"""
         raw_ids = request.data.get('ids') or []
         if not isinstance(raw_ids, (list, tuple)):
             return Response({'ids': ['ids 必须是数组']}, status=status.HTTP_400_BAD_REQUEST)
@@ -1106,6 +1117,7 @@ class AdminUserStatusView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """停用要连 token 一起作废，否则恢复后旧设备会「自己登回来」；`is_active` 只收布尔，猜错就停错账号。"""
         actor = request.user
         # ⚠️ 用 `_admin_user_queryset()` 而不是裸 User：已删除与注销冷静期的账号在这里
         #    直接 404（那两类状态由删除/注销流程管理，不该在用户管理里改）。
@@ -1248,6 +1260,7 @@ class AdminUserCreateEditorView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """不设可用密码：账号只能靠一次性链接激活，所以邮件没发出去不算失败，链接照样要返回。"""
         actor = request.user
         if not actor.is_superuser:
             return Response(
@@ -1353,6 +1366,7 @@ class AdminUserRoleView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """四条护栏全部验完才落库：中途返回会留下「角色已改、模块没改」的半截状态。"""
         actor = request.user
         target = get_object_or_404(_admin_user_queryset(), pk=user_id)
 
@@ -1531,6 +1545,7 @@ class AdminUserResetLinkView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """链接等于账号控制权：审计日志只记「签发了」，绝不落整条 URL（那等于把改密凭证抄进库）。"""
         target = get_object_or_404(User, pk=user_id)
         actor = request.user
 
@@ -1676,7 +1691,7 @@ class UserCommentsView(APIView):
         return Response({'count': queryset.count(), 'results': serializer.data})
 
 
-class UserPostsView(APIView):  # 定义用户帖子视图类
+class UserPostsView(APIView):
     """
     获取用户自己的帖子API
     GET /api/users/me/posts/

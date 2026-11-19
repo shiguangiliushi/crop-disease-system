@@ -42,6 +42,7 @@ def _parse_date(raw):
 
 
 def _serialize(log):
+    """一条日志的对外形状：`actor` 姓名优先用快照，账号被删也读得懂。"""
     return {
         'id': log.id,
         'actor': log.actor_id,
@@ -67,6 +68,12 @@ class AdminAuditLogListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """按动作/操作人/对象类型/日期区间/关键字筛日志，分页返回。
+
+        ⚠️ 所有筛选都是"非法值忽略"而非 400 —— 地址栏手拼参数是审计时的常态，
+        报错会把人挡在门外。反过来说，新增筛选条件也必须遵守这条，否则这个
+        页面会在某个拼错的参数上整体 500。
+        """
         if not is_full_admin(request.user):
             return Response({'detail': '只有管理员可以查看操作日志'},
                             status=status.HTTP_403_FORBIDDEN)

@@ -70,6 +70,11 @@ class Command(BaseCommand):
 
     # -- ① 完整矩阵 ---------------------------------------------------------
     def _matrix(self):
+        """打印全量矩阵：角色 × 能力、内容模块 × 能进的页、接口逐条允许谁。
+
+        ⚠️ 只读 `api/role_matrix.py` 的表，不查任何账号 —— 要看某个人的实际权限
+        （表 + 数据库里的模块授权）得用 `_describe`，两者口径不同，别互相替代。
+        """
         self.stdout.write(self.style.MIGRATE_HEADING('角色 × 能力'))
         for role, note in ROLE_NOTES.items():
             self.stdout.write(f'  {role:<8} {note}')
@@ -101,6 +106,11 @@ class Command(BaseCommand):
 
     # -- ② 某个账号的实际权限 -------------------------------------------------
     def _describe(self, username):
+        """打印某个账号**此刻**的实际权限：能力、被勾的模块、能进的页、逐条接口判定。
+
+        ⚠️ 账号不存在时抛 CommandError，不静默退出 —— 用户名拼错时的输出如果长得像
+        "这人没权限"，排查方向会被带到权限配置上去。
+        """
         user = User.objects.filter(username=username).first()
         if user is None:
             raise CommandError(f'没有这个账号：{username}')
@@ -129,6 +139,10 @@ class Command(BaseCommand):
 
     # -- ③ 生成文档 ----------------------------------------------------------
     def _write_docs(self):
+        """把矩阵整份渲染成 `docs/角色与权限矩阵.md`，内容全部来自 `api/role_matrix.py`。
+
+        ⚠️ 每次都是**覆盖重写**：在生成出来的文档里手改的内容会消失，要改请改表再重生成。
+        """
         lines = [
             '# 角色与权限矩阵',
             '',

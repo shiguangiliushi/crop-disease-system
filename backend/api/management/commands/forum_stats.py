@@ -33,6 +33,11 @@ class Command(BaseCommand):
     help = 'Generate forum statistics and activity reports'
     
     def add_arguments(self, parser):
+        """声明报表参数：`--days` 折算起止日期，`--format` 决定 csv/html 必须配 `--output`。
+
+        ⚠️ 这里是**明确的起止日期**口径，没有 `--since` 之类的相对时间；
+        要"最近 N 天"就在调用侧传 --days，别自己算好日期再传进来（两种算法会不一致）。
+        """
         parser.add_argument(
             '--days', 
             type=int, 

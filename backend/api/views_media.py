@@ -53,6 +53,13 @@ class MediaView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request, path: str):
+        """按路径前缀分流：公开目录直出，私有目录先验签名、再验归属，都没有则 404。
+
+        为什么私有目录一律 404 而不是 403：403 等于告诉对方"这个文件存在、
+        只是你没权限"，路径本身就成了可枚举的信息（`../` 已由 `safe_join` 挡掉）。
+        另外这里**不抛 DRF 的 PermissionDenied**，因为它会被渲染成 JSON 401/403，
+        而 `<img>` 只认 404 —— 图片裂掉比弹一个 JSON 更符合实际使用场景。
+        """
         from django.conf import settings
 
         if not any(path.startswith(prefix) for prefix in PRIVATE_PREFIXES):

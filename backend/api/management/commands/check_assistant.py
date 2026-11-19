@@ -70,6 +70,11 @@ class Command(BaseCommand):
 
     # ── 一、配置 ──────────────────────────────────────────────────────────
     def _check_config(self, probe: bool) -> None:
+        """报 LLM/限流配置；默认只读设置，`--probe` 才真的发一次请求（会计费）。
+
+        ⚠️ 未设 key、`LLM_ENABLED=False` 这类只记 warn/bad、不抛异常 ——
+        自检要能跑完全程，否则第一个问题就会把后面的语料/链路检查全挡掉。
+        """
         from django.conf import settings as s
 
         self._section('一、配置')
@@ -99,6 +104,12 @@ class Command(BaseCommand):
 
     # ── 二、语料 ──────────────────────────────────────────────────────────
     def _check_corpus(self) -> None:
+        """查语料有没有"空洞"：词条/防治/健康档案条数，以及症状、学名、来源是否填了。
+
+        ⚠️ 统计口径**只算病害词条** —— 12 条「健康X」的学名与来源存在
+        `CropHealthProfile` 里，拿 `PestInfo` 全表算会把它们误报成"缺学名"。
+        缺学名/来源也只算提示：那是校准（K4）的活，不该让自检变红灯。
+        """
         self._section('二、语料')
         pests = PestInfo.objects.count()
         preventions = PreventionMethod.objects.count()
@@ -144,6 +155,11 @@ class Command(BaseCommand):
 
     # ── 三、链路（不调模型）──────────────────────────────────────────────
     def _check_pipeline(self, query: str) -> None:
+        """拿样例问题走一遍检索 + 上下文拼装（**不调模型**），看命中与上下文长度。
+
+        ⚠️ 检索为空记成问题而不是提示：生产上这条问题会直接走"词条未收录"分支，
+        用户看到的是"助手不知道"，而不是降级回答。
+        """
         self._section('三、检索链路（不调模型）')
         self._ok(f'样例问题：{query!r}  意图={retriever.detect_intent(query)}')
         hits = retriever.search(query)

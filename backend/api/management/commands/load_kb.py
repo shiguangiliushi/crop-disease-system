@@ -150,6 +150,11 @@ class Command(BaseCommand):
 
     # ── 步骤 1：环境（顺带确认 LLM 通道配置就位）────────────────────────────
     def _check_llm_channel(self) -> None:
+        """写入前的环境闸门：报 LLM 环境变量，并确认 K2 的字段/表已经迁移到位。
+
+        ⚠️ 缺字段、缺表只记进 problems，**不当场中止** —— 因为 `--dry-run` 也得能把
+        整份报告和结论看全，真正的拒绝写入留给 `--apply`。
+        """
         import os
         self._section('一、环境')
         enabled = os.environ.get('LLM_ENABLED', '')
@@ -209,6 +214,12 @@ class Command(BaseCommand):
         return None, '未匹配'
 
     def _compare(self, payload: dict) -> None:
+        """逐条把 JSON 记录落到库里比对，打印"会改哪些字段、会删/写几条防治"，只读不写。
+
+        ⚠️ 判定必须基于**真实差异**（`changed_any`）而不是"采到了多少字段"，
+        否则写完再跑 dry-run 仍显示"将更新"，幂等性就没法用它验收。
+        防治的"构成"列也不能省：`5→5` 可能是"4 改 + 1 新增"，只报总数会把人骗过去。
+        """
         self._section('三、逐条比对（只读）')
         header = (f'{"#":>3}  {"校准版名称":<14} {"库中名称":<12} {"匹配方式":<22} '
                   f'{"防治 现有→将写":<16} {"构成":<12} 判定')
@@ -359,6 +370,11 @@ class Command(BaseCommand):
 
     # ── 步骤 4：汇总 ─────────────────────────────────────────────────────
     def _summary(self) -> None:
+        """把比对结果汇总成"将更新/将删除多少条"，并把有损点单独说清楚。
+
+        ⚠️ 这里的条数是**本轮涉及词条名下**的，不是全库总数：标签必须写明这个口径，
+        否则和"全库 XX 条"并列时看起来像自相矛盾（第一版就是这么让人困惑的）。
+        """
         self._section('四、汇总（本次不写库）')
         total = PestInfo.objects.count()
         prev_total = PreventionMethod.objects.count()
@@ -387,6 +403,11 @@ class Command(BaseCommand):
 
     # ── 步骤 5：重复词条体检（pumpkin 与 Squash 同病）──────────────────────
     def _maybe_report_duplicate_names(self) -> None:
+        """查重名词条，并单独核对南瓜白粉病（pumpkin / squash 两个 identifier 同一种病）。
+
+        ⚠️ 命中重名就记 problems 而不是提示：百科会因此出现两条同名条目，
+        必须人工决定合并到哪一条，`--apply` 前不解决就不该写入。
+        """
         self._section('五、重复词条体检')
         from collections import Counter
         names = Counter(PestInfo.objects.values_list('name', flat=True))

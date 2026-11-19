@@ -72,6 +72,10 @@ class MediaIsolatedTestRunner(DiscoverRunner):
         self._original_media_root = None
 
     def setup_test_environment(self, **kwargs):
+        """整轮测试开始前把 `settings.MEDIA_ROOT` 挪到临时目录（跑完在 teardown 里删）。
+
+        失败（临时目录不可写）时只打警告并回落到真实 media —— 宁可污染，也不让整套测试跑不起来。
+        """
         super().setup_test_environment(**kwargs)
         try:
             self._media_dir = Path(tempfile.mkdtemp(prefix='zz_test_media_'))

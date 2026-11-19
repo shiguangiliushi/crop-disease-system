@@ -123,6 +123,10 @@ class ReportViewSet(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """举报列表：能处置的人看全部，其余人只看自己提交的。
+
+        自己的举报在任何权限档下都必须可见 —— 分权不能把"我提交过什么"一起收走。
+        """
         queryset = Report.objects.select_related('reporter', 'handler', 'post', 'comment', 'target_user')
 
         if _can_handle_reports(request.user):
@@ -161,6 +165,11 @@ class ReportViewSet(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """提交举报：目标必须真实存在、不能举报自己、同一目标只能举报一次。
+
+        `target_key` 唯一约束靠"先查一次 + 保存点兜并发"，不能只靠捕获 IntegrityError：
+        在 ATOMIC_REQUESTS / TestCase 的事务里捕获后继续查库会抛 TransactionManagementError。
+        """
         target_type = (request.data.get('target_type') or '').strip()
         reason = (request.data.get('reason') or 'other').strip()
         detail = (request.data.get('detail') or '').strip()[:500]
@@ -271,6 +280,11 @@ class ReportHandleView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, pk):
+        """处理举报（handled/rejected）并给举报人回一条结果通知。
+
+        ⚠️ `hide_content` 只对全权管理员生效：编辑员传 true 时**忽略并如实回 `hide_denied`**，
+        而不是返回 403 —— 他有权处置这条举报，只是没有"顺手下架内容"那一档权限。
+        """
         if not _can_handle_reports(request.user):
             return Response({'detail': '只有内容编辑员或管理员可以处理举报'},
                             status=status.HTTP_403_FORBIDDEN)

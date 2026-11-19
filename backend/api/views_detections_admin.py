@@ -133,6 +133,13 @@ class AdminDetectionListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """跨用户识别记录列表 + 概览统计。
+
+        ⚠️ `stats` 必须基于**过滤后**的 queryset 计算 —— 页面上的数字与下方列表
+        同源才有意义；基于全表算会让筛选后出现"总数 500 条、列表 3 条"的错觉。
+        另外这里刻意只回图片地址：农户端序列化器带 base64 标注图，一页 20 条
+        就是几十 MB，管理端绝不能复用。
+        """
         denied = _reject_non_user_admin(request, '查看识别记录')
         if denied:
             return denied
@@ -243,6 +250,12 @@ class AdminDetectionDeleteView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def delete(self, request, pk):
+        """删除单条记录并**先**删图片文件（数据行删掉后就找不到文件路径了）。
+
+        图片删除失败只记 warning、不中断 —— 留着一条删不掉的记录比留下一个
+        孤儿文件更糟（用户会反复看到一条删不掉的记录）。审计日志必须在
+        `row.delete()` 之后写，但目标快照用删除前抓好的值。
+        """
         if not is_full_admin(request.user):
             return Response({'detail': '只有管理员可以删除识别记录'},
                             status=status.HTTP_403_FORBIDDEN)

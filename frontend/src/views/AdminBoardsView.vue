@@ -231,6 +231,7 @@ export default {
       }
     };
 
+    /** 启用/停用版块：停用是破坏性操作，确认框用警告色；成功后以服务端返回的 is_active 为准 */
     const toggleStatus = async (board) => {
       const turningOff = board.is_active;
       try {
@@ -338,6 +339,7 @@ export default {
       editing.value = null;
     };
 
+    /** 新建与编辑共用同一个表单：editing 为 null 才走新建；只有 name 必填，其余字段可以为空 */
     const submitForm = async () => {
       const payload = {
         name: form.value.name.trim(),

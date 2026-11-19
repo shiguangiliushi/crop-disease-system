@@ -37,6 +37,8 @@ function openDb() {
   });
 }
 
+/** 把 IndexedDB 包装成与内存适配器同形的 {put, all, remove, clear }。
+ *  写操作要等 `tx.oncomplete` 才 resolve —— 事务提交前不算写成功，别改成 handler 一返回就 resolve。 */
 function createIndexedDbAdapter() {
   const withStore = async (mode, handler) => {
     const db = await openDb();

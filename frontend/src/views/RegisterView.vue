@@ -1,4 +1,10 @@
 <script setup>
+/**
+ * 注册页（农户端）：表单校验 + 用户名实时查重 + 验证码 + 提交注册。
+ * ----------------------------------------------------------------------------
+ * ⚠️ 验证码**一次性**：只要提交失败就得换一张，旧的那张已被服务端消费掉，
+ *    不换会一直失败；前端只做提示，唯一性/格式最终以后端为准。
+ */
 import { ref, computed, watch, onMounted } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';

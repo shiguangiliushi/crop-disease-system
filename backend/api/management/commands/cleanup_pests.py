@@ -1,3 +1,9 @@
+"""一次性清理：把 `PestInfo` 裁到模型 38 类对应的那批病害，其余的整行删掉。
+
+⚠️ 这是**硬删**（`pest.delete()`），没有软删除也没有回滚，`allowed_pests` 里那 38 个
+中文名是写死的、与训练类别逐字对应；模型扩类后不同步改这里，重跑会把新病害当"多余的"删掉。
+所以执行前先 `manage.py backend_backup`，只在本机数据上跑，别对着生产库跑。
+"""
 from django.core.management.base import BaseCommand
 from api.models import PestInfo
 
@@ -47,7 +53,6 @@ class Command(BaseCommand):
             '番茄黄化曲叶病毒',
         ]
 
-        # 获取所有病害
         all_pests = PestInfo.objects.all()
         
         # 删除不在允许列表中的病害

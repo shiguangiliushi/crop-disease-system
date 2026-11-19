@@ -52,6 +52,12 @@ class PestOfflinePackView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """整包返回词条的精简字段；`since` 命中当前指纹时只回 `unchanged=true`。
+
+        ⚠️ `version` 是**内容指纹**，不是 `updated_at` 的最大值 —— 用时间戳的话
+        手工改库、批量导数据、时区回拨都会让它算错，客户端要么一直重下、要么永远
+        以为是最新的。指纹只取参与展示的字段（含英文名），少一个都不会"看起来没变"。
+        """
         pests = (
             PestInfo.objects
             .prefetch_related('prevention_methods')

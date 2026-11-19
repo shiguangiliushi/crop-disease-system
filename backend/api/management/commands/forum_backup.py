@@ -35,6 +35,11 @@ class Command(BaseCommand):
     help = 'Backup or restore forum data'
     
     def add_arguments(self, parser):
+        """声明 backup / restore 两个子命令及其参数（`--format` 只影响备份写出的格式）。
+
+        ⚠️ 本命令已废弃（见模块说明：只覆盖论坛 5 张表，还引用了模型里不存在的字段），
+        参数保持原样只为"还能产出参考 JSON"；别再往这里加新选项，那等于给一个不该用的命令续命。
+        """
         subparsers = parser.add_subparsers(dest='command', help='sub-command help')
         
         # 创建备份子命令

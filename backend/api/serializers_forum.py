@@ -1,6 +1,11 @@
-from rest_framework import serializers  # 导入DRF序列化器模块
-from django.contrib.auth import get_user_model  # 导入获取用户模型的函数
-from .models_forum import ForumBoard, Post, Comment, Like, Favorite  # 导入论坛相关模型
+"""论坛序列化器：版块、帖子（列表/详情）、评论、点赞、收藏。
+
+⚠️ `is_liked` / `reply_count` 这类方法字段会对**每个对象**单独查一次库（`.filter()`
+不读 `prefetch_related` 的缓存），列表页因此很容易变成 N+1，别指望预取能救。
+"""
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from .models_forum import ForumBoard, Post, Comment, Like, Favorite
 from .models import CustomUser, PestInfo  # 导入自定义用户模型 + 第 168 批：病害标签
 import logging
 
@@ -9,7 +14,7 @@ logger = logging.getLogger(__name__)  # 第 168 批：失效标签 id 留一条 
 from .serializers import _user_avatar_url
 
 
-class UserSimpleSerializer(serializers.ModelSerializer):  # 定义用户简单信息序列化器
+class UserSimpleSerializer(serializers.ModelSerializer):
     """用户简单信息序列化器
 
     第 25 批补充 ``avatar``：论坛各处模板早就在用 ``post.author.avatar`` /
@@ -19,9 +24,9 @@ class UserSimpleSerializer(serializers.ModelSerializer):  # 定义用户简单�
 
     avatar = serializers.SerializerMethodField()
 
-    class Meta:  # 定义元数据
-        model = CustomUser  # 关联用户模型
-        fields = ['id', 'username', 'avatar']  # 包含的字段
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'username', 'avatar']
         read_only_fields = fields  # 所有字段都是只读的
 
     def get_avatar(self, obj):
@@ -39,7 +44,7 @@ class LikeUserSerializer(serializers.ModelSerializer):  # 点赞者名单（第 
         read_only_fields = fields
 
 
-class ForumBoardSerializer(serializers.ModelSerializer):  # 定义版块序列化器
+class ForumBoardSerializer(serializers.ModelSerializer):
     """版块序列化器
 
     ⚠️ 第 213 批：`post_count` 改为**由数据库实时统计**，不再直接回库里的缓存字段。
@@ -54,14 +59,14 @@ class ForumBoardSerializer(serializers.ModelSerializer):  # 定义版块序列�
     """
     post_count = serializers.SerializerMethodField()
 
-    class Meta:  # 定义元数据
-        model = ForumBoard  # 关联版块模型
-        fields = [  # 包含的字段
+    class Meta:
+        model = ForumBoard
+        fields = [
             'id', 'name', 'name_en', 'description', 'description_en', 'icon', 'order',
             'is_active', 'created_at', 'post_count', 'today_posts',
             'last_updated_date'
         ]
-        read_only_fields = ['created_at', 'post_count', 'today_posts', 'last_updated_date']  # 只读字段
+        read_only_fields = ['created_at', 'post_count', 'today_posts', 'last_updated_date']
 
     def get_post_count(self, obj):
         """只数**未删除**的帖子 —— 与 `Post.active` 同一口径。
@@ -88,7 +93,7 @@ class PestTagSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'name_en', 'english_identifier', 'crop_type', 'crop_type_en']
 
 
-class CommentSerializer(serializers.ModelSerializer):  # 定义评论序列化器
+class CommentSerializer(serializers.ModelSerializer):
     """评论序列化器
 
     第 16 批补齐（此前字段缺失导致前端「回复」功能整块不可用）：
@@ -113,27 +118,27 @@ class CommentSerializer(serializers.ModelSerializer):  # 定义评论序列化�
     translation_stale = serializers.BooleanField(read_only=True)
     translation_source = serializers.CharField(read_only=True)
 
-    class Meta:  # 定义元数据
-        model = Comment  # 关联评论模型
-        fields = [  # 包含的字段
+    class Meta:
+        model = Comment
+        fields = [
             'id', 'content', 'content_en', 'author', 'like_count', 'is_liked',
             'created_at', 'updated_at', 'is_deleted',
             'parent', 'reply_to', 'reply_count',
             'translation_stale', 'translation_source',
         ]
-        read_only_fields = [  # 只读字段
+        read_only_fields = [
             'author', 'like_count', 'created_at', 'updated_at', 'is_deleted',
             'parent', 'reply_to', 'reply_count',
             'translation_stale', 'translation_source'
         ]
 
-    def get_is_liked(self, obj):  # 定义获取是否点赞方法
-        user = self.context['request'].user  # 获取当前用户
+    def get_is_liked(self, obj):
+        user = self.context['request'].user
         if user.is_authenticated:  # 检查用户是否认证
-            return obj.likes.filter(user=user).exists()  # 返回用户是否点赞
+            return obj.likes.filter(user=user).exists()
         return False  # 未认证用户返回False
 
-    def get_reply_count(self, obj):  # 定义获取回复数方法
+    def get_reply_count(self, obj):
         # 列表查询会对该字段做 annotate，避免 N+1；没有注解时退回一次 count 查询
         annotated = getattr(obj, 'reply_count_annotated', None)
         if annotated is not None:
@@ -168,7 +173,7 @@ class UserCommentSerializer(CommentSerializer):
         ]
 
 
-class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序列化器
+class PostListSerializer(serializers.ModelSerializer):
     """帖子列表序列化器
 
     第 24 批补齐三个字段（此前导致"草稿其实是公开发布 / 收藏状态看不到"）：
@@ -181,7 +186,7 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
     author = UserSimpleSerializer(read_only=True)  # 作者字段使用简单用户序列化器
     board = ForumBoardSerializer(read_only=True)  # 版块字段使用版块序列化器
     board_id = serializers.PrimaryKeyRelatedField(  # 版块ID字段为主键关联字段
-        queryset=ForumBoard.objects.filter(is_active=True),  # 查询集为活跃版块
+        queryset=ForumBoard.objects.filter(is_active=True),
         write_only=True,  # 只写字段
         source='board'  # 数据源为版块
     )
@@ -200,9 +205,9 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
     translation_stale = serializers.BooleanField(read_only=True)
     translation_source = serializers.CharField(read_only=True)
 
-    class Meta:  # 定义元数据
-        model = Post  # 关联帖子模型
-        fields = [  # 包含的字段
+    class Meta:
+        model = Post
+        fields = [
             'id', 'title', 'title_en', 'content', 'content_en', 'author', 'board', 'board_id',
             'view_count', 'like_count', 'comment_count', 'is_liked', 'is_favorited',
             'is_pinned', 'is_essence', 'status', 'is_draft', 'created_at', 'updated_at',
@@ -213,7 +218,7 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
             #: 看不出"删了多久"，审计价值很低。
             'is_deleted', 'deleted_at',
         ]
-        read_only_fields = [  # 只读字段
+        read_only_fields = [
             'author', 'view_count', 'like_count', 'comment_count',
             'status', 'created_at', 'updated_at',
             'translation_stale', 'translation_source',
@@ -274,10 +279,10 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
                         min=self.BODY_MIN))
         return value
 
-    def get_is_liked(self, obj):  # 定义获取是否点赞方法
-        user = self.context['request'].user  # 获取当前用户
+    def get_is_liked(self, obj):
+        user = self.context['request'].user
         if user.is_authenticated:  # 检查用户是否认证
-            return obj.likes.filter(user=user).exists()  # 返回用户是否点赞
+            return obj.likes.filter(user=user).exists()
         return False  # 未认证用户返回False
 
     def get_is_favorited(self, obj):
@@ -386,24 +391,24 @@ class PostListSerializer(serializers.ModelSerializer):  # 定义帖子列表序�
         return instance
 
 
-class PostDetailSerializer(PostListSerializer):  # 定义帖子详情序列化器，继承自帖子列表序列化器
+class PostDetailSerializer(PostListSerializer):
     """帖子详情序列化器（标题/正文的最低字数校验在基类 `PostListSerializer` 上）"""
     comments = serializers.SerializerMethodField()  # 评论字段为方法字段
 
     class Meta(PostListSerializer.Meta):  # 继承元数据
-        fields = PostListSerializer.Meta.fields + ['comments']  # 添加评论字段
-        read_only_fields = PostListSerializer.Meta.read_only_fields + ['comments']  # 添加评论字段为只读
+        fields = PostListSerializer.Meta.fields + ['comments']
+        read_only_fields = PostListSerializer.Meta.read_only_fields + ['comments']
 
-    def get_comments(self, obj):  # 定义获取评论方法
-        comments = obj.comments.filter(parent__isnull=True, is_deleted=False).order_by('created_at')  # 获取顶级评论
+    def get_comments(self, obj):
+        comments = obj.comments.filter(parent__isnull=True, is_deleted=False).order_by('created_at')
         return CommentSerializer(
             comments, 
             many=True, 
-            context={**self.context, 'nested': False}  # 添加嵌套标记
-        ).data  # 返回序列化数据
+            context={**self.context, 'nested': False}
+        ).data
 
 
-class CommentCreateSerializer(serializers.ModelSerializer):  # 定义评论创建序列化器
+class CommentCreateSerializer(serializers.ModelSerializer):
     """评论创建序列化器"""
     reply_to = serializers.PrimaryKeyRelatedField(
         queryset=CustomUser.objects.all(),
@@ -412,26 +417,29 @@ class CommentCreateSerializer(serializers.ModelSerializer):  # 定义评论创�
         source='reply_to_user'
     )
 
-    class Meta:  # 定义元数据
-        model = Comment  # 关联评论模型
+    class Meta:
+        model = Comment
         # 第 85 批：允许作者直接带上英文译文（content_en），留空则由机器翻译补
-        fields = ['content', 'content_en', 'parent', 'reply_to']  # 包含的字段
-        extra_kwargs = {  # 额外参数
-            'parent': {'required': False},  # 父评论非必需
-            'reply_to': {'required': False},  # 回复用户非必需
+        fields = ['content', 'content_en', 'parent', 'reply_to']
+        extra_kwargs = {
+            'parent': {'required': False},
+            'reply_to': {'required': False},
             'content_en': {'required': False, 'allow_blank': True},
         }
 
     def validate_parent(self, value):  # 验证父评论
         if value and value.post_id != self.context['post_id']:  # 检查父评论是否属于当前帖子
             raise serializers.ValidationError("回复的评论不属于该帖子")  # 抛出验证错误
-        return value  # 返回值
+        return value
         
     def create(self, validated_data):
+        """建评论：作者与帖子都取自视图 `context`，**不信任请求体**（否则能替别人发帖）。
+
+        父评论没指定 `reply_to_user` 时，自动回落成"被回复的那条评论"的作者。
+        """
         # 获取并移除reply_to_user（如果存在）
         reply_to_user = validated_data.pop('reply_to_user', None)
         
-        # 创建评论实例
         comment = Comment.objects.create(
             content=validated_data.get('content'),
             # 第 85 批：作者可自带英文译文（人工），留空则交给自动翻译
@@ -465,30 +473,30 @@ class CommentCreateSerializer(serializers.ModelSerializer):  # 定义评论创�
         return instance
 
 
-class LikeSerializer(serializers.ModelSerializer):  # 定义点赞序列化器
+class LikeSerializer(serializers.ModelSerializer):
     """点赞序列化器"""
 
-    class Meta:  # 定义元数据
+    class Meta:
         model = Like  # 关联点赞模型
         fields = '__all__'  # 包含所有字段
-        read_only_fields = ['user', 'created_at']  # 只读字段
-        extra_kwargs = {  # 额外参数
+        read_only_fields = ['user', 'created_at']
+        extra_kwargs = {
             'post': {'required': False},  # 帖子非必需
             'comment': {'required': False}  # 评论非必需
         }
 
     def validate(self, attrs):  # 验证方法
-        if not (attrs.get('post') or attrs.get('comment')):  # 检查是否指定了帖子或评论
+        if not (attrs.get('post') or attrs.get('comment')):
             raise serializers.ValidationError("必须指定帖子或评论")  # 抛出验证错误
-        if attrs.get('post') and attrs.get('comment'):  # 检查是否同时指定了帖子和评论
+        if attrs.get('post') and attrs.get('comment'):
             raise serializers.ValidationError("不能同时指定帖子和评论")  # 抛出验证错误
-        return attrs  # 返回属性
+        return attrs
 
 
-class FavoriteSerializer(serializers.ModelSerializer):  # 定义收藏序列化器
+class FavoriteSerializer(serializers.ModelSerializer):
     """收藏序列化器"""
 
-    class Meta:  # 定义元数据
+    class Meta:
         model = Favorite  # 关联收藏模型
-        fields = ['id', 'user', 'post', 'created_at']  # 包含的字段
-        read_only_fields = ['user', 'created_at']  # 只读字段
+        fields = ['id', 'user', 'post', 'created_at']
+        read_only_fields = ['user', 'created_at']

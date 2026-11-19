@@ -608,6 +608,7 @@ const openBulkReject = () => {
   forumRejectVisible.value = true;
 };
 
+/** 单条/批量驳回共用一个入口：由 forumBulkRejectMode 分流；理由必填，空理由后端会 400 */
 const forumConfirmReject = async () => {
   const reason = forumRejectReason.value.trim();
   if (!reason) {

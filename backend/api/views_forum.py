@@ -1,3 +1,9 @@
+"""论坛接口：版块 / 帖子 / 评论 / 点赞 / 收藏的读写与审核动作。
+
+⚠️ 计数（like_count / comment_count / reply_count）**只由模型层维护**，
+视图里不要再自己 `F()+1` —— 两边都写就是重复计数（第 106 批的真实 bug）。
+另：帖子的可见性一律走 `Post.active` 管理器，软删除的行不能被点赞/评论。
+"""
 # 论坛接口（版块 / 帖子 / 评论 / 点赞 / 收藏 / 举报的处理）
 # ============================================================================
 # **这是后端第二大的视图文件**（1300 余行）。按 ViewSet 分块：
@@ -109,6 +115,12 @@ class ForumBoardViewSet(viewsets.ModelViewSet):  # 定义论坛版块视图集
     pagination_class = None  # 不需要分页
 
     def get_queryset(self):  # 定义获取查询集方法
+        """版块列表：实时注解未删除帖子数，并决定谁能看到停用版块。
+
+        ⚠️ 序列化时务必用注解出来的 `active_post_count`，不要用模型的
+        `post_count` —— 后者靠发帖/删帖加减维护，任何绕过 `save()` 的写都会让它
+        只涨不跌（实测已漂到 239、真实只有 7）。
+        """
         # 基础查询
         #
         # ⚠️ 第 213 批：`active_post_count` 是给 `ForumBoardSerializer.get_post_count` 用的
@@ -271,6 +283,13 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         return PostListSerializer  # 返回列表序列化器
 
     def get_queryset(self):  # 定义获取查询集方法
+        """帖子列表/详情共用的查询集：筛选 + 可见性 + 排序三件事都在这里定。
+
+        `?status=all` 是**显式哨兵**（控制台"全部"要含草稿），与"没传 status"
+        必须区分开；版主/管理员只在 `list` 上排除草稿，详情一律不排 ——
+        否则版主连自己的草稿都打不开（第 166 批的坑）。
+        `?only_deleted=true` 只对版主/管理员生效，普通人传了也拿不到已删帖。
+        """
         # 第 91 批：默认口径是**未删除**的帖子（Post.active）。
         # 删帖已改为软删除，若这里仍从 Post.objects 起手，删掉的帖子会继续出现在
         # 列表/详情里（只是标题变成"[已删除]"）—— 那等于"删了个寂寞"。
@@ -435,6 +454,13 @@ class PostViewSet(viewsets.ModelViewSet):  # 定义帖子视图集
         return queryset
 
     def perform_create(self, serializer):  # 定义创建操作
+        """建帖的三道闸：敏感词、置顶/精华越权、审核策略。
+
+        普通用户**不能**自带 `is_pinned` / `is_essence`（序列化器把它们暴露为
+        可写，服务端不拦就是越权，第 24 批实测过）；存下来之后才做审核策略判断，
+        所以 `_apply_review_policy` 里看到的一定是真实的 `status`。
+        积分与翻译放在最后，且都不允许把发帖搞失败。
+        """
         user = self.request.user
         wants_pin = bool(serializer.validated_data.get('is_pinned'))
         wants_essence = bool(serializer.validated_data.get('is_essence'))
@@ -1094,6 +1120,12 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
     pagination_class = CustomPagination  # 设置分页类
 
     def get_permissions(self):  # 定义获取权限方法
+        """按 action 换权限；`like` 必须单独放行（第 16 批修复）。
+
+        类级 `IsCommentOwnerOrPostOwner` 在非安全方法下要求"评论作者/帖子作者/
+        版主"，而 `like` 是 POST —— 结果**给别人点赞评论一律 403**，
+        每个人评论旁的点赞按钮对非作者全部失效。点赞只该要求登录。
+        """
         if self.action in ['create']:  # 检查操作类型
             self.permission_classes = [permissions.IsAuthenticated]  # 设置创建权限
         elif self.action in ['update', 'partial_update']:  # 检查操作类型
@@ -1190,6 +1222,7 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
         )
 
     def list(self, request, *args, **kwargs):  # 重写列表方法
+        """显式走一遍 `filter_queryset` + 项目分页，与其它列表接口同形。"""
         # 重写 list 方法以支持分页
         queryset = self.filter_queryset(self.get_queryset())  # 获取过滤后的查询集
 
@@ -1250,6 +1283,13 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
 
     @throttle_classes([UserRateThrottle])
     def perform_create(self, serializer):  # 定义创建操作
+        """创建评论/回复的闸门顺序：限频 → 解析回复对象 → 敏感词 → 保存。
+
+        限频失败要抛带 `code` 的 ValidationError（友好提示），不能是异常 ——
+        第 374 批前这里引用了不存在的 `request`，每分钟第 4 条评论直接 500。
+        译文必须在发通知之前补：通知里的 `message_en` 取的是评论译文，
+        翻晚了英文界面下通知里又会冒出中文。
+        """
         # 检查是否在短时间内发送了过多评论
         one_minute_ago = timezone.now() - timezone.timedelta(minutes=1)
         recent_comments = Comment.objects.filter(
@@ -1265,7 +1305,6 @@ class CommentViewSet(viewsets.ModelViewSet):  # 定义评论视图集
                 'code': 'too_many_requests'
             })
             
-        # 设置回复对象
         parent_id = self.request.data.get('parent')
         reply_to = None
         if parent_id:
@@ -1590,8 +1629,7 @@ class LikeViewSet(viewsets.ModelViewSet):  # 定义点赞视图集
         # "被点赞通知"是用户反馈里提到的待做功能，等真正实现通知模型后再接回来，
         # 现在先移除这个必然报错的调用，避免留一个 500 的公开接口。
 
-        # 返回创建成功的响应
-        serializer = self.get_serializer(like)  # 序列化点赞数据
+        serializer = self.get_serializer(like)
         headers = self.get_success_headers(serializer.data)  # 获取成功头
         return Response(  # 返回成功响应
             serializer.data,

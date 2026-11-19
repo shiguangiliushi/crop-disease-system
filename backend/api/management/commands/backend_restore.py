@@ -161,6 +161,11 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     def _list(self, root: Path) -> None:
+        """列出备份目录下的每一份：时间、体积与几个关键表条数（清单读不出就留占位符）。
+
+        ⚠️ 这里**只读清单**，不校验内容 —— "这份到底能不能恢复"得去跑 `backup_verify`；
+        两者混淆会让人以为列表正常就等于备份可用。
+        """
         backups = bu.list_backups(root)
         if not backups:
             self.stdout.write(f'{root} 下没有任何备份')
@@ -264,6 +269,11 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     def _restore_db(self, target: Path, db_path: Path, *, merge: bool) -> None:
+        """用备份里的库替换当前库；`--merge` 时转 `_merge_db`（只补当前库缺失的行）。
+
+        ⚠️ 写回走 SQLite 在线备份 API 而不是 `copy2`：服务还开着、连接没关时也能以事务
+        替换内容，否则会得到一份"复制到一半"的库 —— 那比没有恢复更糟。
+        """
         source = target / bu.DB_NAME
         if merge:
             self._merge_db(source, db_path)
@@ -337,6 +347,11 @@ class Command(BaseCommand):
             self.stdout.write('  （当前库没有缺失的行，未改动任何记录）')
 
     def _restore_media(self, target: Path, media_root: Path, *, overwrite: bool) -> None:
+        """把媒体包解包进 MEDIA_ROOT；默认**只补缺失文件**，`--overwrite-media` 才覆盖同名文件。
+
+        ⚠️ 每个成员都先 `resolve()` 再确认落在 MEDIA_ROOT 内：恢复是"读外部文件"的动作，
+        必须按不可信输入防目录穿越（`../` 成员会把文件写到媒体目录之外）。
+        """
         archive = target / bu.MEDIA_ARCHIVE
         if not archive.exists():
             self.stdout.write(self.style.WARNING('  ⚠ 备份里没有媒体包，跳过'))

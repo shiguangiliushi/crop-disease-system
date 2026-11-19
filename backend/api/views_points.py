@@ -36,6 +36,11 @@ class MyPointLogsView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """积分流水分页；`page_size` 上限 50（防止一次把全部流水拉走）。
+
+        手工切片而不是用 DRF 分页：返回结构要带 `balance` 快照，与
+        `points_summary` 的字段口径保持一致，前端只写一套渲染。
+        """
         queryset = PointLog.objects.filter(user=request.user)
         total = queryset.count()
 

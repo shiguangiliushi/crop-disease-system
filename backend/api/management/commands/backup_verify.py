@@ -100,6 +100,11 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     def _verify_one(self, target: Path, *, skip_media: bool) -> int:
+        """校验一份备份，返回发现的问题数（0 = 可用）：清单 → 校验和 → 库 → 媒体包。
+
+        ⚠️ 清单或产物缺失时**提前返回**：后面每一步都依赖清单里的 sha256/条数，
+        硬着头皮跑下去只会刷出一堆次生的"缺失"，把真正的原因埋掉。
+        """
         problems = 0
         name = target.name
         self.stdout.write(self.style.MIGRATE_HEADING(f'校验 {name}'))

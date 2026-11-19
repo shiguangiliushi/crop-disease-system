@@ -1,14 +1,19 @@
-import logging  # 导入日志模块
+"""在 DRF 之前统一校验 `Token`（每设备一张的 `DeviceToken` + 老 `Token`）与有效期。
+
+⚠️ 过期时**不能**在这里直接返 401：本中间件跑在 DRF 之前，直接返会绕过统一的
+异常/CORS 处理，响应形状和别处不一致 —— 所以只"按未认证放行"，让 DRF 自己回 401。
+"""
+import logging
 
 from django.conf import settings  # 第 94 批：读 Token 有效期
 from django.utils import timezone  # 第 94 批：判断 Token 是否过期
-from rest_framework.authentication import TokenAuthentication  # 导入DRF Token认证类
-from rest_framework.exceptions import AuthenticationFailed  # 导入认证失败异常
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.authtoken.models import Token  # 导入Token模型（老凭证，兼容用）
 from .models_token import DeviceToken  # 第 231 批：每设备一张的 token
-from django.utils.deprecation import MiddlewareMixin  # 导入中间件基类
+from django.utils.deprecation import MiddlewareMixin
 
-logger = logging.getLogger(__name__)  # 获取日志记录器
+logger = logging.getLogger(__name__)
 
 
 def token_ttl_seconds():
@@ -34,7 +39,7 @@ def is_token_expired(token, now=None):
     return (now - token.created).total_seconds() > ttl
 
 
-class TokenAuthenticationMiddleware(MiddlewareMixin):  # 定义Token认证中间件类
+class TokenAuthenticationMiddleware(MiddlewareMixin):
     """
     自定义Token认证中间件
     处理API请求的Token认证
@@ -51,22 +56,22 @@ class TokenAuthenticationMiddleware(MiddlewareMixin):  # 定义Token认证中间
     （admin 登录时 Django 会按标准流程自行创建会话）。
     """
 
-    def __init__(self, get_response=None):  # 初始化方法
-        self.get_response = get_response  # 设置响应处理器
-        super().__init__(get_response)  # 调用父类初始化
+    def __init__(self, get_response=None):
+        self.get_response = get_response
+        super().__init__(get_response)
 
     def __call__(self, request):  # 调用方法，处理请求
         # 预检请求（OPTIONS）直接通过，不进行认证
-        if request.method == 'OPTIONS':  # 检查是否为OPTIONS请求
+        if request.method == 'OPTIONS':
             return self.get_response(request)  # 直接返回响应
 
         # 对API请求进行Token认证
-        if request.path.startswith('/api/'):  # 检查是否为API请求
+        if request.path.startswith('/api/'):
             # 从请求头获取Token
-            auth_header = request.META.get('HTTP_AUTHORIZATION', '').split()  # 获取认证头并分割
+            auth_header = request.META.get('HTTP_AUTHORIZATION', '').split()
 
             if len(auth_header) == 2 and auth_header[0].lower() == 'token':  # 检查认证头格式
-                token_key = auth_header[1]  # 获取Token值
+                token_key = auth_header[1]
                 try:  # 尝试验证Token
                     # 第 231 批：先认"每设备一张"的 DeviceToken，再退回 DRF 的老 Token。
                     # 两者字段同构（key/user/created），后面那套过期判定与赋值不用分叉。
@@ -98,13 +103,13 @@ class TokenAuthenticationMiddleware(MiddlewareMixin):  # 定义Token认证中间
                         response['X-Token-Expired'] = '1'  # 给客户端一个明确信号
                         return response
 
-                    request.user = token.user  # 设置请求用户
-                    request.auth = token  # 设置认证Token
-                    logger.debug("User %s authenticated with token", request.user.username)  # 记录认证成功信息
+                    request.user = token.user
+                    request.auth = token
+                    logger.debug("User %s authenticated with token", request.user.username)
                 except (DeviceToken.DoesNotExist, Token.DoesNotExist):  # 两种都查不到
                     # 🔒 不要把 token 明文写进日志（哪怕它是无效的：它可能只是过期/被截断的真实凭证，
                     #    而且这行是 WARNING 级，会稳定落盘）。只记录"收到无效 token"这个事实。
-                    logger.warning("Invalid token presented for %s", request.path)  # 记录警告信息
+                    logger.warning("Invalid token presented for %s", request.path)
                     pass  # 继续执行，让DRF的认证类处理
 
             # 记录请求信息用于调试
@@ -112,11 +117,11 @@ class TokenAuthenticationMiddleware(MiddlewareMixin):  # 定义Token认证中间
             #     logger.debug(f"Auth header: {request.META.get('HTTP_AUTHORIZATION')}")
             #   它会为**每一个 API 请求**把完整的 `Token xxxxxxxx` 写进 logs/debug.log，
             #   等于把用户凭证持久化到磁盘。已删除，且不得再加回。
-            logger.debug("Request path: %s", request.path)  # 记录请求路径
+            logger.debug("Request path: %s", request.path)
             logger.debug(
                 "User authenticated: %s",
                 request.user.is_authenticated if hasattr(request, 'user') else 'No user',
-            )  # 记录用户认证状态
+            )
 
-        response = self.get_response(request)  # 获取响应
-        return response  # 返回响应
+        response = self.get_response(request)
+        return response

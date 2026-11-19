@@ -55,6 +55,12 @@ class FollowListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request, user_id=None, direction='followers'):
+        """粉丝 / 关注列表；无 `user_id` 时取当前登录用户（`/users/me/following/`）。
+
+        列表是内存里的对象（`Follow` 行取出的 user），不是 queryset —— 所以分页是
+        手工做的，`count` 也就不能靠 `paginator.page.paginator.count` 之外再查一次。
+        与本列表每个人的关注关系用一次查询换算成集合，避免每条一次 exists。
+        """
         # `/api/users/me/following/` 只传 direction（没有 user_id）→ 用当前登录用户
         if user_id is None:
             if not request.user.is_authenticated:
@@ -113,6 +119,12 @@ class FollowToggleView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """toggle 关注关系：已关注则取消，未关注则建立并通知/加分。
+
+        不能关注自己（返回 400 而不是静默成功）：`Follow` 若允许自己关注自己，
+        粉丝数和个人主页上的列表会同时出现"自己"，很多统计口径都会跟着错。
+        通知与积分都是**尽力而为**（失败只记日志），不能因为通知挂了就回滚关注。
+        """
         try:
             target = User.objects.get(pk=user_id)
         except User.DoesNotExist:

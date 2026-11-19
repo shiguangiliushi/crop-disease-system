@@ -1,3 +1,9 @@
+"""行业新闻的 ViewSet：列表筛选/排序、标签聚合、相关推荐，以及编辑端的 AI 辅助动作。
+
+⚠️ "对外可见"不止 `is_published=True`，还要求 `published_at` 已到点（定时发布）；
+列表的 query 参数是手写解析的，新增一个就必须同时登记进 `NEWS_*_OPENAPI_PARAMETERS`，
+否则文档里看不到它（drf-spectacular 推导不到手写 `query_params`）。
+"""
 from rest_framework import status, viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response

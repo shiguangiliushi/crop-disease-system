@@ -122,6 +122,10 @@ class AdminFeedbackDatasetStatsView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """纠错样本闭环度量：攒了多少可训练样本、模型误判长什么样、上次导出到哪。
+
+        误判率的分母只算"明确表过态"的反馈 —— `is_correct` 为空的历史数据不该拉低指标。
+        """
         if not _can_view_dataset_stats(request.user):
             return Response({'detail': '只有管理员可以查看样本统计'}, status=403)
 
@@ -190,6 +194,12 @@ class AdminDashboardView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """管理端看板聚合接口：一次请求给齐总量、趋势与分布。
+
+        ⚠️ 日期一律用 `timezone.localdate()` 而不是 `now().date()`：后者是 UTC 日期，
+        本地 00:00–08:00 会与 TruncDay 的本地口径差一天（第 69 批「今日识别」恒为 0）。
+        贡献榜 / 最近注册只给全权管理员，编辑员只看聚合数字。
+        """
         if not _can_view_dashboard(request.user):
             return Response({'detail': '只有管理员可以查看数据看板'}, status=403)
 
@@ -425,6 +435,11 @@ class AdminNewsStatsView(APIView):
         responses={200: NewsStatsResponseSchema},
     )
     def get(self, request):
+        """行业动态看板：总量、发布趋势、分类分布、阅读 Top 与标签云。
+
+        口径：趋势/分类/Top/标签云只算**已发布**（草稿不该算进内容产出），
+        而阅读量与总量按全部新闻统计；查看权限与总看板同一档（CONTENT）。
+        """
         if not _can_view_dashboard(request.user):
             return Response({'detail': '没有权限查看新闻数据看板'}, status=403)
 

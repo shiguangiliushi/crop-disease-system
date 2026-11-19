@@ -1,3 +1,9 @@
+/**
+ * 路由表 + 全局导航守卫（登录态、管理端权限、未保存改动确认）。
+ * ----------------------------------------------------------------------------
+ * 页面全部走动态 import 懒加载；守卫里用到的 `t` / `locale` 必须在本文件顶部静态导入 ——
+ * 漏了不会构建失败，而是**非管理员访问 /admin/\* 时抛 ReferenceError**，导航卡在守卫里。
+ */
 import { createRouter, createWebHistory } from 'vue-router'
 import { watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'

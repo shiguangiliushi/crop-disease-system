@@ -535,6 +535,7 @@ export default {
       announcementDialog.value = true;
     };
 
+    /** 公告的新建与编辑共用；标题/正文都必填，成功后公告列表与通知列表一起刷新 */
     const saveAnnouncement = async () => {
       if (!announcementForm.title.trim() || !announcementForm.content.trim()) {
         ElMessage.warning(t('notify.titleBodyRequired'));

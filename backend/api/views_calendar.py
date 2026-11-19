@@ -139,6 +139,7 @@ class CalendarView(APIView):
         responses={200: CalendarResponseSchema},
     )
     def get(self, request):
+        """先解析 month 再算区间：把 `_month_bounds` 挪到解析之前会 UnboundLocalError（第 301 批踩过）。"""
         from django.utils import timezone
         today = timezone.localdate()
 
@@ -351,6 +352,7 @@ class CalendarTaskListView(APIView):
         responses={201: OpenApiResponse(description='已创建')},
     )
     def post(self, request):
+        """task_type 不认识就降级成 `other`（不报错）；同一 (作物, 月份, 标题) 视为重复，挡在入口。"""
         if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -400,6 +402,7 @@ class CalendarTaskDetailView(APIView):
         responses={200: OpenApiResponse(description='已更新')},
     )
     def patch(self, request, pk):
+        """逐个字段判断「传没传」再改：PATCH 里空串是「要清空」，和「没传」必须区分开。"""
         if not _can_manage_calendar(request.user):
             return Response({'detail': '只有管理员可以维护种植日历'}, status=status.HTTP_403_FORBIDDEN)
         task = self._get(pk)
@@ -490,6 +493,7 @@ class TaskReminderListView(APIView):
         responses={201: TaskReminderSchema},
     )
     def post(self, request):
+        """`message_id` 只在**自己会话**的 assistant 消息里查：否则可以拿别人的消息 id 建提醒，等于越权读内容。"""
         from .models_assistant import AssistantMessage
         from .models_calendar import UserTaskReminder
 

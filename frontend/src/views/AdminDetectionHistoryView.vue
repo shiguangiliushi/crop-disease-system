@@ -334,6 +334,7 @@ export default {
       detailVisible.value = true;
     };
 
+    /** 单条删除识别记录；确认框里带上病害与用户名，避免在一堆相似行里删错人 */
     const removeRow = async (row) => {
       try {
         await ElMessageBox.confirm(

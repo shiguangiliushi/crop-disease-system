@@ -20,15 +20,15 @@ import json
 import re
 import time
 from urllib.parse import urlparse  # 第 401 批：原文链接只允许 http/https
-from rest_framework import serializers  # 导入DRF序列化器模块
+from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field  # 第 401 批：轻量病害列表的 schema 类型
-from django.db.models import Count  # 导入Django计数聚合函数
+from django.db.models import Count
 from django.utils import timezone  # 第 91 批：反馈里的识别摘要要按本地时区展示
 from .models import (
     CustomUser, PestInfo, PreventionMethod, DetectionHistory, 
     Feedback, News, SensitiveWord, CropHealthProfile, NewsSubscription
-)  # 导入模型类
-from .models_forum import Post, Comment, Like, ForumBoard  # 导入论坛模型类
+)
+from .models_forum import Post, Comment, Like, ForumBoard
 # 第 124 批：对象级约束里的"管理员例外"统一用 is_full_admin()（不是能力判定）
 from .capabilities import is_full_admin
 # 第 106 批：密码策略唯一来源（注册 / 邮箱重置 / 修改密码三处共用）
@@ -122,10 +122,10 @@ class SocialFieldsMixin:
         return points_summary(obj)
 
 
-class UserProfileSerializer(SocialFieldsMixin, serializers.ModelSerializer):  # 定义用户资料序列化器
+class UserProfileSerializer(SocialFieldsMixin, serializers.ModelSerializer):
     """用户资料序列化器（本人或管理员查看时使用，含邮箱等）"""
-    avatar = serializers.SerializerMethodField()  # 定义头像字段为方法字段
-    is_staff = serializers.BooleanField(read_only=True)  # 添加管理员状态字段
+    avatar = serializers.SerializerMethodField()
+    is_staff = serializers.BooleanField(read_only=True)
     # 第 40 批：社交数据（实现见 SocialFieldsMixin）
     following_count = serializers.SerializerMethodField()
     follower_count = serializers.SerializerMethodField()
@@ -133,15 +133,15 @@ class UserProfileSerializer(SocialFieldsMixin, serializers.ModelSerializer):  # 
     is_self = serializers.SerializerMethodField()
     points = serializers.SerializerMethodField()  # 第 42 批
 
-    class Meta:  # 定义元数据
-        model = CustomUser  # 关联用户模型
+    class Meta:
+        model = CustomUser
         fields = ('id', 'username', 'email', 'first_name', 'last_name', 'role',
                   'bio', 'date_joined', 'last_login', 'avatar', 'is_staff',
                   'following_count', 'follower_count', 'is_following', 'is_self',
                   'points')  # 包含的字段（points 见第 42 批）
-        read_only_fields = ('id', 'date_joined', 'last_login', 'is_staff')  # 只读字段
+        read_only_fields = ('id', 'date_joined', 'last_login', 'is_staff')
 
-    def get_avatar(self, obj):  # 定义获取头像方法
+    def get_avatar(self, obj):
         # 返回真实头像地址（第 23 批：新增 CustomUser.avatar 字段后不再是 None）
         return _user_avatar_url(obj, self.context.get('request'))
 
@@ -166,8 +166,8 @@ class UserPublicProfileSerializer(SocialFieldsMixin, serializers.ModelSerializer
     # `CustomUser.points` 整数字段，前端拿到的是数字而不是 {points, level, ...} 汇总。
     points = serializers.SerializerMethodField()
 
-    class Meta:  # 定义元数据
-        model = CustomUser  # 关联用户模型
+    class Meta:
+        model = CustomUser
         fields = (
             'id', 'username', 'first_name', 'last_name', 'role', 'bio', 'date_joined', 'avatar',
             'following_count', 'follower_count', 'is_following', 'is_self',
@@ -182,8 +182,8 @@ class UserPublicProfileSerializer(SocialFieldsMixin, serializers.ModelSerializer
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     """用户资料更新（仅允许修改这几个安全字段）"""
 
-    class Meta:  # 定义元数据
-        model = CustomUser  # 关联用户模型
+    class Meta:
+        model = CustomUser
         fields = ('first_name', 'last_name', 'email', 'bio')
 
     def validate_email(self, value):
@@ -204,15 +204,15 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         return (value or '').strip()
 
 
-class UserStatsSerializer(serializers.ModelSerializer):  # 定义用户统计信息序列化器
+class UserStatsSerializer(serializers.ModelSerializer):
     """用户统计信息序列化器"""
     post_count = serializers.IntegerField(read_only=True)  # 帖子数量字段
     comment_count = serializers.IntegerField(read_only=True)  # 评论数量字段
     like_count = serializers.IntegerField(read_only=True)  # 点赞数量字段
 
-    class Meta:  # 定义元数据
-        model = CustomUser  # 关联用户模型
-        fields = ('post_count', 'comment_count', 'like_count')  # 包含的字段
+    class Meta:
+        model = CustomUser
+        fields = ('post_count', 'comment_count', 'like_count')
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
@@ -334,7 +334,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         return self._annotated_or_count(obj, 'detection_count', 'detectionhistory_set')
 
 
-class CustomUserSerializer(serializers.ModelSerializer):  # 定义用户序列化器
+class CustomUserSerializer(serializers.ModelSerializer):
     """
     注册用的用户序列化器（**这是公开接口 AllowAny 的那一个**）。
 
@@ -347,15 +347,15 @@ class CustomUserSerializer(serializers.ModelSerializer):  # 定义用户序列�
     于是同一套系统里"注册能过但改不成"的密码是存在的（第 106 批统一为 8）。
     """
 
-    class Meta:  # 定义元数据
-        model = CustomUser  # 关联用户模型
+    class Meta:
+        model = CustomUser
         # ⚠️ password 必须列进 fields：只写 extra_kwargs 是不够的。
         # 之前 fields 里没有 password，DRF 根本不会接收它，validated_data 里也就没有
         # password → create() 里 CustomUser.objects.create_user(**validated_data) 相当于
         # 不传密码 → Django 会设置“不可用密码”（has_usable_password() == False）。
         # 实测后果：注册接口返回 201，但用同一组账号密码永远登录不上。
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'role', 'password')  # 包含的字段
-        extra_kwargs = {  # 额外参数
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'role', 'password')
+        extra_kwargs = {
             # write_only：保证任何响应体里都不会出现密码
             # 第 106 批：min_length 取自统一策略（8），不再写死一个和别处不同的数字。
             # 真正的规则（含"不能纯数字"与 Django 内置弱口令校验）在
@@ -381,9 +381,9 @@ class CustomUserSerializer(serializers.ModelSerializer):  # 定义用户序列�
             raise serializers.ValidationError(problem)
         return value
 
-    def create(self, validated_data):  # 定义创建方法
-        user = CustomUser.objects.create_user(**validated_data)  # 创建用户
-        return user  # 返回用户对象
+    def create(self, validated_data):
+        user = CustomUser.objects.create_user(**validated_data)
+        return user
 
     # 第 35 批：服务端强校验用户名格式与唯一性
     # （此前注册只靠前端提示，服务端对格式没有任何约束：
@@ -419,20 +419,20 @@ class PreventionMethodSerializer(serializers.ModelSerializer):
 
 
 # New Serializer for the List View (more lightweight)
-class PestInfoListSerializer(serializers.ModelSerializer):  # 定义病害信息列表序列化器
-    image = serializers.SerializerMethodField()  # 定义图片字段为方法字段
+class PestInfoListSerializer(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
 
-    class Meta:  # 定义元数据
-        model = PestInfo  # 关联病害信息模型
+    class Meta:
+        model = PestInfo
         fields = ('id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'symptoms', 'symptoms_en',
-                  'english_identifier', 'image', 'scientific_name', 'reviewed_at')  # 包含的字段
+                  'english_identifier', 'image', 'scientific_name', 'reviewed_at')
         # 第 192 批补 `scientific_name`：列表页展示学名是常见需求，且它很短（最长 60 字），
         # 不会让这个"轻量"序列化器变重。**不加 `sources`** —— 那是详情才需要的。
 
-    def get_image(self, obj):  # 定义获取图片方法
+    def get_image(self, obj):
         if obj.image and hasattr(obj.image, 'url'):  # 检查图片是否存在
-            return obj.image.url  # 返回图片URL
-        return ''  # 返回空字符串
+            return obj.image.url
+        return ''
 
 
 class CropHealthProfileSerializer(serializers.ModelSerializer):  # 第 192 批：作物健康管理档案
@@ -458,36 +458,41 @@ class CropHealthProfileSerializer(serializers.ModelSerializer):  # 第 192 批�
 
 
 # Serializer for the Detail View (with all fields)
-class PestInfoDetailSerializer(serializers.ModelSerializer):  # 定义病害信息详情序列化器
-    image = serializers.SerializerMethodField()  # 定义图片字段为方法字段
-    trigger = serializers.SerializerMethodField()  # 定义发病规律字段为方法字段
+class PestInfoDetailSerializer(serializers.ModelSerializer):
+    """病害百科详情（读路径）：完整字段 + 防治方法 + 健康管理档案。
+
+    ⚠️ `health_profile` 用 SerializerMethodField 而不是直接引用反向 OneToOne ——
+    关系不存在时后者抛 RelatedObjectDoesNotExist，详情接口会 500 而不是返回 null。
+    """
+    image = serializers.SerializerMethodField()
+    trigger = serializers.SerializerMethodField()
     trigger_en = serializers.SerializerMethodField()  # 第 72 批：发病规律（英文）
-    prevention_methods = PreventionMethodSerializer(many=True, read_only=True)  # 定义防治方法字段
-    crop_type = serializers.CharField(read_only=True)  # 添加作物类型字段
-    description = serializers.CharField(read_only=True)  # 添加描述字段
-    english_identifier = serializers.CharField(read_only=True)  # 添加英文标识符字段
+    prevention_methods = PreventionMethodSerializer(many=True, read_only=True)
+    crop_type = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True)
+    english_identifier = serializers.CharField(read_only=True)
     # 第 192 批：健康管理档案（只有 12 条「健康X」词条有；用 SerializerMethodField 而不是
     # 直接写 `health_profile`，因为 OneToOne 反向关系不存在时 DRF 会抛 RelatedObjectDoesNotExist，
     # 而不是返回 null —— 详情接口不能因为"这条没有档案"就 500）。
     health_profile = serializers.SerializerMethodField()
 
-    class Meta:  # 定义元数据
-        model = PestInfo  # 关联病害信息模型
+    class Meta:
+        model = PestInfo
         fields = [
             'id', 'name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier', 'image', 
             'symptoms', 'symptoms_en', 'description', 'description_en', 'trigger', 'trigger_en',
             'prevention_methods', 'scientific_name', 'sources', 'health_profile', 'reviewed_at'
-        ]  # 包含的字段
+        ]
         # 第 192 批新增 `scientific_name` / `sources` / `health_profile`：
         # 前两个来自校准版知识库（学名 + 权威来源 URL），助手回答要引用 sources；
         # 前端此前未引用它们，加字段是纯新增。
 
-    def get_image(self, obj):  # 定义获取图片方法
+    def get_image(self, obj):
         if obj.image and hasattr(obj.image, 'url'):  # 检查图片是否存在
-            return obj.image.url  # 返回图片URL
-        return ''  # 返回空字符串
+            return obj.image.url
+        return ''
 
-    def get_trigger(self, obj):  # 定义获取发病规律方法
+    def get_trigger(self, obj):
         return obj.description or '暂无发病规律信息'  # 返回描述或默认文本
 
     def get_trigger_en(self, obj):  # 第 72 批：发病规律的英文版本
@@ -501,15 +506,15 @@ class PestInfoDetailSerializer(serializers.ModelSerializer):  # 定义病害信�
 
 
 # New serializer for history, including prevention methods
-class PestInfoForHistorySerializer(serializers.ModelSerializer):  # 定义历史记录病害信息序列化器
-    prevention_methods = PreventionMethodSerializer(many=True, read_only=True)  # 定义防治方法字段
+class PestInfoForHistorySerializer(serializers.ModelSerializer):
+    prevention_methods = PreventionMethodSerializer(many=True, read_only=True)
 
-    class Meta:  # 定义元数据
-        model = PestInfo  # 关联病害信息模型
+    class Meta:
+        model = PestInfo
         fields = ['name', 'name_en', 'crop_type', 'crop_type_en', 'symptoms', 'symptoms_en',
                   'description_en', 'prevention_methods',
                   # 第 244 批：带上模型类名，识别历史页的"追问助手"靠它把回答锚定到这条病害
-                  'english_identifier']  # 包含的字段
+                  'english_identifier']
 
 
 class FlexibleJSONField(serializers.Field):
@@ -626,6 +631,11 @@ class PestInfoWriteSerializer(serializers.ModelSerializer):
         return pest
 
     def update(self, instance, validated_data):
+        """全量更新病害词条：先存主表，再整体替换防治方法。
+
+        ⚠️ `prevention_methods` 缺席（`None`）表示请求里没带这个字段，此时**保留**已有方法；
+        只有显式传了（哪怕空列表）才会清空 —— 前端"只改名字"的表单靠这条才不会被清库。
+        """
         methods = validated_data.pop('prevention_methods', None)
         clear_image = validated_data.pop('clear_image', False)
 
@@ -647,23 +657,28 @@ class PestInfoWriteSerializer(serializers.ModelSerializer):
         return PestInfoDetailSerializer(instance, context=self.context).data
 
 
-import logging  # 导入日志模块
+import logging
 
-logger = logging.getLogger(__name__)  # 获取日志记录器
+logger = logging.getLogger(__name__)
 
 
 from django.utils import timezone
 from django.conf import settings
 
-class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测历史序列化器
-    user = serializers.SerializerMethodField()  # 定义用户字段为方法字段
-    pest_info = serializers.SerializerMethodField()  # 定义病害信息字段为方法字段
-    image = serializers.SerializerMethodField()  # 定义图片字段为方法字段
-    disease_name = serializers.SerializerMethodField()  # 定义病害名称字段为方法字段
-    symptoms = serializers.SerializerMethodField()  # 定义症状字段为方法字段
-    suggestion = serializers.SerializerMethodField()  # 定义建议字段为方法字段
-    annotated_image_url = serializers.SerializerMethodField()  # 定义标注图片URL字段为方法字段
-    timestamp_formatted = serializers.SerializerMethodField()  # 添加格式化时间字段
+class DetectionHistorySerializer(serializers.ModelSerializer):
+    """识别历史的读序列化器（列表与详情共用，字段多、回退分支也多）。
+
+    ⚠️ `get_pest_info()` 会在 **GET 期间写库**（把模糊匹配到的词条回填到 `pest_info`），
+    这是修历史脏数据的一次性例外；它的兜底字典必须与 `PestInfoForHistorySerializer` 保持同形。
+    """
+    user = serializers.SerializerMethodField()
+    pest_info = serializers.SerializerMethodField()
+    image = serializers.SerializerMethodField()
+    disease_name = serializers.SerializerMethodField()
+    symptoms = serializers.SerializerMethodField()
+    suggestion = serializers.SerializerMethodField()
+    annotated_image_url = serializers.SerializerMethodField()
+    timestamp_formatted = serializers.SerializerMethodField()
 
     def get_user(self, obj):
         if obj.user:
@@ -674,17 +689,17 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
             }
         return None
 
-    def get_pest_info(self, obj):  # 定义获取病害信息方法
+    def get_pest_info(self, obj):
         """Custom getter for pest_info with detailed debugging"""
-        logger.debug(f'[DEBUG] Getting pest_info for DetectionHistory ID: {obj.id}')  # 记录调试信息
+        logger.debug(f'[DEBUG] Getting pest_info for DetectionHistory ID: {obj.id}')
 
         # 检查 pest_info 是否存在
         if not hasattr(obj, 'pest_info'):  # 检查属性是否存在
-            logger.warning(f'[WARNING] DetectionHistory {obj.id} has no pest_info attribute')  # 记录警告信息
-            return None  # 返回空值
+            logger.warning(f'[WARNING] DetectionHistory {obj.id} has no pest_info attribute')
+            return None
 
         if obj.pest_info is None:  # 检查病害信息是否为空
-            logger.warning(  # 记录警告信息
+            logger.warning(
                 f"[WARNING] DetectionHistory {obj.id} has pest_info=None. "
                 f"Detection result: {getattr(obj, 'detection_result', 'N/A')}. "
                 f"Created at: {getattr(obj, 'timestamp', 'N/A')}"
@@ -692,32 +707,32 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
             # 尝试通过 detection_result 查找对应的 PestInfo
             if hasattr(obj, 'detection_result') and obj.detection_result:  # 检查检测结果是否存在
                 try:  # 尝试查找匹配的病害信息
-                    from django.db.models import Q  # 导入查询工具
-                    from .models import PestInfo  # 导入病害信息模型
+                    from django.db.models import Q
+                    from .models import PestInfo
 
                     # 尝试通过 detection_result 查找匹配的 PestInfo
-                    matching_pest = PestInfo.objects.filter(  # 查询匹配的病害信息
+                    matching_pest = PestInfo.objects.filter(
                         Q(name__icontains=obj.detection_result) |  # 名称包含检测结果
                         Q(english_identifier__iexact=obj.detection_result)  # 英文标识符匹配检测结果
-                    ).first()  # 获取第一个匹配项
+                    ).first()
 
-                    if matching_pest:  # 检查是否找到匹配项
+                    if matching_pest:
                         logger.info(
-                            f'[INFO] Found matching pest_info for detection_result "{obj.detection_result}": {matching_pest.id} - {matching_pest.name}')  # 记录信息
+                            f'[INFO] Found matching pest_info for detection_result "{obj.detection_result}": {matching_pest.id} - {matching_pest.name}')
                         # 更新记录以修复关联
-                        obj.pest_info = matching_pest  # 设置病害信息
-                        obj.save(update_fields=['pest_info'])  # 保存更新
-                        return PestInfoForHistorySerializer(matching_pest, context=self.context).data  # 返回序列化数据
+                        obj.pest_info = matching_pest
+                        obj.save(update_fields=['pest_info'])
+                        return PestInfoForHistorySerializer(matching_pest, context=self.context).data
                     else:  # 如果未找到匹配项
                         logger.warning(
-                            f'[WARNING] No matching PestInfo found for detection_result: {obj.detection_result}')  # 记录警告信息
+                            f'[WARNING] No matching PestInfo found for detection_result: {obj.detection_result}')
                 except Exception as e:  # 捕获异常
-                    logger.error(f'[ERROR] Error trying to find matching PestInfo: {str(e)}')  # 记录错误信息
-            return None  # 返回空值
+                    logger.error(f'[ERROR] Error trying to find matching PestInfo: {str(e)}')
+            return None
 
         try:  # 尝试序列化病害信息
             # 记录详细的 pest_info 信息
-            logger.debug(  # 记录调试信息
+            logger.debug(
                 f'[DEBUG] Found pest_info for DetectionHistory {obj.id}:\n'
                 f'  - PestInfo ID: {obj.pest_info.id}\n'
                 f'  - Name: {getattr(obj.pest_info, "name", "N/A")}\n'
@@ -727,11 +742,11 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
             # 使用原始序列化器但添加更多错误处理
             serialized_data = PestInfoForHistorySerializer(obj.pest_info, context=self.context).data  # 序列化数据
             if not serialized_data.get('name'):  # 检查名称是否存在
-                logger.warning(f'[WARNING] Serialized pest_info has no name. Raw data: {serialized_data}')  # 记录警告信息
-            return serialized_data  # 返回序列化数据
+                logger.warning(f'[WARNING] Serialized pest_info has no name. Raw data: {serialized_data}')
+            return serialized_data
 
         except Exception as e:  # 捕获异常
-            logger.error(  # 记录错误信息
+            logger.error(
                 f'[ERROR] Error serializing pest_info for DetectionHistory {obj.id}: {str(e)}\n'
                 f'  - PestInfo ID: {obj.pest_info.id if obj.pest_info else "None"}\n'
                 f'  - Error type: {type(e).__name__}\n'
@@ -739,18 +754,18 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
             )
             # 返回一个包含基本信息的字典，而不是 None
             if obj.pest_info:  # 检查病害信息是否存在
-                return {  # 返回基本信息
+                return {
                     'id': obj.pest_info.id,  # ID
                     'name': getattr(obj.pest_info, 'name', '未知病害'),  # 名称
                     'crop_type': getattr(obj.pest_info, 'crop_type', '未知作物'),  # 作物类型
                     'symptoms': getattr(obj.pest_info, 'symptoms', '暂无症状描述'),  # 症状
                     'prevention_methods': []  # 防治方法
                 }
-            return None  # 返回空值
+            return None
 
-    class Meta:  # 定义元数据
+    class Meta:
         model = DetectionHistory  # 关联检测历史模型
-        fields = [  # 包含的字段
+        fields = [
             'id', 'user', 'image', 'detection_result', 'pest_info',
             'timestamp', 'timestamp_formatted', 'confidence', 'disease_name', 'symptoms',
             'suggestion', 'annotated_image_url'
@@ -771,20 +786,20 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
         # Format the datetime as a string in the format: YYYY-MM-DD HH:MM:SS
         return local_time.strftime('%Y-%m-%d %H:%M:%S')
 
-    def get_image(self, obj):  # 定义获取图片方法
+    def get_image(self, obj):
         if not obj.image:  # 检查图片是否存在
-            return None  # 返回空值
+            return None
 
-        request = self.context.get('request')  # 获取请求对象
+        request = self.context.get('request')
         try:  # 尝试构建图片URL
             # 确保URL以斜杠开头
-            url = obj.image.url  # 获取图片URL
-            if not url.startswith('/'):  # 检查是否以斜杠开头
-                url = '/' + url  # 添加斜杠
+            url = obj.image.url
+            if not url.startswith('/'):
+                url = '/' + url
 
             # 构建完整的URL
             if request is not None:  # 检查请求对象是否存在
-                return request.build_absolute_uri(url)  # 返回绝对URL
+                return request.build_absolute_uri(url)
             else:  # 如果请求对象不存在
                 # 如果没有request对象，返回完整URL（使用settings中的配置）
                 from django.conf import settings
@@ -792,9 +807,9 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
                 return f"{base_url.rstrip('/')}{url}"
 
         except Exception as e:  # 捕获异常
-            logger = logging.getLogger(__name__)  # 获取日志记录器
-            logger.error(f"Error generating image URL: {str(e)}")  # 记录错误信息
-            return None  # 返回空值
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error generating image URL: {str(e)}")
+            return None
 
     def get_disease_name(self, obj):
         # 优先从关联的pest_info获取病害名称
@@ -803,42 +818,42 @@ class DetectionHistorySerializer(serializers.ModelSerializer):  # 定义检测�
         # 如果没有关联的pest_info，则使用detection_result
         return obj.detection_result or '未知病害'
 
-    def get_symptoms(self, obj):  # 定义获取症状方法
+    def get_symptoms(self, obj):
         if not obj.pest_info:  # 检查病害信息是否存在
             return '该病害暂无详细症状描述'  # 返回默认文本
-        return obj.pest_info.symptoms  # 返回症状
+        return obj.pest_info.symptoms
 
-    def get_suggestion(self, obj):  # 定义获取建议方法
+    def get_suggestion(self, obj):
         if not obj.pest_info:  # 检查病害信息是否存在
             return '未找到匹配的病害信息，建议重新识别或联系管理员。'  # 返回默认文本
-        return ''  # 返回空字符串
+        return ''
 
-    def get_annotated_image_url(self, obj):  # 定义获取标注图片URL方法
+    def get_annotated_image_url(self, obj):
         if not obj.annotated_image:  # 检查标注图片是否存在
-            return None  # 返回空值
+            return None
 
-        request = self.context.get('request')  # 获取请求对象
+        request = self.context.get('request')
         try:  # 尝试构建标注图片URL
             # 确保URL以斜杠开头
-            url = obj.annotated_image.url  # 获取标注图片URL
-            if not url.startswith('/'):  # 检查是否以斜杠开头
-                url = '/' + url  # 添加斜杠
+            url = obj.annotated_image.url
+            if not url.startswith('/'):
+                url = '/' + url
 
             # 构建完整的URL
             if request is not None:  # 检查请求对象是否存在
-                return request.build_absolute_uri(url)  # 返回绝对URL
+                return request.build_absolute_uri(url)
             else:  # 如果请求对象不存在
                 # 如果没有request对象，返回相对URL
-                return url  # 返回相对URL
+                return url
 
         except Exception as e:  # 捕获异常
-            logger = logging.getLogger(__name__)  # 获取日志记录器
-            logger.error(f"Error generating annotated image URL: {str(e)}")  # 记录错误信息
-            return None  # 返回空值
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error generating annotated image URL: {str(e)}")
+            return None
 
 
 # 用户反馈序列化器
-class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序列化器
+class FeedbackSerializer(serializers.ModelSerializer):
     """
     用户反馈序列化器
 
@@ -848,7 +863,7 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
     - `disease_name` / `is_correct` 改为可选（一般性意见没有识别结果）；
     - 补 `image_url` 绝对地址，列表里可直接显示缩略图。
     """
-    user = serializers.ReadOnlyField(source='user.username')  # 定义用户字段为只读
+    user = serializers.ReadOnlyField(source='user.username')
     image_url = serializers.SerializerMethodField()
     category_display = serializers.CharField(source='get_category_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -887,9 +902,9 @@ class FeedbackSerializer(serializers.ModelSerializer):  # 定义用户反馈序�
     corrected_pest_name = serializers.SerializerMethodField()
     is_trainable = serializers.BooleanField(read_only=True)  # 模型属性，只读透出
 
-    class Meta:  # 定义元数据
+    class Meta:
         model = Feedback  # 关联用户反馈模型
-        fields = [  # 包含的字段
+        fields = [
             'id', 'user', 'category', 'category_display', 'image', 'image_url',
             'disease_name', 'disease_name_en', 'confidence', 'is_correct', 'suggestion',
             'suggestion_en', 'admin_reply_en', 'translation_stale', 'translation_source',
@@ -1059,12 +1074,17 @@ class RelatedPestBriefSerializer(serializers.Serializer):
 
 
 # 行业新闻序列化器
-class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列化器
-    author_name = serializers.ReadOnlyField(source='author.username')  # 定义作者名字段为只读
-    image_url = serializers.SerializerMethodField()  # 定义图片URL字段为方法字段
-    created_at_formatted = serializers.SerializerMethodField()  # 定义格式化创建时间字段为方法字段
-    image = serializers.ImageField(required=False, allow_null=True)  # 添加image字段用于文件上传
-    tags = serializers.CharField(required=False, allow_blank=True)  # 添加tags字段
+class NewsSerializer(serializers.ModelSerializer):
+    """行业新闻的读写序列化器：`image` 是上传用的文件字段，`image_url` 才是读的地址。
+
+    ⚠️ `views` 只读（否则"最热"排序可以被人为改成任意数字）；`related_pests` 传 id 列表，
+    清空得另传 `clear_related_pests` —— multipart 没法表达"空数组"。
+    """
+    author_name = serializers.ReadOnlyField(source='author.username')
+    image_url = serializers.SerializerMethodField()
+    created_at_formatted = serializers.SerializerMethodField()
+    image = serializers.ImageField(required=False, allow_null=True)
+    tags = serializers.CharField(required=False, allow_blank=True)
     clear_image = serializers.BooleanField(required=False, write_only=True, default=False)  # 置 true 表示移除封面图
     # 第 38 批：定时发布状态（前端用来显示"定时"角标）
     is_pending_schedule = serializers.BooleanField(read_only=True)
@@ -1102,9 +1122,9 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
         label='清空关联病害',
     )
 
-    class Meta:  # 定义元数据
+    class Meta:
         model = News  # 关联行业新闻模型
-        fields = [  # 包含的字段
+        fields = [
             'id', 'title', 'title_en', 'content', 'content_en',
             'image', 'image_url', 'source', 'source_en', 'author_name',
             'is_published', 'is_featured', 'published_at', 'is_pending_schedule',
@@ -1113,13 +1133,13 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
             'created_at', 'created_at_formatted', 'updated_at',
             'category', 'tags', 'clear_image'
         ]
-        read_only_fields = ['author', 'created_at', 'updated_at']  # 只读字段
+        read_only_fields = ['author', 'created_at', 'updated_at']
 
-    def get_image_url(self, obj):  # 定义获取图片URL方法
+    def get_image_url(self, obj):
         if hasattr(obj, 'image') and obj.image:  # 检查图片是否存在
             try:
-                if hasattr(obj.image, 'url') and obj.image.url:  # 检查是否有url属性且不为空
-                    request = self.context.get('request')  # 获取请求对象
+                if hasattr(obj.image, 'url') and obj.image.url:
+                    request = self.context.get('request')
                     if request is not None:  # 检查请求对象是否存在
                         # 构建完整URL并添加时间戳防止缓存
                         url = request.build_absolute_uri(obj.image.url)
@@ -1129,12 +1149,12 @@ class NewsSerializer(serializers.ModelSerializer):  # 定义行业新闻序列�
             except Exception as e:
                 logger.warning("获取图片 URL 失败: %s", e)
                 return None
-        return None  # 返回空值
+        return None
 
-    def get_created_at_formatted(self, obj):  # 定义获取格式化创建时间方法
+    def get_created_at_formatted(self, obj):
         if hasattr(obj, 'created_at') and obj.created_at:  # 检查created_at是否存在
-            return obj.created_at.strftime('%Y-%m-%d %H:%M')  # 返回格式化时间
-        return None  # 返回空值
+            return obj.created_at.strftime('%Y-%m-%d %H:%M')
+        return None
 
     @extend_schema_field(RelatedPestBriefSerializer(many=True))
     def get_related_pest_details(self, obj):

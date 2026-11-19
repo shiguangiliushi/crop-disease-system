@@ -15,6 +15,13 @@
 </template>
 
 <script setup>
+/**
+ * 移动端「编辑资料」页：昵称/邮箱/简介三个字段，保存走增量提交。
+ * ----------------------------------------------------------------------------
+ * ⚠️ 只提交**真正改过**的字段：把没变的 email 一起发过去，后端会判成
+ *    "该邮箱已被其他账号使用"（400）。另外登录响应里的 user 不含 first_name/bio，
+ *    进页面必须单独拉一次资料，否则会出现"保存成功、重进却是空的"。
+ */
 import { onMounted, reactive, ref } from 'vue';
 import { showFailToast, showSuccessToast } from 'vant';
 import { useAuthStore } from '@/stores/auth';

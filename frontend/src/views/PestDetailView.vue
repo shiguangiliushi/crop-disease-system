@@ -163,6 +163,7 @@ const resetPestSubscription = () => {
   pestSubscriptionId.value = null;
 };
 
+/** 重查该词条的订阅状态；用 seq 丢弃过期响应 —— 连续切词条时旧的 check 返回会盖掉新的 */
 const refreshPestSubscription = async () => {
   const id = pest.value?.id;
   const seq = ++pestSubscriptionSeq;
@@ -189,6 +190,7 @@ const refreshPestSubscription = async () => {
   }
 };
 
+/** 订阅/退订：已订阅却拿不到订阅 id 时先重查一次，否则会拿 undefined 去调删除接口 */
 const togglePestSubscription = async () => {
   const id = pest.value?.id;
   if (!isLoggedIn.value || !id || pestSubscriptionLoading.value) return;

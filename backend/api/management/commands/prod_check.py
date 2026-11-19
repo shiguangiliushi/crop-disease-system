@@ -39,6 +39,11 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ 检查项
     def _checks(self):
+        """生产才暴露的那批配置项：每项判成 fail/warn/ok，人读文本随分级一起返回。
+
+        ⚠️ 这里只读 `settings`，不连库不发请求 —— "跑不跑得起来"（缺包、迁移未做、
+        权重缺失）归 `check_env`，两边都绿才算真能上线。
+        """
         db_engine = settings.DATABASES['default'].get('ENGINE', '')
         cache_kind = getattr(settings, 'CACHE_KIND', '')
         console_mail = 'console' in str(settings.EMAIL_BACKEND).lower()

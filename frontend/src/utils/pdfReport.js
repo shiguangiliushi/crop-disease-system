@@ -136,9 +136,13 @@ export const normalizeRecord = (item = {}) => {
 
 /** 生成报告 DOM 结构与样式 */
 export const buildReportHtml = (record, images, logoUrl) => {
+  // 报告编号里的日期取**导出时间**而不是识别时间：同一份记录补导两次会得到两个编号，
+  // 这是刻意的 —— 编号标识的是"这份 PDF"，不是"那次识别"。
   const reportNo = `RPT-${pad(record.id, 4)}-${formatDateStamp()}`;
   const now = formatDateTime(new Date());
 
+  // 原图与标注图各自可选：历史数据里标注图可能缺文件（第 43 批补过一批），
+  // 缺一张不影响出报告，所以两张图分别判断、能出几张出几张。
   const imageFigures = [];
   if (images.original) {
     imageFigures.push(`
@@ -155,6 +159,8 @@ export const buildReportHtml = (record, images, logoUrl) => {
       </figure>`);
   }
 
+  // 防治方法按后端返回的顺序编号；一条都没有时用兜底文案，
+  // 避免报告里出现"防治建议"空章节（农户会以为是系统漏了）。
   const preventionHtml = record.methods.length
     ? record.methods
         .map(
@@ -170,6 +176,8 @@ export const buildReportHtml = (record, images, logoUrl) => {
         .join('')
     : `<p class="rpt-paragraph">${escapeHtml(record.fallbackPrevention || t('reportPdf.fallbackPrevention'))}</p>`;
 
+  // 样式**全部内联**在这段字符串里：它会被注入离屏宿主再交给 html2canvas 截图，
+  // 不能依赖外部样式表（离屏节点拿不到页面的级联）。改样式请直接改下面的 <style>。
   return `
   <div class="rpt-root" style="width:${A4_WIDTH_PX}px;background:#ffffff;font-family:'Microsoft YaHei','PingFang SC','Hiragino Sans GB',SimSun,sans-serif;color:#22312b;">
     <style>

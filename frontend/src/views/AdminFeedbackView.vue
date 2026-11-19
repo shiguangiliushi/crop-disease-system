@@ -760,6 +760,7 @@ export default {
       }
     };
 
+    /** 批量删除反馈；删除会改变统计口径，所以成功后列表与统计页签要一起重取 */
     const bulkRemove = async () => {
       const count = selectedIds.value.length;
       try {

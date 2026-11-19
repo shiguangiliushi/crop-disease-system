@@ -1,5 +1,10 @@
-from rest_framework import permissions  # 导入Django REST Framework权限类
-from .models_forum import ForumBoard, Post, Comment  # 导入论坛相关模型
+"""论坛与病害百科的视图级/对象级权限。
+
+⚠️ "是不是管理员"一律走 `capabilities.is_full_admin()`，不要自己拼
+`is_staff or is_superuser or role == 'ADMIN'` —— 项目里曾有三套并不等价的写法，口径已经收口。
+"""
+from rest_framework import permissions
+from .models_forum import ForumBoard, Post, Comment
 # 第 124 批：管理员口径统一收口到 capabilities.py（此前同一个判定被复制在约 30 处）
 # 第 128 批：内容能力再拆成四个模块 —— 这里守的是**病害百科**，因此问 `pests` 模块
 from .capabilities import MODULE_PESTS, has_content_module, is_full_admin

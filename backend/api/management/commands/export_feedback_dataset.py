@@ -124,6 +124,11 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     def _build_queryset(self, options):
+        """筛出可导出的样本：recognition + is_correct=False + 指定了 corrected_pest。
+
+        ⚠️ 默认只取 verify_status=confirmed（要求人工确认过）；`select_related` 是刻意加的 ——
+        每条都要读 detection.image 与 corrected_pest，不加就是一次导出 N+1 次查询。
+        """
         qs = (
             Feedback.objects
             .filter(category='recognition', is_correct=False, corrected_pest__isnull=False)
@@ -155,6 +160,11 @@ class Command(BaseCommand):
             ))
 
     def _export(self, rows, out_dir: Path):
+        """把样本落成 images/ + labels/(整图框) + manifest.csv + dataset.yaml，返回统计。
+
+        ⚠️ 单条读图失败只累加 skipped 并继续：不能因为一张原图丢了就把整批导出废掉。
+        class_id 由 `_collect_classes` 的排序决定，同一批数据重复导出必须给出同样的编号。
+        """
         images_dir = out_dir / 'images'
         labels_dir = out_dir / 'labels'
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +283,11 @@ class Command(BaseCommand):
             writer.writerows(rows)
 
     def _write_readme(self, out_dir: Path, classes, stats):
+        """生成目录内的 README.txt，把"整图框不是精标"和"默认只导已确认"写进数据里。
+
+        ⚠️ 不能省：数据集一旦离开本仓库，没人会回来读这个命令的 `--help`，
+        而"拿整图框去微调检测模型"正是最容易犯、又看不出错的用法。
+        """
         text = f"""识别纠错数据集（由 export_feedback_dataset 生成）
 ================================================
 

@@ -93,6 +93,10 @@ class SafeRotatingFileHandler(RotatingFileHandler):
         return super().shouldRollover(record)
 
     def doRollover(self):  # noqa: D102  （父类方法，说明见类 docstring）
+        """轮转；抢不到文件就重试，仍失败则退化为"继续追加原文件"并进入冷却窗口。
+
+        承诺是**不丢日志**：允许单文件短暂超过 `maxBytes`，也不把异常抛回 logging。
+        """
         deadline = time.time() + self.retry_seconds
         attempt = 0
         while True:

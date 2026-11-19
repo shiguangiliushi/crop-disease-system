@@ -139,6 +139,13 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         return queryset.filter(is_active=True).filter(VISIBLE_ANNOUNCEMENT_Q)
 
     def perform_create(self, serializer):
+        """保存公告后立即扇出通知（含发布人自己），并落一条审计。
+
+        扇出用 `iterator()` 逐条投递而不是批量 create：`notify()` 失败只记日志、
+        必须一条条独立，某个人失败不该让整次发布 500。
+        `allow_self=True` 是刻意的 —— 广播是运营动作，发布人必须能在通知中心
+        核对"到底发出去了没有"。
+        """
         announcement = serializer.save(created_by=self.request.user)
         # 发布即给全体用户投递一条通知（当前用户规模很小，直接扇出；量大时应改为合并读取）
         # 第 78 批：**包含发布人自己** —— 否则管理员发完公告，自己的通知中心里

@@ -36,6 +36,11 @@ class DeviceTokenAuthentication(authentication.BaseAuthentication):
     keyword = 'Token'
 
     def authenticate(self, request):
+        """只对"确实是我发的 key、但用户已停用"抛异常；不认识的 key 一律返回 None。
+
+        为什么不在这里抛 401：DRF 的认证链一收到 AuthenticationFailed 就中止，
+        老 `Token` 的认证类永远轮不到（见模块开头的说明）。
+        """
         auth = get_authorization_header(request).split()
         if not auth or auth[0].lower() != self.keyword.lower().encode():
             return None

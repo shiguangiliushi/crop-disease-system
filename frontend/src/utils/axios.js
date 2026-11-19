@@ -1,3 +1,10 @@
+/**
+ * 带认证与错误归一化的 axios 封装。
+ * ----------------------------------------------------------------------------
+ * 返回形状与仓库里其他客户端**不同**：这里 resolve 的是 `response.data`，
+ * 而 src/api/index.js 返回完整 AxiosResponse —— 换客户端时调用方的读法要跟着改。
+ * reject 出去的是带 status/data/response 的 Error，两种既有读法都能用（见下方说明）。
+ */
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
 import { t } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言

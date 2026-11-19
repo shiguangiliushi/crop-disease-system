@@ -1,27 +1,32 @@
-from django.contrib import admin  # 导入Django管理后台模块
-from django.contrib.auth.admin import UserAdmin  # 导入用户管理类
-from django.utils.html import format_html  # 导入HTML格式化工具
-from .models import CustomUser, PestInfo, PreventionMethod, DetectionHistory, Feedback, News  # 导入模型
+"""Django 后台的模型注册：列表列、筛选、批量动作与缩略图预览。
+
+⚠️ 后台列里拼 HTML 一律走 `format_html`（它负责转义数据）；缩略图那种方法列的标题
+靠 `方法名.short_description` 赋值，这是 Django 的约定，漏掉就会把方法名当列名显示。
+"""
+from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin
+from django.utils.html import format_html
+from .models import CustomUser, PestInfo, PreventionMethod, DetectionHistory, Feedback, News
 from .models import CropHealthProfile  # 第 192 批：作物健康管理档案（校准版知识库 healthy 记录）
 from .models_audit import AdminAuditLog  # 第 146 批：管理操作日志（只读注册）
-from .models_forum import ForumBoard, Post, Comment, Like  # 导入论坛模型
+from .models_forum import ForumBoard, Post, Comment, Like
 from .models_notify import Announcement, Notification  # 第 37 批：通知与公告
 # 第 49 批：专家咨询（管理员也可以在 Django 后台授予专家、审阅问答）
 from .models_expert import ConsultAnswer, ConsultQuestion, ExpertProfile
 
 
-@admin.register(CustomUser)  # 注册自定义用户模型到管理后台
+@admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):  # 自定义用户管理类
-    list_display = ('username', 'email', 'first_name', 'last_name', 'is_staff')  # 列表显示字段
-    search_fields = ('username', 'email')  # 搜索字段
+    list_display = ('username', 'email', 'first_name', 'last_name', 'is_staff')
+    search_fields = ('username', 'email')
 
 
-@admin.register(PestInfo)  # 注册病害信息模型到管理后台
+@admin.register(PestInfo)
 class PestInfoAdmin(admin.ModelAdmin):  # 病害信息管理类
     # 第 69 批：把英文字段也放进后台，管理员可直接校正机器生成的英文名
-    list_display = ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier')  # 列表显示字段
-    search_fields = ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier')  # 搜索字段
-    list_filter = ('crop_type',)  # 过滤器字段
+    list_display = ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier')
+    search_fields = ('name', 'name_en', 'crop_type', 'crop_type_en', 'english_identifier')
+    list_filter = ('crop_type',)
     # 第 192 批：补上第 192 批新增的 scientific_name / sources，并把此前的英文字段
     # 真正放进表单（`symptoms_en` / `description_en` 此前只存在于模型，后台改不到）。
     fieldsets = (
@@ -77,34 +82,34 @@ class CropHealthProfileAdmin(admin.ModelAdmin):
     )
 
 
-@admin.register(PreventionMethod)  # 注册防治方法模型到管理后台
+@admin.register(PreventionMethod)
 class PreventionMethodAdmin(admin.ModelAdmin):  # 防治方法管理类
-    list_display = ('pest', 'get_category_display')  # 列表显示字段
-    search_fields = ('pest__name',)  # 搜索字段
-    list_filter = ('category', 'pest__crop_type')  # 过滤器字段
+    list_display = ('pest', 'get_category_display')
+    search_fields = ('pest__name',)
+    list_filter = ('category', 'pest__crop_type')
 
-    def get_category_display(self, obj):  # 定义获取类别显示名称方法
-        return obj.get_category_display()  # 返回类别显示名称
+    def get_category_display(self, obj):
+        return obj.get_category_display()
 
-    get_category_display.short_description = 'Category'  # 设置字段显示名称
+    get_category_display.short_description = 'Category'
 
 
-@admin.register(DetectionHistory)  # 注册检测历史模型到管理后台
+@admin.register(DetectionHistory)
 class DetectionHistoryAdmin(admin.ModelAdmin):  # 检测历史管理类
-    list_display = ('user', 'detection_result', 'timestamp')  # 列表显示字段
-    search_fields = ('user__username', 'detection_result')  # 搜索字段
-    list_filter = ('timestamp',)  # 过滤器字段
+    list_display = ('user', 'detection_result', 'timestamp')
+    search_fields = ('user__username', 'detection_result')
+    list_filter = ('timestamp',)
 
 
-@admin.register(Feedback)  # 注册用户反馈模型到管理后台
+@admin.register(Feedback)
 class FeedbackAdmin(admin.ModelAdmin):  # 用户反馈管理类
     # 第 26 批：反馈扩展为通用「意见反馈」后，后台要能一眼看到类型/状态并直接流转
     list_display = ('user', 'category', 'status', 'image_preview', 'disease_name',
-                    'is_correct', 'timestamp', 'handled_at')  # 列表显示字段
-    search_fields = ('user__username', 'disease_name', 'suggestion', 'admin_reply')  # 搜索字段
-    list_filter = ('category', 'status', 'is_correct', 'timestamp')  # 过滤器字段
+                    'is_correct', 'timestamp', 'handled_at')
+    search_fields = ('user__username', 'disease_name', 'suggestion', 'admin_reply')
+    list_filter = ('category', 'status', 'is_correct', 'timestamp')
     list_editable = ('status',)  # 可直接在列表里改处理状态
-    readonly_fields = ('image_preview', 'timestamp')  # 只读字段
+    readonly_fields = ('image_preview', 'timestamp')
     fieldsets = (  # 编辑页分区：先看内容，再写回复
         ('反馈内容', {
             'fields': ('user', 'category', 'suggestion', 'image', 'image_preview', 'timestamp'),
@@ -138,36 +143,36 @@ class FeedbackAdmin(admin.ModelAdmin):  # 用户反馈管理类
         updated = queryset.update(verify_status='rejected')
         self.message_user(request, f'已排除 {updated} 条样本')
 
-    def image_preview(self, obj):  # 定义图片预览方法
+    def image_preview(self, obj):
         if obj.image:  # 检查图片是否存在
             return format_html('<a href="{}" target="_blank"><img src="{}" width="100" /></a>', obj.image.url,
-                               obj.image.url)  # 返回图片HTML
-        return "(无图片)"  # 返回无图片提示
+                               obj.image.url)
+        return "(无图片)"
 
-    image_preview.short_description = '图片预览'  # 设置字段显示名称
+    image_preview.short_description = '图片预览'
 
 
-@admin.register(News)  # 注册新闻模型到管理后台
+@admin.register(News)
 class NewsAdmin(admin.ModelAdmin):  # 新闻管理类
-    list_display = ('title', 'source', 'author', 'created_at', 'is_published')  # 列表显示字段
-    search_fields = ('title', 'content', 'author__username')  # 搜索字段
-    list_filter = ('is_published', 'created_at')  # 过滤器字段
+    list_display = ('title', 'source', 'author', 'created_at', 'is_published')
+    search_fields = ('title', 'content', 'author__username')
+    list_filter = ('is_published', 'created_at')
 
 
 # 论坛相关模型注册
-@admin.register(ForumBoard)  # 注册论坛版块模型到管理后台
+@admin.register(ForumBoard)
 class ForumBoardAdmin(admin.ModelAdmin):  # 论坛版块管理类
-    list_display = ('name', 'description', 'order', 'is_active')  # 列表显示字段
-    search_fields = ('name', 'description')  # 搜索字段
-    list_filter = ('is_active',)  # 过滤器字段
-    ordering = ('order',)  # 排序字段
+    list_display = ('name', 'description', 'order', 'is_active')
+    search_fields = ('name', 'description')
+    list_filter = ('is_active',)
+    ordering = ('order',)
 
 
-@admin.register(Post)  # 注册帖子模型到管理后台
+@admin.register(Post)
 class PostAdmin(admin.ModelAdmin):  # 帖子管理类
-    list_display = ('title', 'author', 'board', 'status', 'view_count', 'created_at')  # 列表显示字段
-    search_fields = ('title', 'content', 'title_en', 'content_en', 'author__username')  # 搜索字段
-    list_filter = ('status', 'is_pinned', 'is_essence', 'board')  # 过滤器字段
+    list_display = ('title', 'author', 'board', 'status', 'view_count', 'created_at')
+    search_fields = ('title', 'content', 'title_en', 'content_en', 'author__username')
+    list_filter = ('status', 'is_pinned', 'is_essence', 'board')
     date_hierarchy = 'created_at'  # 日期层次导航
     # 第 85 批：译文相关字段单独成组，方便管理员手工修订机器译文
     # （translation_hash / translated_at 是给程序判断"是否过期"用的，只读）
@@ -187,11 +192,11 @@ class PostAdmin(admin.ModelAdmin):  # 帖子管理类
     readonly_fields = ('translated_at', 'translation_hash')
 
 
-@admin.register(Comment)  # 注册评论模型到管理后台
+@admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):  # 评论管理类
-    list_display = ('content_preview', 'author', 'post', 'created_at')  # 列表显示字段
-    search_fields = ('content', 'content_en', 'author__username', 'post__title')  # 搜索字段
-    list_filter = ('is_deleted', 'created_at')  # 过滤器字段
+    list_display = ('content_preview', 'author', 'post', 'created_at')
+    search_fields = ('content', 'content_en', 'author__username', 'post__title')
+    list_filter = ('is_deleted', 'created_at')
     # 第 85 批：同 PostAdmin，管理员可在这里修订评论译文
     fieldsets = (
         (None, {'fields': ('content', 'content_en', 'author', 'post', 'parent', 'reply_to_user')}),
@@ -203,45 +208,45 @@ class CommentAdmin(admin.ModelAdmin):  # 评论管理类
     )
     readonly_fields = ('translated_at', 'translation_hash')
 
-    def content_preview(self, obj):  # 定义内容预览方法
-        return obj.content[:50] + '...' if len(obj.content) > 50 else obj.content  # 返回内容预览
+    def content_preview(self, obj):
+        return obj.content[:50] + '...' if len(obj.content) > 50 else obj.content
 
-    content_preview.short_description = '评论内容'  # 设置字段显示名称
+    content_preview.short_description = '评论内容'
 
 
-@admin.register(Like)  # 注册点赞模型到管理后台
+@admin.register(Like)
 class LikeAdmin(admin.ModelAdmin):  # 点赞管理类
-    list_display = ('user', 'get_content_type', 'get_content_object', 'created_at')  # 列表显示字段
-    list_filter = ('created_at',)  # 过滤器字段
-    search_fields = ('user__username', 'post__title', 'comment__content')  # 搜索字段
-    readonly_fields = ('created_at', 'get_content_type', 'get_content_object')  # 只读字段
+    list_display = ('user', 'get_content_type', 'get_content_object', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('user__username', 'post__title', 'comment__content')
+    readonly_fields = ('created_at', 'get_content_type', 'get_content_object')
     date_hierarchy = 'created_at'  # 日期层次导航
 
-    def get_content_type(self, obj):  # 定义获取内容类型方法
-        if obj.post:  # 检查是否为帖子点赞
-            return '帖子'  # 返回帖子类型
-        elif obj.comment:  # 检查是否为评论点赞
-            return '评论'  # 返回评论类型
-        return '未知'  # 返回未知类型
+    def get_content_type(self, obj):
+        if obj.post:
+            return '帖子'
+        elif obj.comment:
+            return '评论'
+        return '未知'
 
-    def get_content_object(self, obj):  # 定义获取内容对象方法
-        if obj.post:  # 检查是否为帖子点赞
-            return obj.post.title  # 返回帖子标题
-        elif obj.comment:  # 检查是否为评论点赞
+    def get_content_object(self, obj):
+        if obj.post:
+            return obj.post.title
+        elif obj.comment:
             return obj.comment.content[:50] + '...' if len(
-                obj.comment.content) > 50 else obj.comment.content  # 返回评论内容预览
-        return '未知'  # 返回未知对象
+                obj.comment.content) > 50 else obj.comment.content
+        return '未知'
 
-    get_content_type.short_description = '点赞类型'  # 设置字段显示名称
-    get_content_object.short_description = '点赞对象'  # 设置字段显示名称
+    get_content_type.short_description = '点赞类型'
+    get_content_object.short_description = '点赞对象'
 
-    fieldsets = (  # 定义字段集
+    fieldsets = (
         ('基本信息', {  # 基本信息字段集
-            'fields': ('user', 'post', 'comment')  # 包含的字段
+            'fields': ('user', 'post', 'comment')
         }),
         ('时间信息', {  # 时间信息字段集
-            'fields': ('created_at',),  # 包含的字段
-            'classes': ('collapse',)  # 设置折叠样式
+            'fields': ('created_at',),
+            'classes': ('collapse',)
         }),
     )
 

@@ -1,3 +1,8 @@
+"""DRF 统一分页器：把筛选参数带回 next/prev 链接，并多给 `current_page` / `total_pages`。
+
+⚠️ 项目里真实的默认每页条数是这里的 `page_size = 6`；`settings.REST_FRAMEWORK['PAGE_SIZE']`
+（5）**不生效**（DRF 只在使用自带分页器时读它），要改默认值改这里。
+"""
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from urllib.parse import urlencode
@@ -37,7 +42,6 @@ class CustomPagination(PageNumberPagination):
     max_page_size = 100
 
     def get_paginated_response(self, data):
-        # 获取基础分页响应
         response_data = {
             'count': self.page.paginator.count,
             'next': self.get_next_link(),
@@ -47,7 +51,6 @@ class CustomPagination(PageNumberPagination):
             'results': data
         }
 
-        # 添加分页信息
         return Response(response_data)
 
     def get_next_link(self):
@@ -70,7 +73,6 @@ class CustomPagination(PageNumberPagination):
         （它们已经在新链接里了，重复会拼出 `?page=2&page=3`）→ 用 `urlencode(doseq=True)`
         追加（`doseq` 是为了让 `?tag=a&tag=b` 这种多值参数不至于被拍平成一个）。
         """
-        # 获取原始请求参数
         request = self.request
         params = request.query_params.copy()
 

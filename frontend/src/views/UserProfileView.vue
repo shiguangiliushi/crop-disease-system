@@ -1020,6 +1020,7 @@ export default {
       }
     };
 
+    /** 头像上传：本地先挡非图片与 ≥2MB（后端也校验，但这里挡掉能省一次上传，弱网下尤其明显） */
     const handleAvatarChange = async (uploadFile) => {
       const raw = uploadFile?.raw;
       if (!raw) return;

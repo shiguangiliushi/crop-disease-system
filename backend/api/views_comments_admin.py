@@ -61,6 +61,7 @@ def _reject_non_moderator(request, action_label):
 
 
 def _serialize(comment):
+    """控制台行：软删除后 `content` 已是 `[已删除]`，原文单独给，恢复按钮靠 `can_restore` 判断。"""
     return {
         'id': comment.id,
         'content': comment.content,
@@ -106,6 +107,7 @@ class AdminCommentListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """默认只看未删除；`only_deleted=true` 反过来只看已删除的 —— 两个分支互斥，不要合并成「全都列」。"""
         blocked = _reject_non_moderator(request, '查看评论管理')
         if blocked:
             return blocked
@@ -172,6 +174,7 @@ class AdminCommentRestoreView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, pk):
+        """没留原文的评论不能「恢复」：那只会得到一个全是占位文案的假恢复，宁可直接 400 说清原因。"""
         if not (is_full_admin(request.user)
                 or request.user.groups.filter(name='Moderators').exists()):
             return Response({'detail': '只有管理员可以恢复评论'},
@@ -219,6 +222,7 @@ class AdminCommentSoftDeleteView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, pk):
+        """幂等：已删的直接回 `changed=False`，既不报错也不重复写一条审计日志。"""
         blocked = _reject_non_moderator(request, '删除评论')
         if blocked:
             return blocked
@@ -259,6 +263,7 @@ class AdminCommentHardDeleteView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def delete(self, request, pk):
+        """不可逆：先把原文前 50 字写进审计日志再删行 —— 行没了以后日志是唯一线索。"""
         if not (is_full_admin(request.user)
                 or request.user.groups.filter(name='Moderators').exists()):
             return Response({'detail': '只有管理员可以彻底删除评论'},
@@ -301,6 +306,7 @@ class AdminCommentBulkDeleteView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """批量只做软删（可追溯）；结果逐条回，失败的要让审核员看见，别以为全都删了。"""
         blocked = _reject_non_moderator(request, '删除评论')
         if blocked:
             return blocked

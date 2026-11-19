@@ -187,6 +187,11 @@ class AssistantAskView(APIView):
         responses={200: AssistantAskResponseBody},
     )
     def post(self, request):
+        """同步问答：入参校验交给 `_parse_request`，回答由 orchestrator 产出。
+
+        追问建议单独包 try：它只是锦上添花，生成失败必须让用户照样拿到回答
+        （原来静默吞异常，导致"suggestions 恒为空"查不出原因，所以这里要 log）。
+        """
         payload, error = _parse_request(request)
         if error is not None:
             return error
@@ -236,6 +241,12 @@ class AssistantAskStreamView(APIView):
         )},
     )
     def post(self, request):
+        """SSE 流式问答：返回 `StreamingHttpResponse`，不是 JSON。
+
+        三个响应头都不能省（`Content-Encoding: identity` 挡 GZipMiddleware、
+        `X-Accel-Buffering: no` 挡 Nginx 缓冲、`no-cache` 挡中间缓存）；
+        但**绝不能**设 `Connection` —— 逐跳头由 WSGI 禁止应用设置，会直接 500。
+        """
         payload, error = _parse_request(request)
         if error is not None:
             return error
@@ -285,6 +296,12 @@ class AssistantSuggestView(APIView):
         responses={200: AssistantSuggestResponseBody},
     )
     def post(self, request):
+        """纯模板追问建议：三级兜底定位词条（identifier → pest_name → 问题文本）。
+
+        三级是给前端留的台阶：问答页手里常常只有一个名字甚至什么都没有，
+        逼它补传字段就等于让这个功能在大半入口上不可用。都定位不到就回
+        空列表 —— 没有词条时推荐问题只能靠猜。
+        """
         from .pest_lookup import find_pest_info
 
         question = str(request.data.get('question') or '')
@@ -349,6 +366,11 @@ class AssistantFeedbackView(APIView):
         responses={200: OpenApiResponse(description='已记录')},
     )
     def post(self, request, pk):
+        """记录一条"有用 / 没用"评价；允许改主意，以最后一次为准。
+
+        `verdict` 只收两个值：多一个"一般"会把统计分成三份，最后谁也不敢下结论。
+        别人的消息一律 404（而不是 403），不泄漏"这条消息存在"。
+        """
         # 只允许评价**自己的**会话里的**助手**消息（别人的一律 404，不泄漏存在性）
         message = AssistantMessage.objects.filter(
             pk=pk, session__user=request.user, role='assistant',
@@ -394,6 +416,11 @@ class AssistantEscalateView(APIView):
         responses={200: AssistantEscalateResponseBody},
     )
     def post(self, request, pk):
+        """把会话转成一条专家咨询；重复转人工返回同一张工单（`created=false`）。
+
+        幂等落在 `escalate()` 里（同一会话只新建一次），视图这层只做归属校验与
+        长度限制 —— 前端连点两下、或者用户反悔后再点，都不该多出工单。
+        """
         session = AssistantSession.objects.filter(pk=pk, user=request.user).first()
         if session is None:
             return Response({'detail': '会话不存在'}, status=status.HTTP_404_NOT_FOUND)

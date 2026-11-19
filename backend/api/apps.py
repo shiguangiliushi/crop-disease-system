@@ -1,13 +1,18 @@
+"""`api` 应用的 AppConfig：`ready()` 里只做"导入即注册"与后台预热。
+
+⚠️ `ready()` 在**服务器开始监听端口之前**执行，任何耗时操作都必须丢进线程 ——
+这里曾经同步预热模型，结果那 30 秒里进程在跑、端口没监听，看起来就像服务没起来。
+"""
 # crop-disease-system/backend/api/apps.py
 
-from django.apps import AppConfig  # 导入Django应用配置基类
+from django.apps import AppConfig
 
 
-class ApiConfig(AppConfig):  # 定义API应用配置类，继承自AppConfig
+class ApiConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'  # 设置默认主键字段类型
-    name = 'api'  # 设置应用名称
+    name = 'api'
 
-    def ready(self):  # 定义应用就绪方法
+    def ready(self):
         """
         在应用完全加载后执行初始化代码
         注意：这里只执行必要的初始化，不直接导入模型
@@ -33,18 +38,18 @@ class ApiConfig(AppConfig):  # 定义API应用配置类，继承自AppConfig
             import api.admin  # noqa  # 导入admin配置模块，noqa表示忽略flake8检查
         except ImportError as e:  # 捕获导入异常
             # 如果admin.py导入失败，记录错误但继续
-            import logging  # 导入日志模块
-            logger = logging.getLogger(__name__)  # 获取日志记录器
-            logger.warning(f"Failed to import api.admin: {e}")  # 记录警告信息
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to import api.admin: {e}")
 
         # We import the AI service here to ensure the model is loaded once on startup.
         try:  # 尝试导入AI服务
             from . import ai_service  # noqa  # 导入AI服务模块，noqa表示忽略flake8检查
         except ImportError as e:  # 捕获导入异常
             # 如果AI服务导入失败，记录错误但继续
-            import logging  # 导入日志模块
-            logger = logging.getLogger(__name__)  # 获取日志记录器
-            logger.warning(f"Failed to import ai_service: {e}")  # 记录警告信息
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to import ai_service: {e}")
 
         # ------------------------------------------------------------------
         # 第 107 批：启动预热（第 113 批改为**后台线程**）

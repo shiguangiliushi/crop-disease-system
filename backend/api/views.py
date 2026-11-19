@@ -190,6 +190,11 @@ class CaptchaView(APIView):
 
 
 class RegisterView(APIView):
+    """账号注册入口（匿名可访问，独立 register 限流档）。
+
+    验证码必须在序列化器**之前**校验：否则「用户名已存在」这类报错会在没通过人机校验时
+    就返回，等于免费提供一个"用户名是否被占用"的探测接口（第 233 批）。
+    """
     permission_classes = [permissions.AllowAny]
     # 第 35 批：注册限流（防批量注册刷账号）
     throttle_classes = [ScopedRateThrottle]
@@ -200,6 +205,7 @@ class RegisterView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """注册成功即签发设备凭证（前端「注册即登录」），响应形状与登录保持一致。"""
         # 第 233 批：先过验证码，再进序列化器。
         # 顺序很重要：序列化器的错误信息（"用户名已存在"等）不该在**没通过人机校验**时
         # 就吐给脚本 —— 那等于免费提供"用户名是否占用"的探测接口。
@@ -242,6 +248,12 @@ class StatisticsView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """首页统计聚合（第 22/124 批口径，6 类聚合手写而非复用列表接口）。
+
+        统计范围必须与识别记录列表**一致**：普通用户只看自己，管理员带 `all_users=true`
+        才看全站 —— 两处都走 `CAP_USER_ADMIN`，否则会出现"列表只有我的、图表是全站"的错位。
+        各段聚合各自 try/except：某一段失败只记日志并回落空列表，整条接口仍返回 200。
+        """
         # 获取当前用户
         user = request.user
         logger.info(
@@ -608,6 +620,12 @@ class LoginView(APIView):
         return Response({'captcha_required': bool(getattr(settings, 'LOGIN_CAPTCHA_REQUIRED', False))})
 
     def post(self, request):
+        """登录主链路：验证码 → 锁定/停用判断 → authenticate → 签发设备 Token。
+
+        ⚠️ 停用/冷静期账号必须在 `authenticate()` **之前**拦下：Django 对
+        `is_active=False` 直接返回 None，放在之后的 `if not user.is_active` 永远走不到，
+        用户看到的是"密码错误"，还会白白消耗失败次数（第 101/142 批踩过）。
+        """
         # 先单独解析请求体。
         # 请求体不是合法 JSON 时 DRF 会抛 ParseError，这属于**客户端错误**。
         # 原来 request.data 直接在下面的 try 里访问，ParseError 被 except Exception 吞掉，
@@ -783,7 +801,6 @@ class LoginView(APIView):
             DeviceToken.objects.filter(user=user, device=device).delete()
             token = DeviceToken.issue(user, device)
 
-            # 返回用户信息和token
             response_data = {
                 'status': 'success',
                 'message': '登录成功',
@@ -850,6 +867,11 @@ class DetectView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, format=None):
+        """识别主入口：落盘 → 推理 → 匹配病害词条 → 写识别历史。
+
+        ⚠️ 词条匹配只走 `pest_lookup`（建响应用 `find_pest_info`、落历史用 `link_history`）：
+        历史上这两处各算一次，于是界面有词条、历史记录里却没有（第 159 批统一）。
+        """
         # 检查是否有文件被上传
         if 'image' not in request.FILES:
             return Response(
@@ -1176,7 +1198,6 @@ class DetectView(APIView):
                 # 即使保存历史记录失败，也继续返回检测结果
                 history = None
 
-            # 返回检测结果
             # 注意：保存历史失败时 history 为 None，原代码直接取 history.id → AttributeError，
             # 被外层 except 变成 500 —— 与上面注释里"即使保存失败也继续返回检测结果"的意图相反。
             return Response({
@@ -1232,6 +1253,11 @@ class PreventionDataView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request, format=None):
+        """按病害/类别/搜索词筛防治措施，分组键是语言无关的 `category` code。
+
+        `PestInfo` 没有 `english_name` 字段（早期写成它会让带 `search` 的请求必定 500），
+        英文搜索只能命中 `name_en` / `english_identifier` / `measure_en`。
+        """
         try:
             # 获取查询参数
             pest_id = request.query_params.get('pest_id')
@@ -1477,6 +1503,10 @@ class FeedbackView(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def perform_create(self, serializer):
+        """反馈落库前过敏感词，并从关联的识别记录补全结论/置信度。
+
+        前端**已经传了**的值优先 —— 它带的是当前语言下的展示名，不该被库里的中文覆盖。
+        """
         # 第 38 批：反馈内容也过一遍敏感词（含"识别纠错"里带过来的文本）
         from .sensitive import check_text
         check_text(
@@ -2425,6 +2455,11 @@ class ImageUploadView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """通用图片上传（论坛发帖 / 编辑器插图）。
+
+        ⚠️ 不能只信 `content_type`（客户端可伪造），也不能拿原始文件名拼路径 ——
+        真实格式探测与随机命名都在 `image_validation.validate_image_upload()` 里。
+        """
         image_file = request.FILES.get('image') or request.FILES.get('file')
 
         try:
@@ -2461,6 +2496,11 @@ class DetectionHistoryClearView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def delete(self, request, *args, **kwargs):
+        """清空识别历史，**同时删除磁盘上的原图与标注图**（不可恢复）。
+
+        默认只清自己的，管理员带 `all_users=true` 才清全站 —— 这个范围必须在服务端收窄，
+        前端按钮不构成任何约束。
+        """
         user = request.user
         is_admin_user = has_capability(user, CAP_USER_ADMIN)
         all_users = request.query_params.get('all_users') == 'true'
@@ -2516,6 +2556,11 @@ class PestTypesView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request, format=None):
+        """按搜索词/作物筛出病害**名字**（字符串列表，没有 id —— 见类 docstring 的契约提醒）。
+
+        整个方法体包在一个 `except Exception` 里，真实异常只进日志、响应体永远是
+        「获取病害类型失败」：排查这类 500 请直接看 `logs/debug.log`。
+        """
         try:
             # 获取查询参数
             search = request.query_params.get('search', '').strip()

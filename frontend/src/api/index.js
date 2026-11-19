@@ -1,3 +1,10 @@
+/**
+ * 全站统一 API 客户端：一个配好 baseURL/认证拦截器的 axios 实例 + 一层薄封装。
+ * ----------------------------------------------------------------------------
+ * ⚠️ 口径：get/post/put/patch/delete 返回的是**完整 AxiosResponse**，不解包 response.data ——
+ *    现有调用方都是按这个形状写的，谁再"顺手解包"就会让它们集体失效（见下方 setupInterceptors 说明）。
+ * ⚠️ 兜底 baseURL 必须带 `/api` 前缀，与 http.js / utils/axios.js / main.js 保持一致。
+ */
 import axios from 'axios';
 // 身份读写统一走适配器（sessionStorage 优先），避免各客户端各自读 localStorage 而读串账号
 import { getToken, clearIdentity } from '@/utils/authStorage';
@@ -5,7 +12,6 @@ import { getToken, clearIdentity } from '@/utils/authStorage';
 // 但它们只被那套"从未安装的响应拦截器"使用（负责 401 跳转与错误弹窗）。
 // 那套代码已删除，这两个依赖也随之移除 —— 本模块不再牵扯整个路由树与 Element Plus。
 
-// 创建axios实例
 // 确保baseURL以/结尾，这样在拼接路径时不会出现问题
 // 注意：兜底值必须带 /api 前缀，与 http.js / utils/axios.js / main.js 保持一致。
 // 原来兜底是 'http://127.0.0.1:8000'（少 /api），而仓库只有 .env.development；
@@ -102,7 +108,6 @@ const api = {
     return apiClient.request(config);
   },
   
-  // GET请求
   // ⚠️ 已修复的真实缺陷：这里原来是 get(url, params = {}, config = {})，
   //    内部再拼成 apiClient.get(url, { ...config, params })。
   //    但**全部 16 个调用点都是按 axios 约定写的**，第二个参数传的是 config
@@ -116,31 +121,26 @@ const api = {
     return apiClient.get(cleanUrl, config);
   },
   
-  // POST请求
   post(url, data = {}, config = {}) {
     const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
     return apiClient.post(cleanUrl, data, config);
   },
   
-  // PUT请求
   put(url, data = {}, config = {}) {
     const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
     return apiClient.put(cleanUrl, data, config);
   },
   
-  // PATCH请求
   patch(url, data = {}, config = {}) {
     const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
     return apiClient.patch(cleanUrl, data, config);
   },
   
-  // DELETE请求
   delete(url, config = {}) {
     const cleanUrl = url.startsWith('/') ? url.substring(1) : url;
     return apiClient.delete(cleanUrl, config);
   },
   
-  // 上传文件
   upload(url, file, config = {}) {
     const formData = new FormData();
     formData.append('file', file);
@@ -159,16 +159,13 @@ const api = {
   clearAuth,
   getAuthToken,
   
-  // 获取当前axios实例
   getInstance() {
     return apiClient;
   }
 };
 
-// 导出默认实例和命名导出
 export default api;
 
-// 导出工具方法
 export {
   clearAuth,
   getAuthToken

@@ -82,6 +82,12 @@ class AlertListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """按当前用户算预警列表；`days` / `min_cases` 会被夹到安全区间。
+
+        夹取而不是报 400：首页横幅是自动请求的，参数写错（手改地址栏、老前端）
+        不该让整块内容变成错误提示。`diagnostics` 只在结果为空时给 ——
+        "为什么没有预警"比"没有预警"更需要解释。
+        """
         try:
             days = max(3, min(30, int(request.query_params.get('days', DEFAULT_DAYS))))
         except (TypeError, ValueError):
@@ -128,6 +134,12 @@ class AlertNotifyView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """把 high / medium 两级预警扇出给所有活跃用户，同一天同一病害只推一次。
+
+        去重看的是"当天已存在标题含该病害名的 system 通知"，**不是**本次的
+        内存状态 —— 管理员刷新页面再点一次，也应该被库里那条记录挡住。
+        只推 medium/high：low 级几乎每天都有，推了等于训练用户忽略通知。
+        """
         if not _can_push_alerts(request.user):
             return Response({'detail': '只有管理员可以推送预警'}, status=403)
 

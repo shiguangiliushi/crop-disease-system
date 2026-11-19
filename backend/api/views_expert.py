@@ -108,6 +108,7 @@ def _crop_en_map():
 
 
 def _user_brief(user):
+    """展示用摘要（不是权限判定）：管理员兜底成「专家」身份，免得前端另写一套判断。"""
     profile = getattr(user, 'expert_profile', None)
     # 回包字段（不是权限判定）：管理员兜底成"专家"身份用于展示，语义同 is_expert()
     is_admin = is_full_admin(user)
@@ -168,6 +169,7 @@ class QuestionListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """手写分页：page/page_size 各自兜底，并额外回 status_counts 给筛选标签 —— 没走全站分页器。"""
         queryset = ConsultQuestion.objects.select_related('asker', 'asker__expert_profile')
 
         status_param = (request.query_params.get('status') or '').strip()
@@ -217,6 +219,7 @@ class QuestionListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request):
+        """直接收 `request.FILES`：没有 DRF 序列化器的校验链，图片类型/大小必须在这里自己把关。"""
         title = (request.data.get('title') or '').strip()
         content = (request.data.get('content') or '').strip()
         crop_type = (request.data.get('crop_type') or '').strip()
@@ -343,6 +346,7 @@ class AnswerCreateView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, pk):
+        """只有专家或管理员能答；作者头衔在写入时快照，之后撤销专家身份不影响历史回答的展示。"""
         question = ConsultQuestion.objects.select_related('asker').filter(pk=pk).first()
         if not question:
             return Response({'detail': '问题不存在'}, status=status.HTTP_404_NOT_FOUND)
@@ -397,6 +401,7 @@ class AnswerAcceptView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, pk):
+        """先清掉本问题其它采纳再置位：顺序反了会出现同一问题两个「最佳答案」。"""
         answer = ConsultAnswer.objects.select_related('question', 'author').filter(pk=pk).first()
         if not answer:
             return Response({'detail': '回答不存在'}, status=status.HTTP_404_NOT_FOUND)
@@ -465,6 +470,7 @@ class ExpertListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def post(self, request, user_id):
+        """update_or_create：被取消过的人再授予时复用同一行（user 是一对一），不会留下两条档案。"""
         if not _can_admin_users(request.user):
             return Response({'detail': '只有管理员可以授予专家身份'}, status=status.HTTP_403_FORBIDDEN)
         user = User.objects.filter(pk=user_id).first()
@@ -498,6 +504,7 @@ class ExpertListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def delete(self, request, user_id):
+        """只置 `is_active=False`，不删档案：他之前的回答与头衔要留着，历史内容不能因撤权消失。"""
         if not _can_admin_users(request.user):
             return Response({'detail': '只有管理员可以取消专家身份'}, status=status.HTTP_403_FORBIDDEN)
         profile = ExpertProfile.objects.filter(user_id=user_id).first()

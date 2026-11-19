@@ -110,6 +110,13 @@ function clearBackendCache() {
     { cwd: BACKEND_DIR, encoding: 'utf8' });
 }
 
+/**
+ * 清掉本轮冒烟造的数据（`ZZ_SMOKE_*` 词条、`[SMOKE]` 帖子/提问、`zz_smoke_*` 账号及其关联）。
+ *
+ * 走 `manage.py shell` 而不是 HTTP 或 SQL：级联删除与通知的广播规则由模型层决定。
+ * ⚠️ 清理条件**必须**限定在冒烟造的数据上（第 76 批的教训写在脚本正文里）——
+ * 这里曾经用过 `objects.all().delete()`，跑一次就把真实开发库的通知清空了。
+ */
 function cleanup() {
   const script = `
 from api.models import CustomUser, DetectionHistory, PestInfo

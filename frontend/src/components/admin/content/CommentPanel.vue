@@ -172,6 +172,7 @@ const hardRemove = async (row) => {
   }
 };
 
+/** 批量**软**删除选中评论（批量不提供硬删除）；`failed > 0` 说明部分行被跳过，只给 warning 不报成功 */
 const bulkRemove = async () => {
   const count = selectedIds.value.length;
   try {

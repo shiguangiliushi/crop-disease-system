@@ -53,6 +53,13 @@ PREVIEW_CHARS = 80
 
 
 def _brief(session, last_message: AssistantMessage | None) -> dict:
+    """会话级摘要（列表用）；`last_message` 为 None 时预览为空、降级标记为 False。
+
+    ⚠️ `degraded` 取的是**最后一次回答**的状态，不是"历史上有过一次降级"——
+    用户扫历史时想知道的是"这次到底答上来没有"。另一处易错点是
+    `message_count` 来自上面的 `annotate`，忘了注解时 `getattr` 会给 0，
+    列表看上去像"会话都是空的"。
+    """
     preview = ''
     degraded = False
     if last_message is not None:
@@ -95,6 +102,12 @@ class AssistantSessionListView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """我的会话列表（倒序、分页），每条只带摘要与最后一条回答的预览。
+
+        预览必须**过滤掉空正文**再按 id 取最后一条：流式回答先建空行后回填，
+        直接取 id 最大的会拿到空串，列表里就出现了空白预览。
+        取最后一条时用一次批量查询再在内存归组，避免每会话一次查询。
+        """
         try:
             page = max(1, int(request.query_params.get('page', 1)))
         except (TypeError, ValueError):
@@ -157,6 +170,12 @@ class AssistantSessionDetailView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request, pk):
+        """一次会话的完整问答（只含非空消息），并给出专家是否已回复。
+
+        空内容的消息一律不返回：流式回答会在生成前先建一行占位，全部吐出去
+        历史里就会出现空气泡。`degraded` / `degrade_reason` 取自**最后一条回答**，
+        与列表口径一致。
+        """
         session = self._get(request, pk)
         if session is None:
             return Response({'detail': '会话不存在'}, status=status.HTTP_404_NOT_FOUND)
@@ -214,6 +233,7 @@ class AssistantSessionDetailView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def delete(self, request, pk):
+        """删除自己的会话（消息随 `AssistantMessage.session` 的 CASCADE 一起删）。"""
         session = self._get(request, pk)
         if session is None:
             return Response({'detail': '会话不存在'}, status=status.HTTP_404_NOT_FOUND)

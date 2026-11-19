@@ -1,3 +1,8 @@
+"""初始化论坛的 5 个默认版块（`ForumBoard` 的基础数据）。
+
+⚠️ 用 `get_or_create(name=...)` 而不是 `create()`：这个命令允许重复执行，去重靠的是
+**版块中文名**，所以改名字等于新增一条、旧的那条不会自动跟着改（也不会被删）。
+"""
 from django.core.management.base import BaseCommand
 from api.models_forum import ForumBoard
 
