@@ -1,0 +1,533 @@
+<!--
+  系统助手（管理端运维侧）—— 「系统」页的第四个页签
+  ============================================================================
+  与农户端的 `/assistant`（RAG 知识问答）是**两个东西**：
+    · 那边答"病害怎么治"，语料是病害词库；
+    · 这边答"系统现在什么状态、该跑什么命令"，数据来自八个只读工具（健康 / 快照 /
+      审计 / 运行数据 / docs / 白名单命令）。
+  页面本身不含任何业务判断：降级与否、数字是否校验过、调了哪些工具，全部由后端返回，
+  这里只负责展示 —— 前端再算一遍必然与后端长歪（本项目反复栽过的坑）。
+-->
+<template>
+  <div class="ops-assistant">
+    <header class="ops-head">
+      <span class="ops-head-icon"><i class="fas fa-comments"></i></span>
+      <div>
+        <h2>{{ t('opsAssistant.title') }}</h2>
+        <p>{{ t('opsAssistant.subtitle') }}</p>
+      </div>
+    </header>
+
+    <!-- 只读声明写在页面上，而不是只写在注释里：用的人要知道它的边界 -->
+    <el-alert type="info" :closable="false" show-icon class="ops-note">
+      {{ t('opsAssistant.readonlyNote') }}
+    </el-alert>
+
+    <!--
+      观测（E）：`degraded` / `verified` / `tool_calls` 一直落在 OpsAssistantTurn 里，
+      但以前没有任何界面在读 —— 问的人在同一个页面就能看到"最近答得好不好"，
+      不用再开一个后台页，也不用进 Django admin 一条条翻。
+    -->
+    <el-collapse v-model="statsOpen" class="ops-stats">
+      <el-collapse-item name="stats">
+        <template #title>
+          <span class="ops-stats-title">
+            <i class="fas fa-chart-simple"></i> {{ t('opsAssistant.statsTitle') }}
+          </span>
+        </template>
+
+        <div class="ops-stats-head">
+          <span class="ops-dim">{{ t('opsAssistant.statsRangeHint') }}</span>
+          <el-select v-model="statsDays" size="small" style="width: 108px" @change="loadStats">
+            <el-option :value="7" :label="t('opsAssistant.statsDays7')" />
+            <el-option :value="14" :label="t('opsAssistant.statsDays14')" />
+            <el-option :value="30" :label="t('opsAssistant.statsDays30')" />
+          </el-select>
+        </div>
+
+        <p v-if="statsLoading" class="ops-dim">{{ t('opsAssistant.thinking') }}</p>
+        <template v-else>
+          <div class="ops-stats-grid">
+            <div class="ops-stat">
+              <strong>{{ stats.totals.turns ?? 0 }}</strong>
+              <span>{{ t('opsAssistant.statsTurns') }}</span>
+            </div>
+            <div class="ops-stat">
+              <strong>{{ pct(stats.totals.degraded_rate) }}</strong>
+              <span>{{ t('opsAssistant.statsDegraded') }}</span>
+            </div>
+            <div class="ops-stat">
+              <strong>{{ pct(stats.totals.unverified_rate) }}</strong>
+              <span>{{ t('opsAssistant.statsUnverified') }}</span>
+            </div>
+            <div class="ops-stat">
+              <strong>{{ stats.totals.avg_latency_ms ?? 0 }} ms</strong>
+              <span>{{ t('opsAssistant.statsLatency') }}</span>
+            </div>
+          </div>
+
+          <div class="ops-stats-cols">
+            <div>
+              <h4>{{ t('opsAssistant.statsIntents') }}</h4>
+              <ul v-if="stats.by_intent.length">
+                <li v-for="row in stats.by_intent" :key="row.intent">
+                  <code>{{ row.intent }}</code> {{ row.count }}
+                  <span v-if="row.degraded" class="ops-dim">· ⚠ {{ row.degraded }}</span>
+                </li>
+              </ul>
+              <p v-else class="ops-dim">{{ t('opsAssistant.statsEmpty') }}</p>
+            </div>
+            <div>
+              <h4>{{ t('opsAssistant.statsToolFailures') }}</h4>
+              <ul v-if="stats.tool_failures.length">
+                <li v-for="row in stats.tool_failures" :key="row.tool">
+                  <code>{{ row.tool }}</code> × {{ row.count }}
+                </li>
+              </ul>
+              <p v-else class="ops-dim">{{ t('opsAssistant.statsEmpty') }}</p>
+            </div>
+          </div>
+
+          <div v-if="stats.recent_unverified.length" class="ops-stats-unverified">
+            <h4>{{ t('opsAssistant.statsRecentUnverified') }}</h4>
+            <ul>
+              <li v-for="row in stats.recent_unverified" :key="row.id">
+                {{ row.question }}
+                <span class="ops-dim">{{ row.degrade_reason || '—' }}</span>
+              </li>
+            </ul>
+          </div>
+        </template>
+      </el-collapse-item>
+    </el-collapse>
+
+    <div class="ops-thread">
+      <el-empty v-if="!opsStore.turns.length" :description="t('opsAssistant.emptyHint')" />
+
+      <article v-for="(turn, index) in opsStore.turns" :key="index" class="ops-turn">
+        <p class="ops-question">
+          <i class="fas fa-circle-question"></i> {{ turn.question }}
+        </p>
+        <div class="ops-answer">
+          <!-- ⚠️ 与农户侧同一套受控渲染：模型习惯写 `**加粗**`，纯文本渲染会把星号
+               原样显示（用户反馈过"回答为什么会出现 `**`"）。这里**只解析加粗一种标记**
+               （`utils/assistantText.js`），片段走文本插值、标签名写死在模板里，
+               **绝不用 `v-html`** —— 模型输出是不可信输入，没有 HTML 注入面。 -->
+          <div v-if="turn.answer" class="ops-text">
+            <p v-for="(segments, index) in answerParagraphs(turn.answer)" :key="index">
+              <template v-for="(segment, position) in segments" :key="position">
+                <strong v-if="segment.bold">{{ segment.text }}</strong>
+                <template v-else>{{ segment.text }}</template>
+              </template>
+            </p>
+          </div>
+          <p v-else-if="turn.failed" class="ops-text is-failed">{{ t('opsAssistant.failed') }}</p>
+          <p v-else class="ops-text is-waiting">{{ t('opsAssistant.thinking') }}</p>
+          <div class="ops-meta">
+            <el-tag v-if="turn.intent" size="small" effect="plain">{{ turn.intent }}</el-tag>
+            <el-tag
+              v-for="tool in turn.tools || []"
+              :key="tool.name"
+              size="small"
+              effect="plain"
+              :type="tool.ok ? 'success' : 'danger'"
+            >
+              {{ tool.name }} · {{ tool.ms }} ms
+            </el-tag>
+            <el-tag v-if="turn.degraded" size="small" type="warning" effect="plain">
+              {{ t('opsAssistant.degradedLabel') }}{{ turn.degrade_reason ? ` · ${turn.degrade_reason}` : '' }}
+            </el-tag>
+            <el-tag v-if="turn.verified === false" size="small" type="danger" effect="plain">
+              {{ t('opsAssistant.unverifiedLabel') }}
+            </el-tag>
+          </div>
+
+          <el-collapse v-if="(turn.evidence || []).length" class="ops-evidence">
+            <el-collapse-item
+              :title="`${t('opsAssistant.evidenceLabel')}（${turn.evidence.length}）`"
+              :name="index"
+            >
+              <ul class="ops-evidence-list">
+                <li v-for="(item, position) in turn.evidence" :key="position">
+                  <p class="ops-evidence-title">
+                    {{ item.title }} <code>{{ item.source }}</code>
+                  </p>
+                  <p
+                    v-for="(line, lineIndex) in item.lines || []"
+                    :key="lineIndex"
+                    class="ops-evidence-line"
+                  >
+                    {{ line }}
+                  </p>
+                </li>
+              </ul>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+      </article>
+    </div>
+
+    <div class="ops-composer">
+      <el-input
+        v-model="question"
+        type="textarea"
+        :rows="3"
+        maxlength="2000"
+        show-word-limit
+        :placeholder="t('opsAssistant.placeholder')"
+        :disabled="opsStore.loading"
+        @keydown.ctrl.enter.prevent="submit"
+      />
+      <div class="ops-actions">
+        <el-button type="primary" :loading="opsStore.loading" @click="submit">
+          <i class="fas fa-paper-plane"></i> {{ t('opsAssistant.ask') }}
+        </el-button>
+        <el-button v-if="opsStore.turns.length" plain :disabled="opsStore.loading" @click="reset">
+          {{ t('opsAssistant.clear') }}
+        </el-button>
+      </div>
+      <div class="ops-examples">
+        <span class="ops-examples-label">{{ t('opsAssistant.examplesLabel') }}</span>
+        <el-button
+          v-for="(example, index) in examples"
+          :key="index"
+          link
+          size="small"
+          :disabled="opsStore.loading"
+          @click="askExample(example)"
+        >
+          {{ example }}
+        </el-button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue';
+import { ElMessage } from 'element-plus';
+import { fetchOpsAssistantStats } from '@/api/opsAssistant';
+import { formatApiError } from '@/api/http';
+import { useI18n } from '@/i18n';
+import { parseAnswerParagraphs } from '@/utils/assistantText';
+// 对话状态放 store：这个页签由 Hub 用 `v-if` 挂载，**切页签会被卸载** ——
+// 状态留在组件里就会"切走再回来内容没了"（第 414 批用户实测）。
+import { useOpsAssistantStore } from '@/stores/opsAssistant';
+
+const { t, locale } = useI18n();
+const opsStore = useOpsAssistantStore();
+
+/** 回答分段（与农户侧共用同一个解析器；为什么不用逐行版见模板里那段注释） */
+const answerParagraphs = parseAnswerParagraphs;
+
+const question = ref('');
+/** 界面语言 → 回答语言（'en' / 'zh'）。切英文后**新问的问题**才是英文，
+ *  已经答过的历史保持原样 —— 那是当时的记录，不该被重写。 */
+const answerLang = computed(() => (String(locale.value).startsWith('en') ? 'en' : 'zh'));
+
+/* ── 观测（E） ─────────────────────────────────────────────────────── */
+const stats = ref({
+  totals: {}, by_intent: [], tool_failures: [], recent_unverified: [],
+});
+const statsDays = ref(7);
+const statsOpen = ref([]);
+const statsLoading = ref(false);
+
+async function loadStats() {
+  statsLoading.value = true;
+  try {
+    stats.value = await fetchOpsAssistantStats({
+      days: statsDays.value, lang: answerLang.value,
+    });
+  } catch {
+    // 看板失败**不打断问答**：它是旁路信息，报错弹窗反而挡着用的人
+  } finally {
+    statsLoading.value = false;
+  }
+}
+
+/** 比率 → 百分比；后端在没有数据时给的是 null，这里显示 "—" 而不是 0% */
+function pct(value) {
+  return typeof value === 'number' ? `${Math.round(value * 1000) / 10}%` : '—';
+}
+
+// 进这一页就把看板数据取好：一次只读聚合，比"点开再等"顺手
+onMounted(loadStats);
+
+const examples = computed(() => [
+  t('opsAssistant.example1'),
+  t('opsAssistant.example2'),
+  t('opsAssistant.example3'),
+  t('opsAssistant.example4'),
+]);
+
+async function submit() {
+  const text = question.value.trim();
+  if (!text || opsStore.loading) return;
+
+  question.value = '';
+  try {
+    await opsStore.ask(text, { lang: answerLang.value });
+  } catch (error) {
+    // 失败（400 / 403 / 429 / 网络）才走这里；`degraded=true` 是 200，不算失败
+    ElMessage.error(formatApiError(error, t('opsAssistant.failed')));
+    question.value = text;   // 把问题放回去，免得用户重打
+  } finally {
+    // 刚问完，看板数字该动了；面板没展开就不去打扰后端
+    if (statsOpen.value.length) loadStats();
+  }
+}
+
+function askExample(example) {
+  question.value = example;
+  submit();
+}
+
+function reset() {
+  opsStore.reset();
+}
+</script>
+
+<style scoped>
+.ops-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px;
+}
+
+.ops-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ops-head-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+
+.ops-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.ops-head p {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+}
+
+.ops-note {
+  border-radius: 10px;
+}
+
+/* ── 观测（E） ───────────────────────────────────────────────────── */
+.ops-stats {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  padding: 0 12px;
+}
+
+.ops-stats-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.ops-stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ops-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ops-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--el-fill-color-lighter);
+}
+
+.ops-stat strong {
+  font-size: 18px;
+}
+
+.ops-stat span {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ops-stats-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.ops-stats-cols h4,
+.ops-stats-unverified h4 {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  color: var(--el-text-color-regular);
+}
+
+.ops-stats-cols ul,
+.ops-stats-unverified ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.ops-stats-unverified {
+  margin-top: 12px;
+}
+
+.ops-dim {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .ops-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ops-stats-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ops-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 120px;
+}
+
+.ops-turn {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--el-bg-color);
+}
+
+.ops-question {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.ops-question i {
+  color: var(--el-color-primary);
+  margin-right: 6px;
+}
+
+.ops-text {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--el-fill-color-lighter);
+  font-size: 13px;
+  line-height: 1.7;
+  /* 段落之间的空行由 <p> 表现；段内单换行靠 pre-wrap 显示（与农户侧同一套语义） */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ops-text p {
+  margin: 0 0 8px;
+}
+
+.ops-text p:last-child {
+  margin-bottom: 0;
+}
+
+.ops-text.is-failed {
+  color: var(--el-color-danger);
+}
+
+.ops-text.is-waiting {
+  color: var(--el-text-color-secondary);
+  font-style: italic;
+}
+
+.ops-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ops-evidence {
+  margin-top: 10px;
+}
+
+.ops-evidence-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.ops-evidence-title {
+  margin: 0 0 2px;
+  font-weight: 600;
+}
+
+.ops-evidence-title code {
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+}
+
+.ops-evidence-line {
+  margin: 0 0 4px;
+  color: var(--el-text-color-regular);
+  word-break: break-all;
+}
+
+.ops-composer {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-bg-color-page);
+}
+
+.ops-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ops-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+}
+
+.ops-examples-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+</style>

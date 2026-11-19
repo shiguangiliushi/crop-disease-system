@@ -33,7 +33,13 @@
  * 提醒把"浏览器里真跑一遍"补上 —— 那时它才有真实对象。
  */
 import { describe, expect, it } from 'vitest';
-import { TAB_AUDIT, TAB_BOARDS, TAB_HEALTH, adminSystemTabs } from '@/views/adminSystemTabs';
+import {
+  TAB_ASSISTANT,
+  TAB_AUDIT,
+  TAB_BOARDS,
+  TAB_HEALTH,
+  adminSystemTabs,
+} from '@/views/adminSystemTabs';
 import { en, zhCN } from '@/i18n/messages';
 
 describe('「系统」页页签按权限显示（第 186 批）', () => {
@@ -41,15 +47,15 @@ describe('「系统」页页签按权限显示（第 186 批）', () => {
     expect(adminSystemTabs({ isAdmin: false, hasBroadcast: true })).toEqual([TAB_BOARDS]);
   });
 
-  it('全权管理员 → 三个页签都有，且顺序是 系统健康 → 操作日志 → 版块管理', () => {
+  it('全权管理员 → 四个页签都有，且顺序是 系统健康 → 操作日志 → 系统助手 → 版块管理', () => {
     expect(adminSystemTabs({ isAdmin: true, hasBroadcast: true }))
-      .toEqual([TAB_HEALTH, TAB_AUDIT, TAB_BOARDS]);
+      .toEqual([TAB_HEALTH, TAB_AUDIT, TAB_ASSISTANT, TAB_BOARDS]);
   });
 
-  it('全权管理员即使能力字段没下发（hasBroadcast=false）也仍看到三个页签', () => {
+  it('全权管理员即使能力字段没下发（hasBroadcast=false）也仍看到四个页签', () => {
     // 组信息缺失时的兜底：`isAdmin` 一项就够（与"全权管理员三能力全给"同口径）
     expect(adminSystemTabs({ isAdmin: true, hasBroadcast: false }))
-      .toEqual([TAB_HEALTH, TAB_AUDIT, TAB_BOARDS]);
+      .toEqual([TAB_HEALTH, TAB_AUDIT, TAB_ASSISTANT, TAB_BOARDS]);
   });
 
   it('什么相关权限都没有 → 空清单（页面渲染「无权限」空状态，而不是白屏）', () => {
@@ -69,12 +75,15 @@ describe('「系统」页页签按权限显示（第 186 批）', () => {
     const broadcastTabs = adminSystemTabs({ isAdmin: false, hasBroadcast: true });
     expect(broadcastTabs).not.toContain(TAB_HEALTH);
     expect(broadcastTabs).not.toContain(TAB_AUDIT);
+    // 系统助手同样是全权管理员专属：后端 `/api/admin/assistant/ops/ask/` 是 403
+    expect(broadcastTabs).not.toContain(TAB_ASSISTANT);
   });
 
-  it('三个页签的文案键在语言包里都有（中英各一份，缺了会露出键名）', () => {
+  it('四个页签的文案键在语言包里都有（中英各一份，缺了会露出键名）', () => {
     for (const [name, key] of [
       [TAB_HEALTH, 'tabHealth'],
       [TAB_AUDIT, 'tabAudit'],
+      [TAB_ASSISTANT, 'tabAssistant'],
       [TAB_BOARDS, 'tabBoards'],
     ]) {
       expect(zhCN.systemHub?.[key], `中文缺 systemHub.${key}（页签 ${name}）`).toBeTruthy();

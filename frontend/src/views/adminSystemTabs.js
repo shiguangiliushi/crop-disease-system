@@ -25,6 +25,8 @@
  * ⚠️ 这条口径与后端**同源**，改动请两边一起看：
  *   · `health` / `audit` → 仅全权管理员（`/api/admin/health/`、`/api/admin/audit-logs/`
  *     是 `is_full_admin`）；
+ *   · `assistant` → 仅全权管理员（`/api/admin/assistant/ops/ask/` 是 `is_full_admin`，
+ *     答案里有部署细节与别人的操作记录）；
  *   · `boards` → 全权管理员**或** `BROADCAST`（`/api/forums/boards/` 写接口是
  *     `IsBroadcastManager`）。
  *
@@ -36,6 +38,13 @@
 export const TAB_HEALTH = 'health';
 /** 操作日志（仅全权管理员） */
 export const TAB_AUDIT = 'audit';
+/**
+ * 系统助手（仅全权管理员）
+ *
+ * 与后端 `/api/admin/assistant/ops/ask/` 同口径（`is_full_admin`）：
+ * 它能查健康、日志、运行数据与 docs，答案里会出现部署细节与别人的操作记录。
+ */
+export const TAB_ASSISTANT = 'assistant';
 /** 版块管理（全权管理员 或 BROADCAST） */
 export const TAB_BOARDS = 'boards';
 
@@ -48,12 +57,12 @@ export const TAB_BOARDS = 'boards';
  *   ⚠️ 两者都写出来是有意的：后端 `has_capability()` 对全权管理员恒为 True，
  *   所以"BROADCAST 或全权管理员"在数据上等价于"有 BROADCAST"，但读代码的人
  *   一眼能看出这一档**不是**只有能力，避免下一个人以为漏判了管理员。
- * @returns {string[]} 例如全权管理员 `['health','audit','boards']`、
+ * @returns {string[]} 例如全权管理员 `['health','audit','assistant','boards']`、
  *   只有 BROADCAST `['boards']`、两者都没有 `[]`
  */
 export function adminSystemTabs({ isAdmin = false, hasBroadcast = false } = {}) {
   const tabs = [];
-  if (isAdmin) tabs.push(TAB_HEALTH, TAB_AUDIT);
+  if (isAdmin) tabs.push(TAB_HEALTH, TAB_AUDIT, TAB_ASSISTANT);
   if (isAdmin || hasBroadcast) tabs.push(TAB_BOARDS);
   return tabs;
 }

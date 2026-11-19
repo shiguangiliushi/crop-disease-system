@@ -1,0 +1,58 @@
+/**
+ * 系统助手页签的**回答渲染**契约（回归）
+ *
+ * ## 这条测试防的是什么
+ *
+ * 用户反馈"回答里为什么会有 `**`" —— 根因不是模型乱输出，而是这个页签把回答按
+ * **纯文本**直接插值了（`<pre>{{ answer }}</pre>`），而模型写的是 Markdown。
+ * 农户侧第 210 批就解决过：`utils/assistantText.js` 只解析加粗一种标记，
+ * 片段走文本插值、标签写死在模板里，**不用 `v-html`**。
+ *
+ * 这条用例不渲染组件（组件依赖 Element Plus / i18n / fetch，挂载成本远大于收益），
+ * 而是**直接读源码**钉住三件事：
+ *
+ *   1. 用的是共用解析器，而不是把 `answer` 直出；
+ *   2. 模板里确实渲染了 `<strong>`（否则解析了也没用）；
+ *   3. 没有 `v-html=` —— 模型输出是不可信输入，这条边界不能被"图省事"破掉。
+ *
+ * 与 `api/tests.py:AuditActionDeclaredTests` 同一种思路：**静态扫描**抓那种
+ * "不报错、不崩、只是显示不对"的回归。
+ */
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SOURCE = readFileSync(resolve(HERE, '../AdminOpsAssistantView.vue'), 'utf8');
+
+describe('系统助手页签的回答渲染', () => {
+  it('用共用的受控解析器，而不是把回答直出', () => {
+    expect(SOURCE).toContain("from '@/utils/assistantText'");
+    expect(SOURCE).toContain('parseAnswerParagraphs');
+    // 直出（`{{ turn.answer }}`）会把 `**` 原样显示出来
+    expect(SOURCE).not.toContain('{{ turn.answer }}');
+  });
+
+  it('渲染了 <strong>，且标签名写死在模板里', () => {
+    expect(SOURCE).toMatch(/<strong v-if="segment\.bold">/);
+  });
+
+  it('没有 v-html=（模型输出是不可信输入）', () => {
+    expect(SOURCE).not.toMatch(/v-html\s*=/);
+  });
+});
+
+describe('系统助手页签的对话状态', () => {
+  it('状态放在 store，不放组件的 ref（切页签会卸载组件）', () => {
+    // Hub 是 `<component :is="tab.panel" v-if="activeTab === tab.name" />` ——
+    // 切到别的页签就卸载。状态留在组件里，用户切走再回来内容就没了（第 414 批实测）。
+    expect(SOURCE).toContain("from '@/stores/opsAssistant'");
+    expect(SOURCE).toContain('useOpsAssistantStore');
+    expect(SOURCE).not.toMatch(/const turns = ref\(/);
+  });
+
+  it('把界面语言带进请求（切英文后新问的问题才是英文）', () => {
+    expect(SOURCE).toMatch(/opsStore\.ask\(text, \{ lang:/);
+  });
+});

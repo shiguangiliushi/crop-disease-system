@@ -1,13 +1,14 @@
 <template>
   <!--
-    「系统」合并页（第 185 批建，第 186 批扩成三个页签）
+    「系统」合并页（第 185 批建，第 186 批扩成三个页签，加系统助手后是四个）
     ============================================================================
-    一个入口、三个页签，**页签按权限画**：
+    一个入口、四个页签，**页签按权限画**：
 
     | 页签 | 谁能看到 | 依据（后端同口径） |
     |---|---|---|
     | `health` 系统健康 | **仅全权管理员** | `/api/admin/health/` 是 `is_full_admin` |
     | `audit` 操作日志 | **仅全权管理员** | `/api/admin/audit-logs/` 是 `is_full_admin` |
+    | `assistant` 系统助手 | **仅全权管理员** | `/api/admin/assistant/ops/ask/` 是 `is_full_admin` |
     | `boards` 版块管理 | 全权管理员 **或** BROADCAST 能力 | `/api/forums/boards/` 写接口是 `IsBroadcastManager` |
 
     ⚠️ 第 186 批的核心就在这里：**只有 BROADCAST、不是全权管理员**的人（能发公告/
@@ -71,15 +72,16 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import AdminHealthView from '@/views/AdminHealthView.vue';
 import AdminAuditLogView from '@/views/AdminAuditLogView.vue';
+import AdminOpsAssistantView from '@/views/AdminOpsAssistantView.vue';
 import AdminBoardsView from '@/views/AdminBoardsView.vue';
 import { useI18n } from '@/i18n';
 // 页签**按权限怎么算**这一段刻意放在这个纯函数里（可单测，理由见该文件注释：
 // "BROADCAST-only"这个档位在浏览器里双重不可达 —— 后端造不出账号、守卫也不放行）
-import { TAB_AUDIT, TAB_BOARDS, TAB_HEALTH, adminSystemTabs } from '@/views/adminSystemTabs';
+import { TAB_ASSISTANT, TAB_AUDIT, TAB_BOARDS, TAB_HEALTH, adminSystemTabs } from '@/views/adminSystemTabs';
 
 export default {
   name: 'AdminSystemHubView',
-  components: { AdminHealthView, AdminAuditLogView, AdminBoardsView },
+  components: { AdminHealthView, AdminAuditLogView, AdminOpsAssistantView, AdminBoardsView },
   setup() {
     const { t } = useI18n();
     const route = useRoute();
@@ -90,6 +92,7 @@ export default {
     const TAB_META = {
       [TAB_HEALTH]: { labelKey: 'systemHub.tabHealth', icon: 'fas fa-heart-pulse', panel: AdminHealthView },
       [TAB_AUDIT]: { labelKey: 'systemHub.tabAudit', icon: 'fas fa-clipboard-list', panel: AdminAuditLogView },
+      [TAB_ASSISTANT]: { labelKey: 'systemHub.tabAssistant', icon: 'fas fa-comments', panel: AdminOpsAssistantView },
       [TAB_BOARDS]: { labelKey: 'systemHub.tabBoards', icon: 'fas fa-table-columns', panel: AdminBoardsView },
     };
 
