@@ -92,3 +92,8 @@ dsh-shots/
 
 # 并行子任务/临时验证进程的日志目录（第 383 批）：含运行中进程的句柄，纯运行时产物
 _tmp_logs/
+
+# 仓库根的手工打包产物（第 417 批）：backend.zip / frontend.zip / mobile*.zip 合计 700+ MB，
+# 全都**超过 GitHub 单文件 100 MB 限制**。它们一直没被忽略 —— 一条 `git add -A` 就会把它们收进来。
+*.zip
+
