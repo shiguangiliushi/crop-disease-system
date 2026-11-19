@@ -1,3 +1,8 @@
+"""核心数据模型：用户、病害百科、识别历史、反馈、新闻、敏感词等。
+
+⚠️ 文件**末尾**那批 `from . import models_xxx` 不能删：Django 只会自动加载 `api/models.py`，
+卫星模块不被导入就不在 app registry 里，删用户时收集器漏掉它们的表，直到 COMMIT 才报外键失败。
+"""
 # 数据模型（用户 / 病害 / 防治方法 / 识别记录 / 反馈 / 新闻 / 敏感词…）
 # ============================================================================
 # 论坛相关模型在 `models_forum.py`（历史原因分开），多语言字段的 mixin 在
@@ -17,11 +22,11 @@
 import logging  # 第 95 批：注销流程记日志
 import uuid  # 第 95 批：注销时把密码置为不可用的随机串
 
-from django.contrib.auth.models import AbstractUser  # 导入Django抽象用户基类
-from django.db import models  # 导入Django模型模块
-from django.utils import timezone  # 导入时区处理模块
-from django.conf import settings  # 导入Django配置模块
-from django.core.validators import FileExtensionValidator  # 导入文件扩展名验证器
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+from django.utils import timezone
+from django.conf import settings
+from django.core.validators import FileExtensionValidator
 from .storage_private import signed_media_storage  # 第 259 批：私有图自动签名
 
 # 第 85 批：用户内容的英文译文元数据（反馈内容 / 管理员回复），见 models_i18n.py
@@ -30,11 +35,11 @@ from .models_i18n import TranslationMetaMixin
 logger = logging.getLogger(__name__)
 
 
-class CustomUser(AbstractUser):  # 定义自定义用户模型，继承自AbstractUser
+class CustomUser(AbstractUser):
     """
     Custom user model to include user roles and profile information.
     """
-    ROLE_CHOICES = (  # 定义角色选择项
+    ROLE_CHOICES = (
         ('ADMIN', 'System Administrator'),  # 系统管理员
         ('EDITOR', 'Information Editor'),  # 信息编辑员
         ('USER', 'Normal User'),  # 普通用户
@@ -319,9 +324,9 @@ class CustomUser(AbstractUser):  # 定义自定义用户模型，继承自Abstra
         )
         return old_avatar
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "用户"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "用户"
+        verbose_name_plural = verbose_name
 
 
 class EditorModuleGrant(models.Model):
@@ -425,22 +430,22 @@ class SensitiveWord(models.Model):
         return result
 
 
-class CropVariety(models.Model):  # 定义作物品种模型
+class CropVariety(models.Model):
     """
     Crop variety management.
     """
     name = models.CharField(max_length=100, verbose_name="作物品种名称")  # 品种名称字段
     description = models.TextField(blank=True, null=True, verbose_name="描述")  # 品种描述字段
 
-    def __str__(self):  # 定义对象字符串表示
-        return self.name  # 返回品种名称
+    def __str__(self):
+        return self.name
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "作物品种"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "作物品种"
+        verbose_name_plural = verbose_name
 
 
-class PestInfo(models.Model):  # 定义病害信息模型
+class PestInfo(models.Model):
     """
     Pest and disease information management.
     """
@@ -473,16 +478,16 @@ class PestInfo(models.Model):  # 定义病害信息模型
     # 只改了错别字不算复核，所以不用 auto_now 自动刷新。
     reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name="最近复核时间")
 
-    def __str__(self):  # 定义对象字符串表示
-        return f"{self.crop_type} - {self.name}"  # 返回作物类型和病害名称
+    def __str__(self):
+        return f"{self.crop_type} - {self.name}"
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "病害信息"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
-        unique_together = ('name', 'crop_type')  # 定义唯一约束
+    class Meta:
+        verbose_name = "病害信息"
+        verbose_name_plural = verbose_name
+        unique_together = ('name', 'crop_type')
 
 
-class CropHealthProfile(models.Model):  # 定义作物健康管理档案模型
+class CropHealthProfile(models.Model):
     """
     作物健康管理档案（第 192 批新增）—— 落校准版知识库里的 12 条 `healthy` 记录。
 
@@ -537,16 +542,16 @@ class CropHealthProfile(models.Model):  # 定义作物健康管理档案模型
     sources = models.JSONField(default=list, blank=True, verbose_name="数据来源（URL 列表）")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
-    def __str__(self):  # 定义对象字符串表示
-        return self.name  # 返回档案名称
+    def __str__(self):
+        return self.name
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "作物健康管理"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "作物健康管理"
+        verbose_name_plural = verbose_name
 
 
-class PreventionMethod(models.Model):  # 定义防治方法模型
-    CATEGORY_CHOICES = [  # 定义防治类别选择项
+class PreventionMethod(models.Model):
+    CATEGORY_CHOICES = [
         ('AGRICULTURAL', '农业防治'),  # 农业防治
         ('CHEMICAL', '化学防治'),  # 化学防治
         ('ECOLOGICAL', '生态防治'),  # 生态防治
@@ -554,40 +559,45 @@ class PreventionMethod(models.Model):  # 定义防治方法模型
         ('MONITORING', '监测预警'),  # 监测预警
     ]
     pest = models.ForeignKey(PestInfo, related_name='prevention_methods', on_delete=models.CASCADE,
-                             verbose_name="关联病害")  # 关联病害外键
+                             verbose_name="关联病害")
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, verbose_name="防治类别")  # 防治类别字段
     measure = models.TextField(verbose_name="具体措施")  # 具体措施字段
     # 第 72 批：防治措施也补英文字段（英文界面下防治建议此前整段是中文）
     measure_en = models.TextField(blank=True, default='', verbose_name="具体措施（英文）")
 
-    def __str__(self):  # 定义对象字符串表示
-        return f"{self.pest.name} - {self.get_category_display()}"  # 返回病害名称和防治类别
+    def __str__(self):
+        return f"{self.pest.name} - {self.get_category_display()}"
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "防治方法"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "防治方法"
+        verbose_name_plural = verbose_name
 
 
-class DetectionHistory(models.Model):  # 定义检测历史模型
-    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户")  # 用户外键
+class DetectionHistory(models.Model):
+    """单条识别记录（识别历史列表的数据源）。
+
+    ⚠️ `pest_info` 允许为 NULL —— 老数据、或识别结果没匹配到词条时就是空的，
+    读的地方不能假设它一定存在（序列化器里那段回填正是为此）。
+    """
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户")
     image = models.ImageField(upload_to='detection_history/',
                               storage=signed_media_storage,  # 第 259 批：.url 自动带签名
                               verbose_name="检测图片")  # 检测图片字段
     annotated_image = models.ImageField(upload_to='detection_history/annotated/', blank=True, null=True,
                                        storage=signed_media_storage,  # 第 259 批：.url 自动带签名
                                         verbose_name="标注图片")  # 标注图片字段
-    detection_result = models.CharField(max_length=255, verbose_name="检测结果")  # 检测结果字段
-    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="检测时间")  # 检测时间字段
+    detection_result = models.CharField(max_length=255, verbose_name="检测结果")
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="检测时间")
     pest_info = models.ForeignKey(PestInfo, on_delete=models.SET_NULL, null=True, blank=True,
-                                  verbose_name="关联病害")  # 关联病害外键
-    confidence = models.FloatField(null=True, blank=True, verbose_name="置信度")  # 置信度字段
+                                  verbose_name="关联病害")
+    confidence = models.FloatField(null=True, blank=True, verbose_name="置信度")
 
-    def __str__(self):  # 定义对象字符串表示
-        return f"{self.user.username} - {self.detection_result} at {self.timestamp}"  # 返回用户名、检测结果和检测时间
+    def __str__(self):
+        return f"{self.user.username} - {self.detection_result} at {self.timestamp}"
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "识别历史"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "识别历史"
+        verbose_name_plural = verbose_name
         ordering = ['-timestamp']  # 默认按时间倒序排列
         # 第 286 批：历史列表 = "user + 时间倒序"；管理端统计按检测结果聚合。
         indexes = [
@@ -598,7 +608,7 @@ class DetectionHistory(models.Model):  # 定义检测历史模型
 
 
 # 用户反馈模型
-class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
+class Feedback(TranslationMetaMixin):
     """
     用户反馈
 
@@ -626,14 +636,14 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
         ('resolved', '已处理'),
     )
 
-    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户", null=True, blank=True)  # 用户外键
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户", null=True, blank=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='suggestion',
                                verbose_name="反馈类型")  # 反馈类型（意见反馈页使用）
     image = models.ImageField(upload_to='feedback_images/', storage=signed_media_storage,
                               verbose_name="反馈图片", null=True, blank=True)  # 反馈图片字段
     disease_name = models.CharField(max_length=255, blank=True, default='',
                                    verbose_name="病害名称")  # 病害名称字段（识别结果反馈才有）
-    confidence = models.FloatField(null=True, blank=True, verbose_name="置信度")  # 置信度字段
+    confidence = models.FloatField(null=True, blank=True, verbose_name="置信度")
     is_correct = models.BooleanField(null=True, blank=True, verbose_name="识别是否正确")  # 识别是否正确字段（识别结果反馈才有）
     timestamp = models.DateTimeField(auto_now_add=True, verbose_name="反馈时间")  # 反馈时间字段
     suggestion = models.TextField(blank=True, null=True, verbose_name="反馈内容")  # 反馈内容（原"用户建议"）
@@ -650,7 +660,7 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending',
                               verbose_name="处理状态")  # 处理状态（管理员在后台流转）
     admin_reply = models.TextField(blank=True, default='', verbose_name="管理员回复")  # 管理员回复
-    handled_at = models.DateTimeField(null=True, blank=True, verbose_name="处理时间")  # 处理时间
+    handled_at = models.DateTimeField(null=True, blank=True, verbose_name="处理时间")
 
     # 第 85 批：英文译文（反馈内容 + 管理员回复各一份）
     suggestion_en = models.TextField(blank=True, default='', verbose_name="反馈内容（英文）")
@@ -688,8 +698,8 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
         null=True, blank=True, verbose_name="上次导出时间",
     )
 
-    def __str__(self):  # 定义对象字符串表示
-        return f"{self.disease_name} - {'正确' if self.is_correct else '不正确'}"  # 返回病害名称和识别正确性
+    def __str__(self):
+        return f"{self.disease_name} - {'正确' if self.is_correct else '不正确'}"
 
     @property
     def is_trainable(self):
@@ -716,9 +726,9 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
             (self.suggestion_en or '').strip() or (self.admin_reply_en or '').strip()
         )
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "用户反馈"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "用户反馈"
+        verbose_name_plural = verbose_name
         ordering = ['-timestamp']  # 默认按时间倒序排列
         # 第 286 批：管理端列表 = "status/category + 时间倒序"，核验队列 = "verify_status"。
         # 这些字段此前全无索引（全表扫）。
@@ -730,7 +740,7 @@ class Feedback(TranslationMetaMixin):  # 定义用户反馈模型
         ]
 
 
-class News(models.Model):  # 定义新闻模型
+class News(models.Model):
     """
     Industry news and updates.
     """
@@ -787,11 +797,11 @@ class News(models.Model):  # 定义新闻模型
     related_pests = models.ManyToManyField(
         PestInfo, blank=True, related_name='related_news', verbose_name="关联病害",
     )
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")  # 创建时间字段
-    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")  # 更新时间字段
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
-    def __str__(self):  # 定义对象字符串表示
-        return self.title  # 返回新闻标题
+    def __str__(self):
+        return self.title
 
     @property
     def is_pending_schedule(self):
@@ -803,9 +813,9 @@ class News(models.Model):  # 定义新闻模型
         """对普通用户是否可见：已发布 且 未处于"等待定时"状态"""
         return bool(self.is_published and not self.is_pending_schedule)
 
-    class Meta:  # 定义模型元数据
-        verbose_name = "行业新闻"  # 单数名称
-        verbose_name_plural = verbose_name  # 复数名称
+    class Meta:
+        verbose_name = "行业新闻"
+        verbose_name_plural = verbose_name
         ordering = ['-created_at']  # 默认按创建时间倒序排列
 
 
@@ -870,6 +880,7 @@ class NewsSubscription(models.Model):
 # ============================================================================
 from . import models_audit  # noqa: E402,F401  第 146 批：管理操作日志
 from . import models_assistant  # noqa: E402,F401  第 193 批：智能回答助手（会话 / 消息）
+from . import models_assistant_ops  # noqa: E402,F401  系统助手（管理端运维侧）的观测表
 from . import models_health  # noqa: E402,F401  第 158 批：系统健康快照
 from . import models_calendar  # noqa: E402,F401
 from . import models_expert  # noqa: E402,F401

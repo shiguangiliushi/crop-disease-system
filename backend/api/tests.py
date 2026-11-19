@@ -82,6 +82,14 @@ from . import captcha
 from .assistant import context, guard, llm, prompts, retriever  # prompts：第 197 批语言归一用例要用
 from .assistant import orchestrator  # 第 212 批：单来源折叠用例要直接调它的纯函数
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
+# 系统助手（管理端运维侧）：六个只读工具 + 编排，各自可单独测
+from .models_assistant_ops import OpsAssistantTurn
+from .assistant.ops import intent as ops_intent
+from .assistant.ops import orchestrator as ops_orchestrator
+from .assistant.ops import prompts as ops_prompts
+from .assistant.ops import redact as ops_redact
+from .assistant.ops import tools as ops_tools
+from .assistant.ops import verify as ops_verify
 from .pest_lookup import (  # noqa: E402  第 159 批：类名 → 词条匹配
     find_pest_info,
     normalize as normalize_pest_key,
@@ -2780,6 +2788,8 @@ class NewsLinkageTests(TestCase):
     """
 
     def setUp(self):
+        """清缓存并造「小麦/番茄」两株病害：关联病害按 (crop_type, name) 的 UTF-8 码点排序，
+        「小麦」必须排在「番茄」前，改名字会连带推翻排序断言，所以不要图省事换作物。"""
         cache.clear()
         self.admin = User.objects.create_user(
             username='nl_admin', password='pw123456', is_staff=True, is_superuser=True,
@@ -3209,6 +3219,8 @@ class NewsSubscriptionTests(TestCase):
     """
 
     def setUp(self):
+        """固定四类订阅者（订分类 / 订病害 / 两者都订 / 谁都没订）外加一个停用账号：
+        通知去重与「停用不发」才有对照物，用例里不要再改这些订阅关系。"""
         # 订阅/通知链路会用到缓存（限流等），clear 防止串测
         cache.clear()
 
@@ -3591,6 +3603,8 @@ class NewsStatsTests(TestCase):
     """
 
     def setUp(self):
+        """七条新闻各压一种发布时间形态（今天 / 昨天 / 补发 / 立即 / 草稿 / 定时 / 60 天前）：
+        少一种，「按 published_at 优先分桶」那条分支就没人测了。"""
         cache.clear()
         self.admin = User.objects.create_user(
             username='ns403_admin', password='pw123456', is_staff=True, is_superuser=True,
@@ -4170,6 +4184,8 @@ class AdminDashboardTests(TestCase):
     """数据看板（仅管理员，聚合识别/用户/内容/待办）"""
 
     def setUp(self):
+        """每类计数都造成非零（2 条识别、1 已发布 + 1 待审、2 评论、1 反馈）：
+        空库下所有聚合都是 0，分不清「算错了」还是「本来就没有」。"""
         cache.clear()
         self.admin = User.objects.create_user(
             username='dash_admin', password='pw123456', is_staff=True, is_superuser=True,
@@ -4853,6 +4869,8 @@ class ExcelExportTests(TestCase):
     """识别记录导出 Excel：权限范围、筛选、文件有效性"""
 
     def setUp(self):
+        """三条识别记录分属两人、其中一条没有 pest 外键：同时验证「只导自己」与未匹配行的空列不炸，
+        把关联补全后这条分支就失去覆盖。"""
         cache.clear()
         self.user = User.objects.create_user(username='xl_user', password='pw123456')
         self.other = User.objects.create_user(username='xl_other', password='pw123456')
@@ -5525,6 +5543,8 @@ class ImageUploadValidationTests(TestCase):
         )
 
     def setUp(self):
+        """MEDIA_ROOT 只在这里切成临时目录：写在类上的装饰器会波及不需要落盘的用例，
+        而事务回滚救不了已写进文件系统的文件。"""
         self.client_user = APIClient()
         self.client_user.force_authenticate(user=self.user)
         self.client_admin = APIClient()
@@ -7175,6 +7195,8 @@ class BackupCommandTests(TransactionTestCase):
 
     @classmethod
     def setUpClass(cls):
+        """把测试库导出成磁盘文件并把 connection.NAME 指过去 —— SQLite 在线备份 API 只认文件；
+        又因为要 re-open 连接，必须在 super().setUpClass() 之后才能碰库。"""
         import shutil
         import sqlite3
         import tempfile
@@ -9499,6 +9521,8 @@ class AdminUserManagementTests(TestCase):
     """管理端用户管理：权限 / 字段 / 筛选 / 分页"""
 
     def setUp(self):
+        """账号覆盖专家 / 编辑员 / 普通用户 / is_active=False 的「被取消专家」：
+        最后这条若按「有 ExpertProfile 就算专家」来判，管理页会显示错身份。"""
         cache.clear()
         self.admin = User.objects.create_user(
             username='um_admin', password='pw123456', is_staff=True, is_superuser=True,
@@ -10695,6 +10719,8 @@ class CapabilityMatrixTests(APITestCase):
     """role × 端点 的能力矩阵（第 125 批）"""
 
     def setUp(self):
+        """编辑员的模块授权从 CONTENT_MODULES 派生而不是写死：上一版硬编码四个模块，
+        新增「论坛交流」时夹具悄悄少勾一块，测试照旧全绿而覆盖面已经变了。"""
         cache.clear()
         User = get_user_model()
 
@@ -11148,6 +11174,8 @@ class ContentModuleScopeTests(APITestCase):
     """模块 × 端点：只勾一个模块的编辑员只能干那一块"""
 
     def setUp(self):
+        """四个编辑员各只勾一个模块，故意不造全勾的账号 ——
+        「只勾 A 却碰得到 B」只有在这种最小授权下才会暴露。"""
         cache.clear()
         User = get_user_model()
         self.superuser = User.objects.create_superuser(
@@ -11917,6 +11945,8 @@ class FeedbackClosureTests(APITestCase):
     """
 
     def setUp(self):
+        """三条反馈分别是可训练样本 / 普通建议 / 他人提交：is_trainable 的两种取值与
+        「我的 vs 别人的」两种归属都各有对应物，少哪条都会让统计或权限断言失去基准。"""
         cache.clear()
         from .models import EditorModuleGrant
 
@@ -12235,6 +12265,8 @@ class FeedbackBulkActionTests(APITestCase):
     """批量改状态 / 批量删除（第 138 批）"""
 
     def setUp(self):
+        """我的 3 条、别人的 2 条故意不等量：数量相同时「漏删了自己一条」和
+        「多删了别人一条」结果一样，从返回结果里看不出来。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -12752,6 +12784,8 @@ class PostModerationByEditorTests(APITestCase):
     """
 
     def setUp(self):
+        """review 编辑员 / 只有 news 模块的编辑员 / 作者三方并存：中间那个用来证明
+        「模块不同就不该放行」，缺了它以后权限放宽也没人察觉。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -13055,6 +13089,8 @@ class PostBulkDeleteTests(APITestCase):
     """帖子批量删除（第 147 批，仅全权管理员）"""
 
     def setUp(self):
+        """管理员与 review 编辑员两个账号对照（编辑员有审核权也**不能**批量删），
+        3 篇帖子够断言「全删」与「部分失败」两种返回。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -13151,6 +13187,8 @@ class ForumAdminListingTests(APITestCase):
     """
 
     def setUp(self):
+        """五种状态各一条（含 soft_delete 后仍是 published 的那条）：少任一状态，
+        控制台「列表看起来是空的」这类回归就测不出来。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -13374,6 +13412,8 @@ class AdminCommentManagementTests(APITestCase):
     """控制台评论管理（第 149 批）"""
 
     def setUp(self):
+        """一个帖子挂 3 条评论，另配 review / news / 普通用户三种账号；
+        news 编辑员这条是判「评论权限有没有被 review 顺带放开」的对照。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -13660,6 +13700,8 @@ class ForumOnlyEditorTests(APITestCase):
     """
 
     def setUp(self):
+        """forum 与 review 两个编辑员并存，才能验证「review 仍是宽口径、forum 只管论坛」；
+        只造一个的话，无论收紧还是放宽都不会有断言变红。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -13927,6 +13969,8 @@ class CommentRestoreTests(APITestCase):
     """
 
     def setUp(self):
+        """评论正文用固定串而非随机值建（恢复后要逐字比对，随机内容比不出差异），
+        三个 client 分别对应「删的人 / 恢复的人 / 被删者」三种权限档。"""
         cache.clear()
         User = get_user_model()
         from .models import EditorModuleGrant
@@ -14901,6 +14945,8 @@ class AdminDetectionTests(APITestCase):
     """
 
     def setUp(self):
+        """三条记录覆盖已匹配 / 未匹配 / 低置信度三种筛选项，且分属两个用户 ——
+        全造成同一个人的数据，「跨用户视图」这条口径等于没验。"""
         cache.clear()
         User = get_user_model()
         self.admin = User.objects.create_superuser(
@@ -17011,6 +17057,8 @@ class AssistantSessionViewTests(TestCase):
     """助手问答历史：列表 / 详情 / 删除 / 归属隔离。"""
 
     def setUp(self):
+        """刻意留一条 content='' 的助手消息，模拟流式「先建行、后回填」的中间态；
+        只造有正文的消息，历史里多出空气泡这个回归就测不出来。"""
         self.user = User.objects.create_user(username='asst_hist', password='pw12345678')
         self.other = User.objects.create_user(username='asst_hist_other', password='pw12345678')
         self.token = Token.objects.create(user=self.user)
@@ -17914,6 +17962,8 @@ class MediaAccessTests(APITestCase):
     """第 257 批：/media/ 访问控制（公开目录直出，私有目录鉴权）"""
 
     def setUp(self):
+        """真的往 MEDIA_ROOT 写两个占位文件（公开目录一个、私有目录一个）：判定看的是路径与登录态，
+        不落盘的话「该放行」和「该 404」在响应上分不出来。"""
         from django.conf import settings
 
         self.media_root = Path(settings.MEDIA_ROOT)
@@ -18483,6 +18533,8 @@ class IdorAccessTestsPart4(TestCase):
     """
 
     def setUp(self):
+        """公开帖与草稿同属一个作者，草稿下再挂第三方评论：这样「别人的帖子可读不可改」
+        与「草稿藏了、评论要不要跟着藏」才各自成立，不会互相顶替。"""
         from django.contrib.auth import get_user_model
 
         from api.models_forum import Comment, ForumBoard, Post
@@ -18731,3 +18783,724 @@ class IdorAccessTestsPart4(TestCase):
         b_notification.refresh_from_db()
         self.assertTrue(a_notification.is_read, '自己的通知应当被标为已读')
         self.assertFalse(b_notification.is_read, '别人的通知不能被一起标为已读')
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 系统助手（管理端运维侧）
+#
+# 设计见 `docs/系统助手框架.md`。每条用例都对应一个真实故障模式，不是凑数：
+# 脱敏漏了 = 部署细节出境；校验松了 = 助手念错数字；白名单破了 = AI 建议删库。
+# ══════════════════════════════════════════════════════════════════════
+
+class OpsAssistantRedactTests(SimpleTestCase):
+    """出站脱敏（框架文档 9.1）"""
+
+    def test_windows_path_keeps_tail_only(self):
+        masked = ops_redact.text(r'C:\Users\alice\AppData\Local\Programs\Python\python.exe')
+        self.assertNotIn('alice', masked)
+        self.assertIn('python.exe', masked)
+        self.assertTrue(masked.startswith('…'), masked)
+
+    def test_forward_slash_win_path_is_not_cut_twice(self):
+        """`C:/Users/bob/x.py` 只能被切一刀。
+
+        ⚠️ 第一版是"先替换 Windows 路径、再替换 POSIX 路径"，第二遍把剩下的
+        `/x.py` 又切了一次，拼出 `…/<user>…/x.py`。这类 bug 肉眼看不出对错。
+        """
+        masked = ops_redact.text('C:/Users/bob/x.py')
+        self.assertEqual(masked.count('…'), 1, masked)
+        self.assertNotIn('bob', masked)
+        self.assertIn('x.py', masked)
+
+    def test_url_is_kept(self):
+        url = 'https://api.deepseek.com/v1/chat/completions'
+        self.assertIn(url, ops_redact.text(f'端点见 {url}'))
+
+    def test_credentials_are_masked(self):
+        masked = ops_redact.text('token=sk-abcdef123456')
+        self.assertNotIn('sk-abcdef123456', masked)
+
+    def test_long_text_is_truncated(self):
+        masked = ops_redact.text('x' * 5000)
+        self.assertLess(len(masked), 5000)
+        self.assertIn('已截断', masked)
+
+
+class OpsAssistantVerifyTests(SimpleTestCase):
+    """数值校验 + 命令白名单（框架文档 9.3）"""
+
+    @staticmethod
+    def _result(data):
+        return ops_tools.ToolResult(name='t', ok=True, data=data)
+
+    def test_made_up_number_is_caught(self):
+        ok, unmatched = ops_verify.verify_numbers('共有 999 项问题。', [self._result({'total': 3})])
+        self.assertFalse(ok)
+        self.assertIn('999 项', unmatched)
+
+    def test_list_length_counts_as_number(self):
+        """"3 项问题"必须能对上 `problems` 的**长度**（第一版漏了，误杀正确结论）"""
+        result = self._result({'problems': ['a', 'b', 'c']})
+        self.assertTrue(ops_verify.verify_numbers('有 3 项问题。', [result])[0])
+
+    def test_percent_equivalence(self):
+        result = self._result({'rate': 0.775})
+        self.assertTrue(ops_verify.verify_numbers('准确率 77.5%。', [result])[0])
+
+    def test_structure_numbers_are_ignored(self):
+        self.assertTrue(ops_verify.verify_numbers('第 3 点见下。', [self._result({})])[0])
+
+    def test_unauthorized_command_is_hidden(self):
+        cleaned, blocked = ops_verify.block_commands(
+            '跑 python manage.py purge_deletion_requests 即可')
+        self.assertIn('purge_deletion_requests', blocked)
+        self.assertNotIn('purge_deletion_requests', cleaned)
+        self.assertIn('未授权的命令', cleaned)
+
+    def test_whitelisted_command_is_kept(self):
+        cleaned, blocked = ops_verify.block_commands('先跑 python manage.py check_env')
+        self.assertEqual(blocked, [])
+        self.assertIn('check_env', cleaned)
+
+
+class OpsAssistantIntentTests(SimpleTestCase):
+    """意图判定（框架文档 6.1）"""
+
+    def test_health(self):
+        self.assertIn('health', ops_intent.detect('系统健康现在什么状态'))
+
+    def test_howto(self):
+        self.assertIn('howto', ops_intent.detect('备份怎么恢复'))
+
+    def test_audit(self):
+        self.assertIn('audit', ops_intent.detect('这周谁删了帖子'))
+
+    def test_stats(self):
+        self.assertIn('stats', ops_intent.detect('近七天识别准确率多少'))
+
+    def test_samples(self):
+        self.assertIn('samples', ops_intent.detect('有多少可训练样本待确认'))
+
+    def test_errors(self):
+        self.assertIn('errors', ops_intent.detect('哪类病害误判最多'))
+
+    def test_at_most_two_intents(self):
+        """三个以上工具拼起来会超 token 预算，也会让模型混用口径"""
+        self.assertLessEqual(
+            len(ops_intent.detect('系统健康挂了，备份怎么恢复，这周谁删了帖子，准确率多少')), 2)
+
+    def test_unrelated_question_has_no_intent(self):
+        self.assertEqual(ops_intent.detect('苹果手机怎么修'), [])
+
+    def test_window_days_follows_the_question(self):
+        """时间窗跟问题走 —— 否则"这个月"会被按 7 天答（数字对、口径错）"""
+        self.assertEqual(ops_intent.window_days('这个月识别了多少张', 7), 30)
+        self.assertEqual(ops_intent.window_days('近三个月降级率多少', 7), 90)
+        self.assertEqual(ops_intent.window_days('最近七天准确率', 14), 7)
+        self.assertEqual(ops_intent.window_days('最近 21 天识别量', 7), 21)
+        self.assertEqual(ops_intent.window_days('识别准确率多少', 7), 7, '没说时间就用默认窗')
+
+    def test_plan_passes_window_to_windowed_tools(self):
+        plan = dict(ops_orchestrator._plan(['stats'], '这个月识别了多少张'))
+        self.assertEqual(plan['get_ops_stats']['days'], 30)
+
+
+class OpsAssistantToolsTests(TestCase):
+    """八个只读工具（框架文档 5.4）"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='ops_tools_user', password='pw12345678')
+        self.pest = PestInfo.objects.create(
+            name='番茄早疫病', crop_type='番茄', english_identifier='ops_test_early_blight')
+
+    def _detection(self, confidence):
+        return DetectionHistory.objects.create(
+            user=self.user, image='detection_history/ops-test.jpg',
+            detection_result='番茄晚疫病', confidence=confidence)
+
+    def _feedback(self, *, correct=False, corrected=None, verify='pending',
+                  category='recognition', **kwargs):
+        return Feedback.objects.create(
+            category=category, is_correct=correct, corrected_pest=corrected,
+            disease_name='番茄晚疫病', verify_status=verify, **kwargs)
+
+    def test_health_tool_redacts_paths(self):
+        result = ops_tools.get_system_health()
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.name, 'get_system_health')
+        blob = json.dumps(result.data, ensure_ascii=False, default=str)
+        self.assertNotIn(str(settings.BASE_DIR), blob)
+        # 解释器那一行必须已经被打过省略号（未脱敏时是完整绝对路径）。
+        # ⚠️ 只认冒号开头的那个检查项：`check_env` 另有一条"使用的解释器位于仓库目录内"
+        # 的**告警文案**（纯文字、没有路径），按 `'解释器' in text` 过滤会把它也捞进来。
+        interpreter = [item['text'] for item in result.data['checks']
+                       if item['text'].startswith('解释器：')]
+        self.assertTrue(interpreter, 'check_env 应当报告解释器')
+        for line in interpreter:
+            self.assertIn('…', line, line)
+
+    def test_health_tool_never_returns_runtime_paths(self):
+        data = ops_tools.get_system_health().data
+        self.assertNotIn('runtime', data, '健康页的 runtime 字段含绝对路径，不许整份转手')
+
+    def test_health_tool_gives_counts_not_just_lists(self):
+        """必须给现成计数。
+
+        没有 `problem_count` 时，模型只能自己数 `problems` 的条数 ——
+        数错一个就会被 `verify_numbers` 判成编造，整段答案被换成表格。
+        实测 30 条黄金问题里有 5 条栽在这上面。
+        """
+        data = ops_tools.get_system_health().data
+        self.assertEqual(data['problem_count'], len(data['problems']))
+        self.assertEqual(data['warning_count'], len(data['warnings']))
+        self.assertEqual(data['check_count'], len(data['checks']))
+
+    def test_trend_missing_days_arithmetic(self):
+        result = ops_tools.get_health_trend(14)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.data['window'], 14)
+        self.assertEqual(result.data['missing_days'], 14 - result.data['recorded_days'])
+
+    def test_audit_hides_detail_by_default(self):
+        AdminAuditLog.objects.create(action='user.suspend', detail='凭证 token=abcdef 已作废')
+        result = ops_tools.get_audit_summary(7)
+        self.assertTrue(result.ok, result.error)
+        self.assertNotIn('abcdef', json.dumps(result.data, ensure_ascii=False, default=str))
+
+        with_detail = ops_tools.get_audit_summary(7, include_detail=True)
+        recent = with_detail.data['recent'][0]
+        self.assertIn('detail', recent)
+        self.assertNotIn('abcdef', recent['detail'], '显式要原文时也必须脱敏')
+
+    def test_run_check_refuses_command_outside_whitelist(self):
+        result = ops_tools.run_check('purge_deletion_requests')
+        self.assertFalse(result.ok)
+        self.assertIn('白名单', result.error)
+
+    def test_search_docs_only_returns_existing_markdown(self):
+        result = ops_tools.search_ops_docs('备份过期')
+        self.assertTrue(result.ok, result.error)
+        root = Path(settings.BASE_DIR).parent
+        for hit in result.data['hits']:
+            self.assertTrue(hit['path'].endswith('.md'), hit['path'])
+            self.assertTrue((root / hit['path']).exists(), hit['path'])
+
+    def test_search_docs_empty_query(self):
+        result = ops_tools.search_ops_docs(' 。 ')
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data['hits'], [])
+
+    # ── C：训练样本与误判 ──────────────────────────────────────────────
+    def test_trainable_filter_matches_model_property(self):
+        """查询集的三个条件必须与 `Feedback.is_trainable` 一致。
+
+        `is_trainable` 是属性、不能用于 filter，所以工具里抄了一遍条件。
+        这条用例逐条比对两边的数量 —— 谁改了条件另一边没跟上，立刻红。
+        """
+        self._feedback(correct=False, corrected=self.pest)
+        self._feedback(correct=False)                    # 只说"错了"，没给正确类别
+        self._feedback(correct=True)                     # 用户说识别对了
+        self._feedback(correct=False, corrected=self.pest, category='bug')
+
+        expected = sum(1 for item in Feedback.objects.all() if item.is_trainable)
+        self.assertEqual(ops_tools._trainable_queryset(30).count(), expected)
+        self.assertEqual(expected, 1)
+
+    def test_feedback_samples_counts(self):
+        self._feedback(correct=False, corrected=self.pest, verify='pending')
+        self._feedback(correct=False, corrected=self.pest, verify='confirmed')
+        self._feedback(correct=False, corrected=self.pest, verify='rejected')
+        self._feedback(correct=False)                    # 不可训练，不计入样本池
+
+        data = ops_tools.get_feedback_samples(30).data
+        self.assertEqual(data['recognition_feedback'], 4)
+        self.assertEqual(data['trainable'], 3)
+        self.assertEqual(data['sample_states']['pending'], 1)
+        self.assertEqual(data['sample_states']['confirmed'], 1)
+        self.assertEqual(data['sample_states']['rejected'], 1)
+        self.assertEqual(len(data['pending_samples']), 1)
+
+    def test_feedback_samples_hides_contact_and_text(self):
+        """联系方式与用户正文**不进上下文**（要发给外部模型）"""
+        self._feedback(correct=False, corrected=self.pest,
+                       contact='13800000000', suggestion='请电话联系我')
+        blob = json.dumps(ops_tools.get_feedback_samples(30).data,
+                          ensure_ascii=False, default=str)
+        self.assertNotIn('13800000000', blob)
+        self.assertNotIn('请电话联系我', blob)
+
+    def test_detection_errors_normalizes_two_scales(self):
+        """置信度在库里有两套量纲（0–1 与 0–100），阈值判断不能把它们混为一谈"""
+        self._detection(0.3)     # 0–1 量纲 → 30%
+        self._detection(20)      # 0–100 量纲 → 20%
+        self._detection(95)      # 95%
+        self._feedback(correct=False)
+        self._feedback(correct=False, corrected=self.pest)
+
+        data = ops_tools.get_detection_errors(30).data
+        self.assertEqual(data['detections']['total'], 3)
+        self.assertEqual(data['detections']['low_confidence'], 2)
+        self.assertEqual(data['feedback']['inaccurate'], 2)
+        self.assertEqual(data['feedback']['linked_to_detection'], 0)
+        self.assertEqual(data['corrected_pairs'][0]['corrected_to'], '番茄早疫病')
+
+    def test_detection_errors_links_feedback_to_detection(self):
+        """`Feedback.detection` 外键存在，但要有用例守住它真的落库 ——
+        没有这条关联，"哪张图被点不准"只能靠时间邻近**推断**。"""
+        detection = self._detection(0.4)
+        self._feedback(correct=False, corrected=self.pest, detection=detection)
+        data = ops_tools.get_detection_errors(30).data
+        self.assertEqual(data['feedback']['linked_to_detection'], 1)
+        self.assertEqual(data['feedback']['linked_rate'], 1.0)
+
+
+class OpsAssistantPromptTests(SimpleTestCase):
+    """提示词与降级模板的语言支持（第 414 批）"""
+
+    def test_english_prompt_is_used_when_lang_is_en(self):
+        messages = ops_prompts.build_messages(question='health?', context='<x/>', lang='en')
+        self.assertTrue(messages[0]['content'].startswith('You are the **admin-side system assistant**'))
+        self.assertIn("[Administrator's question]", messages[-1]['content'])
+
+    def test_chinese_prompt_is_the_default(self):
+        messages = ops_prompts.build_messages(question='系统健康', context='<x/>')
+        self.assertIn('管理端系统助手', messages[0]['content'])
+        self.assertIn('【管理员的问题】', messages[-1]['content'])
+
+    def test_reason_text_en_covers_every_key(self):
+        self.assertEqual(set(ops_prompts.REASON_TEXT_EN), set(ops_prompts.REASON_TEXT))
+
+    def test_deterministic_answer_english(self):
+        result = ops_tools.ToolResult(name='get_system_health', ok=True, data={'level': 'ok'})
+        text = ops_prompts.deterministic_answer([result], reason='llm_disabled', lang='en')
+        self.assertIn('(auto-degraded:', text)
+        self.assertIn('Raw tool output', text)
+        # 英文下摊原始 JSON，不给带中文标签的摘要（半中半英比原文更难读）
+        self.assertIn('```json', text)
+
+    def test_deterministic_answer_chinese_still_summarizes(self):
+        result = ops_tools.ToolResult(
+            name='get_system_health', ok=True,
+            data={'level': 'fail', 'problems': ['依赖不符'], 'problem_count': 1, 'warning_count': 0},
+        )
+        text = ops_prompts.deterministic_answer([result], reason='llm_disabled')
+        self.assertIn('（自动降级：', text)
+        self.assertIn('检查结论：fail', text)
+
+
+class OpsAssistantApiTests(APITestCase):
+    """接口：权限、入参、降级、落库（框架文档第八节）"""
+
+    url = '/api/admin/assistant/ops/ask/'
+
+    def setUp(self):
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='ops_admin', password='pw12345678', is_staff=True,
+        )
+        self.editor = User.objects.create_user(
+            username='ops_editor', password='pw12345678', role='EDITOR',
+        )
+        EditorModuleGrant.objects.create(user=self.editor, module='review')
+        self.plain = User.objects.create_user(username='ops_plain', password='pw12345678')
+
+    def _client(self, user):
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        return client
+
+    # ── 权限：与系统健康 / 操作日志同一档 ──────────────────────────────
+    def test_only_full_admin_may_ask(self):
+        self.assertEqual(
+            self._client(self.plain).post(self.url, {'question': '系统健康'}, format='json').status_code,
+            403)
+        self.assertEqual(
+            self._client(self.editor).post(self.url, {'question': '系统健康'}, format='json').status_code,
+            403)
+        self.assertEqual(
+            self._client(self.admin).post(self.url, {'question': '系统健康'}, format='json').status_code,
+            200)
+
+    def test_anonymous_is_rejected(self):
+        response = APIClient().post(self.url, {'question': '系统健康'}, format='json')
+        self.assertIn(response.status_code, (401, 403))
+
+    # ── 入参 ──────────────────────────────────────────────────────────
+    def test_empty_question(self):
+        response = self._client(self.admin).post(self.url, {'question': '   '}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    def test_too_long_question(self):
+        response = self._client(self.admin).post(
+            self.url, {'question': 'x' * 2001}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    def test_history_must_be_list(self):
+        response = self._client(self.admin).post(
+            self.url, {'question': '系统健康', 'history': 'bad'}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    # ── 降级：模型关掉也要给出可用的表格 ──────────────────────────────
+    def test_degraded_when_llm_disabled(self):
+        data = self._client(self.admin).post(
+            self.url, {'question': '系统健康现在什么状态'}, format='json').data
+        self.assertTrue(data['degraded'])
+        self.assertEqual(data['degrade_reason'], 'llm_disabled')
+        self.assertIn('get_system_health', [item['name'] for item in data['tools']])
+        self.assertIn('get_system_health', data['answer'])
+        self.assertTrue(OpsAssistantTurn.objects.exists(), '降级也要落库，否则观测不到')
+
+    def test_no_intent_does_not_call_tools(self):
+        data = self._client(self.admin).post(
+            self.url, {'question': '苹果手机怎么修'}, format='json').data
+        self.assertEqual(data['degrade_reason'], 'no_intent')
+        self.assertEqual(data['tools'], [])
+
+    def test_sensitive_question_is_rejected_before_tools(self):
+        SensitiveWord.objects.create(word='违禁测试词')
+        data = self._client(self.admin).post(
+            self.url, {'question': '违禁测试词 系统健康'}, format='json').data
+        self.assertEqual(data['degrade_reason'], 'sensitive')
+        self.assertEqual(data['tools'], [])
+
+    def test_tool_failure_does_not_500(self):
+        def boom():
+            raise RuntimeError('boom')
+
+        with patch.dict(ops_tools.TOOLS, {'get_system_health': boom}):
+            response = self._client(self.admin).post(
+                self.url, {'question': '系统健康现在什么状态'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['degrade_reason'], 'tool_failed')
+
+    def test_diagnostic_command_is_audited(self):
+        """`run_check` 是这套助手唯一**执行**东西的路径，必须在操作日志里留痕。
+
+        普通问答不记审计（助手每天被问十几次，会淹掉审计表）；问答本身在
+        `OpsAssistantTurn` 里有更细的记录。这条界线要守住，所以用例盯它。
+        """
+        self._client(self.admin).post(
+            self.url, {'question': 'check_env 现在什么结果？'}, format='json')
+        log = AdminAuditLog.objects.filter(action='assistant.ops_check').first()
+        self.assertIsNotNone(log, '执行诊断命令没有写审计日志')
+        self.assertEqual(log.target_id, 'check_env')
+        self.assertEqual(log.actor_id, self.admin.id)
+        self.assertIn('check_env', log.detail)
+
+    # ── 生成侧：桩替代真实模型 ────────────────────────────────────────
+    def test_model_answer_is_returned_and_verified(self):
+        safe_answer = '**结论**：系统当前存在需要处理的检查项，请按证据逐条处理。'
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat') as chat:
+            chat.return_value = llm.ChatResult(text=safe_answer, model='stub-model')
+            data = self._client(self.admin).post(
+                self.url, {'question': '系统健康现在什么状态'}, format='json').data
+        self.assertFalse(data['degraded'], data.get('degrade_reason'))
+        self.assertTrue(data['verified'])
+        self.assertEqual(data['answer'], safe_answer)
+        self.assertEqual(data['usage'].get('latency_ms'), 0)
+
+    def test_hallucinated_number_degrades(self):
+        """模型念了工具返回值里没有的数字 → 丢掉结论句，只留表格"""
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat') as chat:
+            chat.return_value = llm.ChatResult(text='**结论**：共有 999 项问题需要处理。')
+            data = self._client(self.admin).post(
+                self.url, {'question': '系统健康现在什么状态'}, format='json').data
+        self.assertTrue(data['degraded'])
+        self.assertEqual(data['degrade_reason'], 'verify_failed')
+        self.assertFalse(data['verified'])
+        # 结论句必须消失；但"哪个数字没核对上"要留着 —— 那是排查线索，不是结论
+        self.assertNotIn('共有 999 项问题需要处理', data['answer'])
+        self.assertIn('未核对上的数字', data['answer'])
+
+    def test_unauthorized_command_in_answer_is_hidden(self):
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat') as chat:
+            chat.return_value = llm.ChatResult(
+                text='**结论**：跑 python manage.py purge_deletion_requests 清一下。')
+            data = self._client(self.admin).post(
+                self.url, {'question': '系统健康现在什么状态'}, format='json').data
+        self.assertNotIn('purge_deletion_requests', data['answer'])
+        self.assertIn('未授权的命令', data['answer'])
+
+    def test_howto_answer_kept_when_number_unverified(self):
+        """问步骤的答案**不整段降级**，只标注未核对上的数字。
+
+        指引的价值在步骤；为一个没被问到的数字把整段操作建议换成表格，代价太大。
+        但数字仍会被单独点出来，不会冒充事实。
+        """
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat') as chat:
+            chat.return_value = llm.ChatResult(
+                text='**结论**：先跑 check_env，近 999 天都这样。')
+            data = self._client(self.admin).post(
+                self.url, {'question': '备份怎么恢复'}, format='json').data
+        self.assertFalse(data['degraded'], '指引类不该整段降级')
+        self.assertFalse(data['verified'])
+        self.assertIn('999 天', data['answer'])
+        self.assertIn('请自行核对', data['answer'])
+
+    def test_llm_failure_degrades(self):
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', side_effect=llm.LLMError('调用超时（2s）')):
+            data = self._client(self.admin).post(
+                self.url, {'question': '系统健康现在什么状态'}, format='json').data
+        self.assertEqual(data['degrade_reason'], 'timeout')
+
+    def test_lang_en_reaches_the_model(self):
+        """切英文时模型必须收到英文系统提示（否则"答案还是中文"）"""
+        captured = {}
+
+        def fake_chat(messages, **kwargs):
+            captured['messages'] = messages
+            return llm.ChatResult(text='**Conclusion**: nothing to report.')
+
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', new=fake_chat):
+            data = self._client(self.admin).post(
+                self.url,
+                {'question': '系统健康现在什么状态', 'lang': 'en'},
+                format='json',
+            ).data
+
+        self.assertFalse(data['degraded'], data.get('degrade_reason'))
+        self.assertIn('admin-side system assistant', captured['messages'][0]['content'])
+
+    def test_lang_en_degraded_answer_is_english(self):
+        """降级（模板答案）也得跟着语言走 —— 否则英文界面里冒出一段中文"""
+        data = self._client(self.admin).post(
+            self.url,
+            {'question': '系统健康现在什么状态', 'lang': 'en'},
+            format='json',
+        ).data
+        self.assertTrue(data['degraded'])
+        self.assertIn('(auto-degraded:', data['answer'])
+        self.assertIn('Raw tool output', data['answer'])
+
+    # ── 限流 ──────────────────────────────────────────────────────────
+    @override_settings(ASSISTANT_RATE_PER_MINUTE=1)
+    def test_rate_limit_returns_429(self):
+        client = self._client(self.admin)
+        self.assertEqual(client.post(self.url, {'question': '系统健康'}, format='json').status_code, 200)
+        second = client.post(self.url, {'question': '系统健康'}, format='json')
+        self.assertEqual(second.status_code, 429)
+        # 被限流的请求不落库，否则重试会把自己锁得更久
+        self.assertEqual(OpsAssistantTurn.objects.count(), 1)
+
+    # ── 流式（SSE）──────────────────────────────────────────────────
+    stream_url = '/api/admin/assistant/ops/ask/stream/'
+
+    @staticmethod
+    def _events(response):
+        """把 SSE 响应体解析成 `[(事件名, 负载)]`（断言事件序列用）"""
+        raw = b''.join(response.streaming_content).decode('utf-8')
+        events = []
+        for block in raw.split('\n\n'):
+            if not block.strip():
+                continue
+            name, data = '', ''
+            for line in block.split('\n'):
+                if line.startswith('event:'):
+                    name = line[6:].strip()
+                elif line.startswith('data:'):
+                    data += line[5:].strip()
+            events.append((name, json.loads(data) if data else None))
+        return events
+
+    def test_stream_is_sse_and_degraded_when_llm_disabled(self):
+        response = self._client(self.admin).post(
+            self.stream_url, {'question': '系统健康现在什么状态'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response['Content-Type'].startswith('text/event-stream'))
+        # 生产上"看起来不流式"的两个头（见框架文档第八节）
+        self.assertEqual(response['Content-Encoding'], 'identity')
+        self.assertEqual(response['X-Accel-Buffering'], 'no')
+
+        events = self._events(response)
+        self.assertEqual([name for name, _ in events], ['meta', 'delta', 'done'])
+        self.assertTrue(events[0][1]['degraded'])
+        self.assertIn('get_system_health', [tool['name'] for tool in events[0][1]['tools']])
+        self.assertEqual(events[1][1]['text'], events[2][1]['answer'])
+        self.assertEqual(events[2][1]['degrade_reason'], 'llm_disabled')
+
+    def test_stream_streams_deltas_then_done_answer(self):
+        def fake_stream(messages, **kwargs):
+            yield {'text': '结论：'}
+            yield {'text': '一切正常。'}
+            yield {'model': 'stub-model', 'finish_reason': 'stop', 'latency_ms': 12}
+
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat_stream', new=fake_stream):
+            response = self._client(self.admin).post(
+                self.stream_url, {'question': '系统健康现在什么状态'}, format='json')
+            events = self._events(response)
+
+        names = [name for name, _ in events]
+        self.assertEqual(names, ['meta', 'delta', 'delta', 'done'])
+        self.assertEqual([data['text'] for name, data in events if name == 'delta'],
+                         ['结论：', '一切正常。'])
+        done = events[-1][1]
+        self.assertEqual(done['answer'], '结论：一切正常。')
+        self.assertFalse(done['degraded'])
+        self.assertTrue(done['verified'])
+        self.assertEqual(OpsAssistantTurn.objects.count(), 1, '流式也要落库，否则观测不到')
+
+    def test_stream_replaces_answer_when_numbers_fail(self):
+        """问数字的意图：done 带回**降级后的表格**，前端整体替换（框架文档第八节）"""
+        def fake_stream(messages, **kwargs):
+            yield {'text': '**结论**：共有 999 项问题需要处理。'}
+            yield {'model': 'stub-model', 'finish_reason': 'stop'}
+
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat_stream', new=fake_stream):
+            response = self._client(self.admin).post(
+                self.stream_url, {'question': '系统健康现在有几项红'}, format='json')
+            done = self._events(response)[-1][1]
+
+        self.assertTrue(done['degraded'])
+        self.assertEqual(done['degrade_reason'], 'verify_failed')
+        self.assertFalse(done['verified'])
+        self.assertNotIn('999 项问题需要处理', done['answer'])
+        self.assertIn('未核对上的数字', done['answer'])
+
+    def test_stream_permissions(self):
+        self.assertEqual(
+            self._client(self.editor).post(
+                self.stream_url, {'question': '系统健康'}, format='json').status_code, 403)
+        self.assertIn(
+            APIClient().post(self.stream_url, {'question': '系统健康'}, format='json').status_code,
+            (401, 403))
+
+    @override_settings(ASSISTANT_RATE_PER_MINUTE=1)
+    def test_stream_rate_limit_is_429_before_opening(self):
+        """一旦开始吐字就不能改状态码了，所以限流必须在开流之前判"""
+        client = self._client(self.admin)
+        first = client.post(self.stream_url, {'question': '系统健康'}, format='json')
+        self.assertEqual(first.status_code, 200)
+        # ⚠️ 必须把流消费掉：`ask_stream` 是生成器，视图返回时还没真正执行，
+        # 不消费就既没落库、也就不会触发限流。
+        list(first.streaming_content)
+        second = client.post(self.stream_url, {'question': '系统健康'}, format='json')
+        self.assertEqual(second.status_code, 429)
+
+
+class OpsAssistantStatsTests(APITestCase):
+    """系统助手质量看板（E）
+
+    这批之前 `degraded` / `verified` / `tool_calls` 全都落库了，但**没有任何界面在读** ——
+    与第 228 批农户侧看板是同一个问题：字段记了，问题还是只能靠猜。
+    """
+
+    url = '/api/admin/assistant/ops/stats/'
+
+    def setUp(self):
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='ops_stats_admin', password='pw12345678', is_staff=True)
+        self.editor = User.objects.create_user(
+            username='ops_stats_editor', password='pw12345678', role='EDITOR')
+        EditorModuleGrant.objects.create(user=self.editor, module='review')
+        self.plain = User.objects.create_user(
+            username='ops_stats_plain', password='pw12345678')
+
+    def _client(self, user):
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        return client
+
+    def _turn(self, **kwargs):
+        payload = {
+            'user': self.admin,
+            'question': kwargs.pop('question', '系统健康有几项红'),
+            'answer': '答案',
+            'intent': kwargs.pop('intent', 'health'),
+            'tool_calls': kwargs.pop('tool_calls', [{'name': 'get_system_health', 'ok': True}]),
+            'degraded': kwargs.pop('degraded', False),
+            'degrade_reason': kwargs.pop('degrade_reason', ''),
+            'verified': kwargs.pop('verified', True),
+            'latency_ms': kwargs.pop('latency_ms', 4000),
+            'usage': kwargs.pop('usage', {'prompt_tokens': 100, 'completion_tokens': 20}),
+        }
+        payload.update(kwargs)
+        return OpsAssistantTurn.objects.create(**payload)
+
+    def test_only_full_admin_may_read(self):
+        self.assertEqual(self._client(self.plain).get(self.url).status_code, 403)
+        self.assertEqual(self._client(self.editor).get(self.url).status_code, 403)
+        self.assertEqual(self._client(self.admin).get(self.url).status_code, 200)
+        self.assertIn(APIClient().get(self.url).status_code, (401, 403))
+
+    def test_totals_and_rates(self):
+        self._turn(intent='health', latency_ms=4000)
+        self._turn(intent='health', degraded=True, degrade_reason='llm_disabled',
+                   verified=False, latency_ms=0)
+        self._turn(intent='howto', verified=False, latency_ms=2000)
+
+        data = self._client(self.admin).get(f'{self.url}?days=7').data
+        totals = data['totals']
+        self.assertEqual(totals['turns'], 3)
+        self.assertEqual(totals['degraded'], 1)
+        self.assertAlmostEqual(totals['degraded_rate'], round(1 / 3, 4))
+        self.assertEqual(totals['unverified'], 2)
+        self.assertAlmostEqual(totals['unverified_rate'], round(2 / 3, 4))
+        # 只算没降级的那两条：(4000 + 2000) / 2
+        self.assertEqual(totals['avg_latency_ms'], 3000)
+        self.assertEqual(totals['tokens'], {'prompt': 300, 'completion': 60})
+        self.assertEqual(data['range']['days'], 7)
+
+    def test_reason_labels_and_intent_breakdown(self):
+        self._turn(degraded=True, degrade_reason='llm_disabled', verified=False)
+        self._turn(degraded=True, degrade_reason='verify_failed', verified=False)
+        self._turn(intent='howto')
+
+        data = self._client(self.admin).get(self.url).data
+        reasons = {row['reason']: row for row in data['by_reason']}
+        self.assertEqual(reasons['llm_disabled']['count'], 1)
+        # 标签必须是中文人话，不是原始码（与操作日志同一个约定）
+        self.assertEqual(reasons['verify_failed']['label'], '模型答案里的数字与工具返回值对不上，结论已隐藏')
+
+        intents = {row['intent']: row for row in data['by_intent']}
+        self.assertEqual(intents['health']['count'], 2)
+        self.assertEqual(intents['health']['degraded'], 2)
+        self.assertEqual(intents['health']['unverified'], 2)
+        self.assertEqual(intents['howto']['count'], 1)
+
+    def test_tool_failures_are_counted_from_json(self):
+        self._turn(tool_calls=[
+            {'name': 'get_system_health', 'ok': True},
+            {'name': 'search_ops_docs', 'ok': False, 'error': 'boom'},
+        ])
+        self._turn(tool_calls=[{'name': 'search_ops_docs', 'ok': False, 'error': 'boom'}])
+
+        failures = self._client(self.admin).get(self.url).data['tool_failures']
+        self.assertEqual(failures[0], {'tool': 'search_ops_docs', 'count': 2})
+
+    def test_recent_unverified_is_the_review_queue(self):
+        self._turn(question='哪类误判最多', intent='errors', verified=False,
+                   degrade_reason='verify_failed')
+        self._turn(question='系统健康', verified=True)
+
+        recent = self._client(self.admin).get(self.url).data['recent_unverified']
+        self.assertEqual(len(recent), 1)
+        self.assertEqual(recent[0]['question'], '哪类误判最多')
+        self.assertEqual(recent[0]['degrade_reason'], 'verify_failed')
+
+    def test_old_turns_fall_outside_the_window(self):
+        turn = self._turn()
+        OpsAssistantTurn.objects.filter(pk=turn.pk).update(
+            created_at=timezone.now() - timedelta(days=30))
+
+        data = self._client(self.admin).get(f'{self.url}?days=7').data
+        self.assertEqual(data['totals']['turns'], 0)
+        self.assertIsNone(data['totals']['degraded_rate'])
+
+    def test_empty_window_does_not_divide_by_zero(self):
+        data = self._client(self.admin).get(self.url).data
+        self.assertEqual(data['totals']['turns'], 0)
+        self.assertIsNone(data['totals']['degraded_rate'])
+        self.assertIsNone(data['totals']['unverified_rate'])
+        self.assertEqual(data['by_reason'], [])
+

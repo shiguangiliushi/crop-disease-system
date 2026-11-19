@@ -64,6 +64,11 @@ class AdminAuditLog(models.Model):
         ('word.delete', '删除敏感词'),
         ('announcement.create', '发布公告'),
         ('announcement.delete', '删除公告'),
+        #: 系统助手执行诊断命令。**只有真正跑命令才记**，普通问答不记 ——
+        #: 助手每天可能被问十几次，把问答也写进日志会把这张表淹掉，
+        #: 而它存在的意义是"谁在什么时候真动了系统"。问答本身在
+        #: `OpsAssistantTurn` 里有一份更细的记录（工具名 / 耗时 / 降级原因）。
+        ('assistant.ops_check', '系统助手执行诊断命令'),
     )
 
     actor = models.ForeignKey(

@@ -170,6 +170,12 @@ class AdminHealthView(APIView):
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},
     )
     def get(self, request):
+        """整页健康数据：`check_env --json` 的检查结果 + 数据量 + 磁盘 + 模型 + 趋势。
+
+        检查逻辑**只**来自 `manage.py check_env`（这里不重写一份）：两套实现迟早
+        对不上，而"页面说没问题、命令行说有问题"是最难查的一类故障。
+        结果按 `section` 顺序分组，前端据此分段渲染。
+        """
         # 与「操作日志」同档：它会暴露服务器路径、依赖版本、是否开了 HTTPS 等部署细节，
         # 不该给内容编辑员看。
         if not is_full_admin(request.user):
@@ -223,13 +229,17 @@ class AdminHealthView(APIView):
 HISTORY_DAYS = 14
 
 
-def _history():
+def _history(days: int = HISTORY_DAYS):
     """
     最近 N 天的健康快照（第 158 批）
 
     为什么要趋势：环境类故障是**安静**的（定时任务挂了、备份没跑成），
     "最新备份是 3 天前"和"这 14 天一直在跑"是两种完全不同的安心程度。
     快照由 `manage.py health_snapshot` 每天记一条（建议挂定时任务）。
+
+    `days` 参数是给系统助手用的（`api/assistant/ops/tools.py`）：那边要按问题
+    要 7 天还是 30 天。**口径只此一份** —— 让助手自己再查一遍 `HealthSnapshot`
+    就会出现"页面说缺 2 天、助手说缺 3 天"这种最坏的情况。
     """
     from datetime import timedelta
 
@@ -237,16 +247,16 @@ def _history():
 
     from .models_health import HealthSnapshot
 
-    since = timezone.localdate() - timedelta(days=HISTORY_DAYS - 1)
+    since = timezone.localdate() - timedelta(days=days - 1)
     rows = list(HealthSnapshot.objects.filter(snapshot_date__gte=since))
     by_date = {row.snapshot_date: row for row in rows}
 
     # 补齐"没有快照的那几天" —— 缺的那天本身就是信息（说明定时任务没跑）
-    days = []
-    for offset in range(HISTORY_DAYS):
+    days_list = []
+    for offset in range(days):
         day = since + timedelta(days=offset)
         row = by_date.get(day)
-        days.append({
+        days_list.append({
             'date': day.isoformat(),
             'recorded': row is not None,
             'level': (row.level if row else None),
@@ -256,9 +266,9 @@ def _history():
             'notes': (row.notes if row else ''),
         })
     return {
-        'days': days,
-        'recorded_days': sum(1 for day in days if day['recorded']),
-        'window': HISTORY_DAYS,
-        'latest_date': days[-1]['date'] if days else None,
+        'days': days_list,
+        'recorded_days': sum(1 for day in days_list if day['recorded']),
+        'window': days,
+        'latest_date': days_list[-1]['date'] if days_list else None,
         'hint': 'python manage.py health_snapshot  # 每天记一条（挂定时任务才有连续趋势）',
     }

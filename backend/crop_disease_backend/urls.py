@@ -1,9 +1,15 @@
+"""项目根路由：把 /api/ 下的接口按业务模块拼到各 `views_*` 上。
+
+⚠️ 这里的**书写顺序参与匹配**：`users/check-username/`、`pests/recent/`、
+   `detection-history/export-excel/` 这类固定路径必须排在带转换器的动态路径之前，
+   否则会被当成 `user_id`/`pk` 去匹配（int 转换失败 → 404，而不会落到下一条）。
+⚠️ 视图类统一在 `django.setup()` 之后延迟导入，别把 import 提前到文件开头。
+"""
 import os
 import re
 import sys
 from pathlib import Path
 
-# 设置项目根目录
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 
@@ -17,7 +23,6 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'crop_disease_backend.settings')
 import django
 django.setup()
 
-# 导入 Django 核心模块
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.conf import settings
@@ -36,6 +41,7 @@ from api.authentication import DeviceTokenAuthentication
 import importlib
 
 def import_view(module_path, class_name):
+    """按名字取视图类；模块名/类名写错会在 **URLconf 加载阶段**直接抛错，不会拖到请求时才 404。"""
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
@@ -156,6 +162,10 @@ AssistantSessionListView = import_view('api.views_assistant_sessions', 'Assistan
 AssistantSessionDetailView = import_view('api.views_assistant_sessions', 'AssistantSessionDetailView')
 # 第 228 批：助手质量看板（管理端聚合接口，仅全权管理员）
 AdminAssistantStatsView = import_view('api.views_assistant_admin', 'AdminAssistantStatsView')
+# 系统助手（管理端运维侧）：工具调用 + 降级，仅全权管理员
+OpsAssistantAskView = import_view('api.views_assistant_ops', 'OpsAssistantAskView')
+OpsAssistantAskStreamView = import_view('api.views_assistant_ops', 'OpsAssistantAskStreamView')
+OpsAssistantStatsView = import_view('api.views_assistant_ops', 'OpsAssistantStatsView')
 
 # 第 50 批：离线资料包
 PestOfflinePackView = import_view('api.views_offline', 'PestOfflinePackView')
@@ -513,6 +523,13 @@ api_urlpatterns = [
     # 第 228 批：助手质量看板（管理端，仅全权管理员；只读聚合）
     path('admin/assistant/stats/', AdminAssistantStatsView.as_view(),
          name='admin-assistant-stats'),
+    # 系统助手（管理端运维侧）：问"现在什么状态 / 该跑什么命令"
+    path('admin/assistant/ops/ask/', OpsAssistantAskView.as_view(),
+         name='admin-assistant-ops-ask'),
+    path('admin/assistant/ops/ask/stream/', OpsAssistantAskStreamView.as_view(),
+         name='admin-assistant-ops-ask-stream'),
+    path('admin/assistant/ops/stats/', OpsAssistantStatsView.as_view(),
+         name='admin-assistant-ops-stats'),
 
     # 路由已由 router.urls 处理
 ]
