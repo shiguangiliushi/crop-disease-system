@@ -106,6 +106,7 @@ python docs/tools/push_and_verify.py                  # 推送后核对远端 re
 | 匿名密码端点 | 必须挂 `ScopedRateThrottle`，别删限流 |
 | 定时任务 | 备份 / 完整性校验 / 健康快照 / media 清理 / 注销到期，五件事缺一件都是"安静的故障" |
 | 改 .py 要重启 | 开发用 `runserver --noreload` |
+| `ModuleNotFoundError: drf_spectacular` | 用的是 **base** 环境。依赖装在 `crop_env`（见上面「运行」）；先 `conda activate crop_env`，别往 base 里装 |
 | 行尾 | 全仓库 LF；Django 迁移在 Windows 下是 CRLF，提交前跑行尾自检 |
 
 ## 文档导航
