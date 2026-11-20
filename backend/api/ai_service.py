@@ -182,7 +182,7 @@ class AIService:
                     
                     # 测试模型是否可以预测
                     test_img = torch.zeros((1, 3, 640, 640))  # 创建一个测试张量
-                    results = cls.model(test_img, verbose=False)  # 添加verbose=False减少输出
+                    cls.model(test_img, verbose=False)  # 只验证能跑通，输出不用
                     logger.info("模型预测测试成功")
                     
                 except Exception as e:
@@ -577,8 +577,6 @@ def warm_up(*, force: bool = False) -> bool:
     :param force: 忽略 `AI_WARMUP_ON_STARTUP` 设置强行预热（诊断/脚本用）
     :return: 预热是否成功（失败**不抛异常** —— 见下）
     """
-    from django.conf import settings
-
     if not force and not getattr(settings, 'AI_WARMUP_ON_STARTUP', True):
         logger.info('AI 预热已通过 AI_WARMUP_ON_STARTUP=False 关闭')
         return False
