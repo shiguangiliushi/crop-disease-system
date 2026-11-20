@@ -66,6 +66,25 @@ foreach ($job in $jobs) {
     } else {
         schtasks /Create /TN $taskName /TR $command /SC DAILY /ST $job.At /F | Out-Null
     }
+
+    # 第 422 批：**这三个选项决定"任务会不会真的跑"**，schtasks 的默认值有一半是错的。
+    #
+    #   · `DisallowStartIfOnBatteries` 默认 **true** —— 笔记本拔了电源，到点直接不启动；
+    #   · `StopIfGoingOnBatteries` 默认 true —— 跑到一半拔电源会被掐掉（备份写一半最糟）；
+    #   · `StartWhenAvailable` 默认 **false** —— 机器关机错过的那次不会补跑。
+    #
+    # 实测事故：2026-11-15 之后连续 5 天没有备份，管理端健康检查报
+    # "最新备份已 5.9 天前：定时任务可能没跑"，任务本身却一直显示 Ready。
+    # `Last Result` 是 `0x80070520`（没有登录会话）—— 任务根本没被启动过。
+    #
+    # ⚠️ `Set-ScheduledTask` 需要**管理员**权限；本脚本本来就要管理员（注册任务就得要）。
+    try {
+        $taskSettings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+        Set-ScheduledTask -TaskName $taskName -Settings $taskSettings -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Warning "设置 $taskName 的电源/补跑选项失败：$($_.Exception.Message)"
+    }
     Write-Host "已注册 $taskName"
 }
 
