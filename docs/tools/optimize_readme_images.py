@@ -49,6 +49,8 @@ ADMIN_SHOTS = {
     'admin-health.png': 'admin-health',
     # 第 229 批新增：**助手质量看板**（降级率 / 知识库缺口 / 没用反馈 / token 与延迟）
     'admin-assistant-quality.png': 'admin-assistant-quality',
+    # 第 420 批新增：**系统助手**（运维侧助手：八只读工具 + 流式 + 观测卡）
+    'admin-ops-assistant.png': 'admin-ops-assistant',
 }
 
 #: 农户端（由 capture-docs-shots.mjs 生成，这里只负责缩放与转码）

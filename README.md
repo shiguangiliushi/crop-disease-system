@@ -35,9 +35,12 @@
 | ![识别首页](docs/images/farmer-home.webp) | ![病害百科](docs/images/farmer-wiki.webp) |
 | ![智能问答](docs/images/farmer-assistant-answer.webp) | ![论坛](docs/images/farmer-forum.webp) |
 | ![数据看板](docs/images/admin-dashboard.webp) | ![系统健康](docs/images/admin-health.webp) |
+| ![系统助手](docs/images/admin-ops-assistant.webp) | ![助手质量](docs/images/admin-assistant-quality.webp) |
 
 > 截图由 `frontend/scripts/capture-docs-shots.mjs` 重截、`docs/tools/optimize_readme_images.py`
 > 转 WebP；**改界面后请重跑这两个脚本**（第 189 批因漏跑，图上还是已合并掉的侧栏入口）。
+> 只想补某一张时用 `node scripts/capture-docs-shots.mjs --only <文件名>`（第 420 批加）——
+> 全量重跑会把十几张都重拍，工作区里若有别人未提交的界面改动，会被一起拍进入库的图。
 
 ## 技术栈与结构
 

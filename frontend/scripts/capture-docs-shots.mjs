@@ -44,6 +44,20 @@ const OUT = path.resolve('dsh-shots');
 const LEAF_IMAGE = path.resolve('..', 'backend', 'pests', 'Apple___Apple_scab14.jpg');
 const ADMIN = 'admin';
 
+//: `--only <文件名>`：只截那一张（见 `shoot()` 里的说明）
+const ONLY = (() => {
+  const index = process.argv.indexOf('--only');
+  return index >= 0 ? process.argv[index + 1] : '';
+})();
+
+//: `--channel <msedge|chrome>`：用系统已装的浏览器，不下载 Playwright 自带的那份。
+//: 为什么需要：`playwright install` 在没有外网或下载很慢的机器上会卡住十几分钟，
+//: 而截图这件事跟浏览器内核版本没有强绑定（Edge 就是 Chromium）。
+const CHANNEL = (() => {
+  const index = process.argv.indexOf('--channel');
+  return index >= 0 ? process.argv[index + 1] : '';
+})();
+
 //: 截图前把 admin 的问答历史快照到这里，跑完**原样还原**（第 205 批加）
 const SNAPSHOT_PATH = path.resolve('..', 'backend', '_assistant_history_snapshot.json');
 
@@ -145,7 +159,11 @@ const seedOutput = runDjango([
   "    for s in AssistantSession.objects.filter(user=admin).order_by('id'):",
   "        rows.append({",
   "            'title': s.title, 'pest_id': s.pest_id, 'detection_id': s.detection_id,",
-  "            'created_at': s.created_at.isoformat(), 'updated_at': s.updated_at.isoformat(),",
+  // 第 420 批：`updated_at` 可能是 NULL —— `auto_now` 只在 `save()` 时写入，
+  // 被 `bulk_create` 或原始导入绕过的行会留空；直接 `.isoformat()` 会 AttributeError，
+  // 把整个截图流程打断（还原段用 `aware(v)`，它已经能处理 None）。
+  "            'created_at': s.created_at.isoformat(),",
+  "            'updated_at': s.updated_at.isoformat() if s.updated_at else None,",
   "            'escalated_at': s.escalated_at.isoformat() if s.escalated_at else None,",
   "            'messages': [",
   "                {'role': m.role, 'content': m.content, 'model': m.model,",
@@ -217,7 +235,7 @@ log(`  能力: ${(seeded.capabilities || []).join(', ') || '（未下发）'}`);
 // ---------------------------------------------------------------------------
 // ② 打开浏览器并注入登录态
 // ---------------------------------------------------------------------------
-const browser = await chromium.launch();
+const browser = await chromium.launch(CHANNEL ? { channel: CHANNEL } : {});
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' });
 const page = await context.newPage();
 const errors = [];
@@ -231,6 +249,10 @@ await page.evaluate(([tokenValue, userValue]) => {
 }, [token, userJson]);
 
 const shoot = async (name) => {
+  // 第 420 批：`--only <文件名>` 只截指定的那张。
+  // 为什么需要它：这套脚本是一条线性流程，重跑会把 12 张全重拍；
+  // 而工作区里可能压着别人未提交的界面改动，全量重拍等于把那些改动拍进入库的图。
+  if (ONLY && name !== ONLY) return;
   const file = path.join(OUT, name);
   await page.screenshot({ path: file, fullPage: false });
   log(`  📷 ${name}（${Math.round(fs.statSync(file).size / 1024)} KB）`);
@@ -336,6 +358,24 @@ await shoot('admin-audit-log.png');
 // 数据直接来自库里已有问答，不需要额外种数据；没有数据的空态也照样能拍。
 await goto('/admin/assistant', '.admin-console', 3000);
 await shoot('admin-assistant-quality.png');
+
+// 第 420 批新增：**系统助手**（第 408–412 批落地的运维侧助手）。
+// 拍"问一句并拿到答案"的真实状态，而不是空态：
+//   · 输入问题 → 提交 → 等按钮的 loading 结束（流式收尾）→ 截图；
+//   · 模型未启用时会降级成工具表格 —— 那也是可拍的状态，脚本不该依赖外网与费用。
+await goto('/admin/health?tab=assistant', '.ops-assistant', 2500);
+const opsInput = page.locator('.ops-composer textarea');
+if (await opsInput.count()) {
+  await opsInput.fill('系统健康现在什么状态？');
+  await page.locator('.ops-composer .el-button').first().click();
+  // 等"请求结束"：提交按钮带 `:loading`，结束时 `is-loading` 会消失
+  await page.waitForFunction(
+    () => !document.querySelector('.ops-composer .is-loading'), null, { timeout: 45_000 },
+  );
+  await page.waitForTimeout(600);
+}
+await shoot('admin-ops-assistant.png');
+
 
 log(errors.length ? `⚠️ 页面报错 ${errors.length} 条：${errors.slice(0, 2).join(' | ')}` : '✅ 全程无 JS 报错');
 
