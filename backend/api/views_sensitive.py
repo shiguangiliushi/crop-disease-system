@@ -43,7 +43,7 @@ class SensitiveWordViewSet(viewsets.ModelViewSet):
         preview = getattr(instance, 'word', '') or f'#{instance.pk}'
         log_admin_action(
             self.request.user, 'word.delete', target=instance,
-            detail=f'删除敏感词（分类 {getattr(instance, "category", "") or "未分类"}）',
+            detail=f'删除敏感词 {preview}（分类 {getattr(instance, "category", "") or "未分类"}）',
             request=self.request,
         )
         instance.delete()

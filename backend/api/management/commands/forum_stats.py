@@ -528,8 +528,6 @@ class Command(BaseCommand):
     
     def generate_csv(self, stats):
         """生成CSV格式的报告"""
-        import csv
-        from io import StringIO
         
         output = StringIO()
         writer = csv.writer(output)
@@ -630,7 +628,6 @@ class Command(BaseCommand):
     
     def generate_html(self, stats):
         """生成HTML格式的报告"""
-        from django.template.loader import render_to_string
         
         context = {
             'stats': stats,

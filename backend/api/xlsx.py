@@ -105,7 +105,6 @@ def _sheet_xml(headers, rows, column_widths=None):
     if column_widths:
         parts.append('<cols>')
         for index, width in enumerate(column_widths):
-            col = _column_name(index)
             parts.append(f'<col min="{index + 1}" max="{index + 1}" width="{width}" customWidth="1"/>')
         parts.append('</cols>')
 

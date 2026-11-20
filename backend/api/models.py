@@ -165,7 +165,6 @@ class CustomUser(AbstractUser):
     @staticmethod
     def deletion_grace_days():
         """冷静期天数（默认 15，可用 DJANGO_ACCOUNT_DELETION_GRACE_DAYS 覆盖）"""
-        from django.conf import settings
         try:
             return max(0, int(getattr(settings, 'ACCOUNT_DELETION_GRACE_DAYS', 15)))
         except (TypeError, ValueError):

@@ -119,7 +119,6 @@ def store_image(upload):
 
 def describe(image_file, *, lang: str = prompts.DEFAULT_LANG) -> VisionResult:
     """跑一次识别，返回结论。**不抛异常**（失败也翻译成 status=error）。"""
-    code = prompts.normalize_lang(lang)
     if image_file is None:
         return VisionResult(status='error', message='没有收到图片文件')
 

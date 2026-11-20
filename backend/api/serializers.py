@@ -22,6 +22,7 @@ import time
 from urllib.parse import urlparse  # 第 401 批：原文链接只允许 http/https
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field  # 第 401 批：轻量病害列表的 schema 类型
+from django.conf import settings  # 第 91 批：时区边界判断要用 TIME_ZONE
 from django.db.models import Count
 from django.utils import timezone  # 第 91 批：反馈里的识别摘要要按本地时区展示
 from .models import (
@@ -662,8 +663,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-from django.utils import timezone
-from django.conf import settings
 
 class DetectionHistorySerializer(serializers.ModelSerializer):
     """识别历史的读序列化器（列表与详情共用，字段多、回退分支也多）。

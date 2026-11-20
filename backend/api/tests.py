@@ -36,7 +36,6 @@ def _captcha_fields(client=None, *, code=None):
     return {'captcha_id': captcha_id, 'captcha_code': code}
 import json
 import os  # 第 102 批：备份测试要临时改写 DJANGO_BACKUP_DIR
-import time  # 第 106 批：prune_media 测试要造"N 天前的文件"
 import re
 import uuid  # 第 95 批：造"已登录会话"的 key
 from datetime import datetime, time, timedelta  # 第 233 批补 datetime/time（时区边界用例）
@@ -7109,7 +7108,7 @@ class SafeRotatingLogHandlerTests(TestCase):
         否则一旦某次失败，日志文件会无限增长（直到进程重启）——
         "不丢日志"的代价不该是"永远不再轮转"。
         """
-        import time
+        from time import sleep
         from logging.handlers import RotatingFileHandler
 
         handler = self._handler()
@@ -7130,7 +7129,7 @@ class SafeRotatingLogHandlerTests(TestCase):
             for index in range(50):
                 logger.info('冷却过期测试 %s %s', index, 'z' * 50)
             first_round = len(attempts)
-            time.sleep(0.1)   # 等冷却窗口过去
+            sleep(0.1)   # 等冷却窗口过去
             for index in range(50):
                 logger.info('冷却过期测试二 %s %s', index, 'z' * 50)
         finally:
@@ -13358,7 +13357,6 @@ class AuditLogDateFilterTests(APITestCase):
         from django.utils import timezone
         import datetime
 
-        today = timezone.localtime().date()
         for offset, action in ((0, 'user.suspend'), (3, 'user.restore'), (10, 'user.delete')):
             log = log_admin_action(self.superuser, action, target=self.target)
             if log is not None:
@@ -14660,7 +14658,7 @@ class ChineseLabelTests(TestCase):
 
     def test_replaces_drawn_class_name_with_chinese(self):
         result = self._FakeResult({0: 'Apple___Apple_scab', 1: 'Zzz___unknown'}, [0, 1])
-        font = _prepare_chinese_labels(result)
+        _prepare_chinese_labels(result)  # 就地改 result.names，不需要返回值
         self.assertEqual(result.names[0], '苹果黑星病', '要画的类名应当换成词条里的中文名')
         self.assertEqual(result.names[1], 'Zzz___unknown', '匹配不上的类名保持原样')
 
@@ -15258,7 +15256,7 @@ class RoleMatrixTests(APITestCase):
 
         frontend_pages = {path for path, _ in entries}
         from .role_matrix import (
-            CAPABILITY_PAGES, COMMON_PAGES, FULL_ADMIN_PAGES, MODULE_PAGES,
+            CAPABILITY_PAGES, COMMON_PAGES, FULL_ADMIN_PAGES,
         )
         matrix_pages = set(COMMON_PAGES)
         for pages in CAPABILITY_PAGES.values():
@@ -16372,8 +16370,6 @@ class AssistantVisionTests(APITestCase):
     @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
                        LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
     def test_stream_accepts_image(self):
-        stub = llm.ChatResult(text='番茄晚疫病，喷烯酰吗啉。【1】', model='stub',
-                              prompt_tokens=1, completion_tokens=1, latency_ms=3)
         with patch('api.assistant.orchestrator.vision.describe', return_value=self._vision_ok()), \
                 patch('api.assistant.llm.chat_stream', return_value=iter([
                     {'text': '番茄晚疫病，喷烯酰吗啉。【1】'},

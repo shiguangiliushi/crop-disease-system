@@ -27,7 +27,6 @@
 import logging  # 日志模块（原先该文件用 print 输出调试信息，现统一走 logging）
 
 from rest_framework import viewsets, status, permissions, mixins, serializers  # 导入DRF相关模块
-from .permissions import IsOwnerOrReadOnly, CanDeletePost  # 导入自定义权限类
 from rest_framework.decorators import action, permission_classes, throttle_classes  # 导入DRF装饰器
 from rest_framework.response import Response  # 导入DRF响应类
 from rest_framework.pagination import PageNumberPagination  # 导入分页类

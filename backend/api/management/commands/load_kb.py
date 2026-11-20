@@ -457,7 +457,7 @@ class Command(BaseCommand):
                 f'存在 {len(self.problems)} 个问题，拒绝写入。请先解决（可用 --dry-run 查看）。'
             )
 
-        pests_updated = pest_created = prevent_created = profile_new = profile_upd = 0
+        pests_updated = prevent_created = profile_new = profile_upd = 0
         with transaction.atomic():
             for record in payload['records']:
                 pest, _how = self._resolve(record)
