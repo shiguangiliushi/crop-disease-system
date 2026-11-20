@@ -116,8 +116,8 @@ python docs/tools/push_and_verify.py                  # 推送后核对远端 re
 | 权限与角色设计 | [`docs/角色与权限矩阵.md`](docs/角色与权限矩阵.md)、[`docs/内容编辑角色方案.md`](docs/内容编辑角色方案.md) |
 | 智能问答 / 知识库 | [`docs/智能回答助手框架.md`](docs/智能回答助手框架.md)、[`docs/知识库入库方案.md`](docs/知识库入库方案.md) |
 | 为什么这样设计 | [`docs/系统完善记录.md`](docs/系统完善记录.md)（按批记录，含索引） |
-| 训练侧（独立仓库） | [shiguangiliushi/crop-disease-training](https://github.com/shiguangiliushi/crop-disease-training)：数据清洗 → 切分 → 训练 → 评估；过程记录见 [`docs/交接-训练仓库推送.md`](docs/交接-训练仓库推送.md)、[`docs/交接-仓库门面优化.md`](docs/交接-仓库门面优化.md) |
-| 还差哪些功能 | [`docs/功能取舍.md`](docs/功能取舍.md)（现行结论：做什么 / 有条件做 / 不做）、[`docs/功能缺口评估.md`](docs/功能缺口评估.md)（历史快照） |
+| 训练侧（独立仓库） | [shiguangiliushi/crop-disease-training](https://github.com/shiguangiliushi/crop-disease-training)：数据清洗 → 切分 → 训练 → 评估；拆分与推送过程见 `docs/系统完善记录.md` |
+| 还差哪些功能 | [`docs/功能取舍.md`](docs/功能取舍.md)（现行结论：做什么 / 有条件做 / 不做；含"被核对推翻的 5 条"） |
 | 提交与推送约定 | [`docs/提交与仓库约定.md`](docs/提交与仓库约定.md) |
 | 端到端测试 | [`frontend/e2e/README.md`](frontend/e2e/README.md) |
 | 环境变量 | [`backend/.env.example`](backend/.env.example)、生产模板 [`backend/.env.production.example`](backend/.env.production.example) |
