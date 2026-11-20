@@ -66,6 +66,11 @@ def iter_files(target: Path):
 
 
 def scan_file(path: Path) -> list[dict]:
+    """扫一个文件，返回"看着像同义反复"的注释候选。
+
+    只在**下一行确是 import / def / return / 赋值**时才报（否则 `# 导入…` 也可能在讲
+    一次迁移的历史）。含原因词的注释先被 `WHY_WORDS` 排除掉，所以这个函数宁可漏报。
+    """
     try:
         lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
     except OSError:
@@ -126,6 +131,11 @@ def scan_file(path: Path) -> list[dict]:
 
 
 def main() -> int:
+    """命令行入口：只打印候选（`--json` 给机读），**不修改任何文件**。
+
+    删除与否必须人来判断 —— 紧贴 `return` 的注释有时是真信息
+    （例如"返回 None 表示未登录"），工具无法区分。
+    """
     parser = argparse.ArgumentParser(description='找出翻译式注释候选（只报告，不改）')
     parser.add_argument('--path', default='', help='只扫这个子目录（相对仓库根）')
     parser.add_argument('--json', action='store_true', help='输出 JSON')

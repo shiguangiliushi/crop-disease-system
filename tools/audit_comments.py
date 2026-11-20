@@ -144,6 +144,11 @@ def worth_documenting(name: str, span: int, node=None) -> bool:
 # Python
 # ---------------------------------------------------------------------------
 def audit_python(path: Path) -> FileReport:
+    """审一个 .py 文件：注释密度、头注释、成员文档缺失、魔法数、长函数。
+
+    用 `ast` 找类与函数（比正则可靠），注释行与行内注释用文本扫描 ——
+    `ast` 不保留注释，两者必须分开算。
+    """
     text = path.read_text(encoding='utf-8', errors='replace')
     lines = text.splitlines()
     report = FileReport(path=str(path))
@@ -172,6 +177,7 @@ def audit_python(path: Path) -> FileReport:
     report.module_has_docstring = bool(ast.get_docstring(tree))
 
     def walk(node, prefix=''):
+        """递归收集成员的文档字符串情况（`prefix` 用来拼 `类.方法` 的全名）"""
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 name = f'{prefix}{child.name}'
@@ -314,6 +320,11 @@ def has_script_header_comment(text: str) -> bool:
 
 
 def audit_web(path: Path) -> FileReport:
+    """审一个 .js / .mjs / .vue 文件（文本扫描，不走 AST）。
+
+    Vue 单文件组件只看得到"模板区之前有没有头注释"这一条 ——
+    `tools/audit_comments.py` 的口径本来就只覆盖头注释与函数文档的**有无**，不做语法分析。
+    """
     text = path.read_text(encoding='utf-8', errors='replace')
     lines = text.splitlines()
     report = FileReport(path=str(path))
@@ -463,6 +474,11 @@ def find_magic_numbers(lines: list[str]) -> list[str]:
 
 
 def iter_source_files(root: Path, only: str | None = None):
+    """按 `SCAN_DIRS` 列举要审的源文件；`only` 给定时只扫那一个子目录。
+
+    跳过 `node_modules` / `venv` / 构建产物等目录（见 `SKIP_DIRS`），
+    否则一次审计要扫几十万个第三方文件。
+    """
     dirs = [only] if only else SCAN_DIRS
     for directory in dirs:
         base = root / directory
@@ -621,6 +637,11 @@ def print_markdown(reports: list[FileReport], args) -> int:
 
 
 def main() -> int:
+    """命令行入口：`--summary` / `--top` / `--members` / `--json` / `--markdown`。
+
+    只读：不修改任何被审文件。`--markdown` 的输出供 `refresh_audit_report.py`
+    写进《注释覆盖审计报告》的标记段落。
+    """
     parser = argparse.ArgumentParser(description='注释覆盖审计')
     parser.add_argument('--path', help='只审某个子目录')
     parser.add_argument('--top', type=int, default=25, help='列出最差的 N 个文件')
