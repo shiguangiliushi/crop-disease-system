@@ -166,6 +166,8 @@ AdminAssistantStatsView = import_view('api.views_assistant_admin', 'AdminAssista
 OpsAssistantAskView = import_view('api.views_assistant_ops', 'OpsAssistantAskView')
 OpsAssistantAskStreamView = import_view('api.views_assistant_ops', 'OpsAssistantAskStreamView')
 OpsAssistantStatsView = import_view('api.views_assistant_ops', 'OpsAssistantStatsView')
+# 第 425 批：待确认写的确认/取消（token 一次性，不经过模型）
+OpsAssistantConfirmView = import_view('api.views_assistant_ops', 'OpsAssistantConfirmView')
 
 # 第 50 批：离线资料包
 PestOfflinePackView = import_view('api.views_offline', 'PestOfflinePackView')
@@ -530,6 +532,8 @@ api_urlpatterns = [
          name='admin-assistant-ops-ask-stream'),
     path('admin/assistant/ops/stats/', OpsAssistantStatsView.as_view(),
          name='admin-assistant-ops-stats'),
+    path('admin/assistant/ops/confirm/', OpsAssistantConfirmView.as_view(),
+         name='admin-assistant-ops-confirm'),
 
     # 路由已由 router.urls 处理
 ]

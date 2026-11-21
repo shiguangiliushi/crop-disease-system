@@ -73,3 +73,82 @@ class OpsAssistantTurn(models.Model):
 
     def __str__(self):
         return f'{self.intent or "?"} · {(self.question or "")[:20]}'
+
+
+class OpsPendingWrite(models.Model):
+    """一条**待确认的不可逆写**（第 425 批）。
+
+    ## 为什么这件事必须落库，而不是留在 agent 的会话状态里
+
+    确认要跨两次 HTTP 请求（提议一轮、确认一轮）。若把"待确认"存在进程内存或
+    图编排的 checkpointer 里，gunicorn 起多个 worker 时会出现：**提议落在 A 进程，
+    确认请求进了 B 进程** —— 表现是"点了确认没反应"，而且进程重启后静默丢失，
+    没人知道曾经请求过一条删除。
+
+    落库还多出两件内存方案给不了的东西：
+
+      · 管理员能在 `AdminAuditLog` 旁边看见"有一条操作卡在待确认"（可查询、可排查）；
+      · 事故复盘时能回答"谁在什么时候提议删了什么、谁确认的、执行了没有"。
+
+    ## 一行只被消费一次
+
+    `consume()` 用 `UPDATE ... WHERE status='pending'` 的**返回值**判断是否抢到，
+    不写"先 SELECT 再 save"。双击、两个页签同时点、重放请求三种情况，
+    只有前者能挡住重复执行 —— 而重复执行在不可逆操作上等于二次删除。
+
+    ## 为什么记 `args` 快照而不是重新问模型
+
+    执行阶段没有模型参与（确认环节不能交给模型，见
+    `docs/系统助手不可逆写状态机方案.md` 第五节）。执行只用这一行里的
+    `action` + `args`，并且**再走一次 `actions.validate()`** 才落库 ——
+    中间这段时间目标可能已被删掉、管理员可能已被降权。
+    """
+
+    STATUS = (
+        ('pending', '待确认'),
+        ('confirmed', '已确认'),
+        ('cancelled', '已取消'),
+        ('expired', '已过期'),
+        ('failed', '执行失败'),
+    )
+
+    #: 凭据。**不可猜**（`uuid4().hex`），且是确认时的唯一依据 ——
+    #: 不用"最近一条待确认"这种隐式指针，那会让两个管理员/两个页签互相串台。
+    token = models.CharField('凭据', max_length=32, unique=True, db_index=True)
+    #: `ops/actions.py` 的 `ACTIONS` 名字，执行前还要再核对一次白名单
+    action = models.CharField('动作', max_length=64)
+    #: `actions.validate()` 产出的**规范参数**（不是模型原始 arguments）
+    args = models.JSONField('参数快照', default=dict)
+    #: 人读目标："反馈 #12 番茄晚疫病"
+    target = models.CharField('目标', max_length=200, blank=True, default='')
+    #: 会改动的字段（提议时算好，执行时不再重算）
+    changes = models.JSONField('会改动的字段', default=list, blank=True)
+    status = models.CharField('状态', max_length=16, choices=STATUS,
+                              default='pending', db_index=True)
+    user = models.ForeignKey(
+        django_settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='ops_pending_writes', verbose_name='提议人',
+    )
+    #: 提议时的管理员原话。确认时**重新校验要用它**："目标必须出自原话"这条不能跳
+    question = models.TextField('提议时的原话', blank=True, default='')
+    created_at = models.DateTimeField('提议时间', auto_now_add=True)
+    #: 过期时间。过期后确认一律拒绝 —— 十分钟前的意图可能已经不是现在的意图
+    expires_at = models.DateTimeField('过期时间', db_index=True)
+    consumed_at = models.DateTimeField('消费时间', null=True, blank=True)
+
+    class Meta:
+        verbose_name = '系统助手待确认写操作'
+        verbose_name_plural = verbose_name
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['user', 'status'], name='ops_pending_user_idx'),
+            models.Index(fields=['status', 'expires_at'], name='ops_pending_exp_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.action} · {self.target or "?"} · {self.status}'
+
+    @property
+    def is_open(self) -> bool:
+        return self.status == 'pending'
+

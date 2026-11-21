@@ -69,6 +69,14 @@ class AdminAuditLog(models.Model):
         #: 而它存在的意义是"谁在什么时候真动了系统"。问答本身在
         #: `OpsAssistantTurn` 里有一份更细的记录（工具名 / 耗时 / 降级原因）。
         ('assistant.ops_check', '系统助手执行诊断命令'),
+        #: ⚠️ 第 423 批：系统助手的**可逆写工具**也会改数据，必须留痕。
+        #: 刻意登记成**域内动作**而不是统一的 `assistant.ops_write`：
+        #: 操作日志页按动作筛选时，"谁把样本确认了"与"谁回复了反馈"要能分开查 ——
+        #: 汇成一个动作名，这个下拉框就退化成全文搜索。
+        #: 区分"人点的"与"AI 替你点的"靠 `detail` 前缀（`系统助手自动执行：…`）。
+        ('feedback.verify_sample', '确认/排除训练样本'),
+        ('feedback.status', '流转反馈状态'),
+        ('feedback.reply', '回复反馈'),
     )
 
     actor = models.ForeignKey(

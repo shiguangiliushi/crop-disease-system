@@ -982,6 +982,30 @@ LLM_TIMEOUT = float(os.environ.get('LLM_TIMEOUT', '30'))
 # 又让全量测试回到可用的时间尺度。真实环境仍用 30 秒。
 if _IS_TESTING:
     LLM_TIMEOUT = min(LLM_TIMEOUT, 2.0)
+
+# 第 425 批：系统助手是否走 agent 层（LangGraph）的循环。
+#
+# 默认 **False**：现有"意图分类 → 固定映射工具"那条路是窄而可预测的，
+# 图编排换来的是"模型自主选工具"（能答更开放的问题），代价是行为更难预判。
+# 切换只需一个环境变量，出问题改回去即可 —— 这也是当初把 agent 放在旁路、
+# 而不是原地改写 `ops/orchestrator.py` 的原因。
+#
+# ⚠️ 只影响 `/admin/assistant/ops/ask/`；SSE 流式那条仍走 `orchestrator.ask_stream()`。
+OPS_AGENT_ENABLED = _env_bool('OPS_AGENT_ENABLED', False)
+
+# ----------------------------------------------------------------------------
+# 第 424 批：LangGraph 的遥测必须显式关掉
+#
+# `langgraph` 带进来 `langsmith`。它默认**不发**追踪，但只要环境里出现
+# `LANGSMITH_API_KEY` / `LANGCHAIN_API_KEY`，同一条调用就会把提示词与工具返回值
+# 发到第三方 —— 与本项目"出站脱敏、部署细节不出内网"的原则直接冲突，
+# 而这类开关**默认关、误开无感**，所以在这里钉死，别留给"某天有人加了个 key"。
+#
+# 注意：这里是**硬赋值**而不是 `_env_bool` 或 `setdefault` —— 目的是"不许被 .env
+# 或任何环境变量打开"，而不是"提供一个开关"。真要开追踪，应当是一次显式的、
+# 写进文档的代码改动（改这一行），而不是某天某个 .env 里多了一行。
+os.environ['LANGSMITH_TRACING'] = 'false'
+os.environ['LANGCHAIN_TRACING_V2'] = 'false'
 #: 单次生成的最大输出 token。
 #: ⚠️ 第 204 批从 800 提到 2000。原注释写"800 够写结论+依据+五类防治+免责"，
 #:    那是**按单条词条**估的；实测用户会问"苹果跟葡萄"这类**跨两条词条**的问题，

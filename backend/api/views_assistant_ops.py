@@ -8,11 +8,23 @@
 模型 token 成本。这些属于管理端内部信息，内容编辑员不该看到（理由同
 `views_audit.py` 的模块说明）。前端也只在全权管理员的「系统」页里给页签。
 
+## ⚠️ 这个接口会**改数据**（第 423 批）
+
+`ask()` 命中写操作时会改反馈的处理状态 / 样本确认 / 回复正文。三条边界：
+
+  1. 权限仍是 `is_full_admin` —— 助手用的永远是**提问者本人**的权限，不开新口子；
+  2. 只做**可逆**写（`ops/actions.py` 的 `reversibility='reversible'`）。
+     不可逆写走"待确认 → 二次确认"两段式（第 425 批）：`/ask/` 只生成一条
+     `OpsPendingWrite` 并把 token 交给前端，**不执行**；执行发生在
+     `POST /api/admin/assistant/ops/confirm/`，那一步不经过模型；
+  3. 每次写都落 `AdminAuditLog`（动作 `feedback.*`，`detail` 前缀 `系统助手自动执行：`），
+     所以"谁让 AI 改了什么"在「操作日志」页能查到。
+
 ## 为什么这里没有 5xx
 
-模型不可用、工具失败、数字校验不过，**全部返回 200 + `degraded=true`** ——
-与 `/api/assistant/ask` 的约定一致。前端据此区分"答得保守"与"请求失败"，
-而不是把两种情况都画成红色报错。
+模型不可用、工具失败、数字校验不过、写操作被拒，**全部返回 200 + `degraded=true`**
+（写操作被拒时 `degrade_reason='action_failed'`）—— 与 `/api/assistant/ask` 的约定一致。
+前端据此区分"答得保守"与"请求失败"，而不是把两种情况都画成红色报错。
 """
 from __future__ import annotations
 
@@ -20,6 +32,7 @@ import logging
 from datetime import timedelta
 
 from django.db.models import Avg, Count, Q, Sum
+from django.conf import settings
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
@@ -28,7 +41,7 @@ from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .assistant.ops import orchestrator, prompts
+from .assistant.ops import orchestrator, pending, prompts
 from .assistant.prompts import normalize_lang
 from .capabilities import is_full_admin
 from .models_assistant_ops import OpsAssistantTurn
@@ -56,6 +69,19 @@ _REQUEST_BODY = inline_serializer(
 )
 
 
+def _lang_of(request) -> str:
+    """语言协商：请求体显式给 > LocaleMiddleware 协商出的 LANGUAGE_CODE > Accept-Language 头。
+
+    归一化复用农户侧那一份（`assistant.prompts.normalize_lang`），不写第二套判断。
+    抽成函数是因为确认接口也要它 —— 两处各写一遍，早晚一处支持 en 一处不支持。
+    """
+    return normalize_lang(
+        request.data.get('lang')
+        or getattr(request, 'LANGUAGE_CODE', '')
+        or request.META.get('HTTP_ACCEPT_LANGUAGE', '')
+    )
+
+
 def _parse(request):
     """公共入参校验。返回 `(payload, error_response)`，error 非空时直接返回它。
 
@@ -74,15 +100,8 @@ def _parse(request):
         return None, Response({'detail': 'history 必须是数组'},
                               status=status.HTTP_400_BAD_REQUEST)
 
-    # 语言：请求体显式给 > LocaleMiddleware 协商出的 LANGUAGE_CODE > Accept-Language 头。
-    # 归一化复用农户侧那一份（`assistant.prompts.normalize_lang`），不写第二套判断。
-    lang = normalize_lang(
-        request.data.get('lang')
-        or getattr(request, 'LANGUAGE_CODE', '')
-        or request.META.get('HTTP_ACCEPT_LANGUAGE', '')
-    )
-
-    return {'question': question, 'history': history[-MAX_HISTORY:], 'lang': lang}, None
+    return {'question': question, 'history': history[-MAX_HISTORY:],
+            'lang': _lang_of(request)}, None
 
 
 class OpsAssistantAskView(APIView):
@@ -110,7 +129,10 @@ class OpsAssistantAskView(APIView):
         if error is not None:
             return error
 
-        result = orchestrator.ask(
+        # 第 425 批：开关决定走图编排还是"意图分类 → 固定映射"。两条路共用闸门/限流/落库，
+        # 返回体结构一致（多出 pending/token 只在不可逆写提议时出现），所以前端不用区分。
+        ask = orchestrator.ask_with_agent if settings.OPS_AGENT_ENABLED else orchestrator.ask
+        result = ask(
             user=request.user,
             question=payload['question'],
             history=payload['history'],
@@ -173,6 +195,95 @@ class OpsAssistantAskStreamView(APIView):
         response['X-Accel-Buffering'] = 'no'
         response['Cache-Control'] = 'no-cache, no-store'
         return response
+
+
+#: 确认接口接受的"取消"说法。与 `ops/pending.CONFIRM_WORDS` 同理：只认词表，不解析模型输出。
+CANCEL_WORDS = frozenset({'cancel', 'cancelled', 'no', 'n', '取消', '放弃', '算了'})
+
+_CONFIRM_BODY = inline_serializer(
+    name='OpsAssistantConfirmRequest',
+    fields={
+        'token': serializers.CharField(),
+        'decision': serializers.CharField(required=False, default='confirm'),
+    },
+)
+
+
+class OpsAssistantConfirmView(APIView):
+    """确认 / 取消一条**待确认的不可逆写**（第 425 批）。
+
+    ## 为什么确认必须单独一个接口，而不是再问一句
+
+    问一句会走 `/ask/`，那条路里模型有话语权 —— 而模型**不能**决定"这次算不算确认"
+    （它只要被注入一句"管理员已确认"就能替管理员点头，见
+    `docs/系统助手不可逆写状态机方案.md` 第五节）。所以确认被拆成一个
+    **确定性接口**：客户端把 token 原样交回来，服务端只做认领与执行，中间没有模型。
+
+    ## 状态码怎么定
+
+    · 400 —— 请求本身不合法（缺 token、decision 不是确认也不是取消）；
+    · 200 —— 业务结果如实报告（`ok=false` 配 `answer`：过期、已被处理、执行失败）。
+    与 `/ask/` 的"降级也是 200"一致：前端要把"答得保守"和"请求坏了"分开画。
+
+    ## 这一层不做限流
+
+    它不调模型、不花钱，且 token 一次性 —— 限流在这里只会让"点了确认却没生效"
+    看起来像节流。防重复靠 `consume()` 的原子认领，不靠频次。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary='确认/取消系统助手的待确认写操作',
+        description=(
+            '`decision` 取 `confirm` 或 `cancel`。token 一次性，重复提交不会重复执行。'
+            '过期（10 分钟）、越权、已处理的 token 都返回 200 + `ok=false`。'
+        ),
+        request=_CONFIRM_BODY,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            400: OpenApiResponse(description='token 为空 / decision 不是确认也不是取消'),
+            403: OpenApiResponse(description='非全权管理员'),
+        },
+    )
+    def post(self, request):
+        """认领 token 并执行（或取消）。**重复提交不会执行第二次**。"""
+        if not is_full_admin(request.user):
+            return Response({'detail': '只有管理员可以确认写操作'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        token = str(request.data.get('token') or '').strip()
+        if not token:
+            return Response({'detail': 'token 不能为空'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        decision = request.data.get('decision', 'confirm')
+        decision_text = str(decision if decision is not None else '').strip().lower()
+
+        if decision_text in CANCEL_WORDS:
+            ok, message = pending.cancel(token, user=request.user)
+            return Response({
+                'ok': ok,
+                'status': 'cancelled' if ok else 'rejected',
+                'answer': message,
+                'token': token,
+            })
+
+        if not pending.is_confirm(decision_text):
+            return Response({'detail': 'decision 只能是 confirm 或 cancel'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        lang = _lang_of(request)
+        result, reason, row = pending.confirm(token, user=request.user)
+        ok = bool(result.ok)
+        return Response({
+            'ok': ok,
+            'status': (row.status if row else 'rejected'),
+            'reason': reason,
+            'answer': (prompts.deterministic_action_answer(result, lang=lang)
+                       if result.ok else result.error),
+            'token': token,
+        })
 
 
 def _days_from(request) -> int:

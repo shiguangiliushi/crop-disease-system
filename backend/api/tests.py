@@ -81,8 +81,9 @@ from . import captcha
 from .assistant import context, guard, llm, prompts, retriever  # prompts：第 197 批语言归一用例要用
 from .assistant import orchestrator  # 第 212 批：单来源折叠用例要直接调它的纯函数
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
-# 系统助手（管理端运维侧）：六个只读工具 + 编排，各自可单独测
+# 系统助手（管理端运维侧）：只读工具 + 写工具 + 编排，各自可单独测
 from .models_assistant_ops import OpsAssistantTurn
+from .assistant.ops import actions as ops_actions  # 第 423 批：可逆写工具
 from .assistant.ops import intent as ops_intent
 from .assistant.ops import orchestrator as ops_orchestrator
 from .assistant.ops import prompts as ops_prompts
@@ -18899,6 +18900,527 @@ class OpsAssistantIntentTests(SimpleTestCase):
     def test_plan_passes_window_to_windowed_tools(self):
         plan = dict(ops_orchestrator._plan(['stats'], '这个月识别了多少张'))
         self.assertEqual(plan['get_ops_stats']['days'], 30)
+
+
+class OpsAssistantLlmToolsTests(SimpleTestCase):
+    """`llm.chat()` 的 function calling（第 423 批）
+
+    三个真实的故障模式，各一条用例：
+
+      1. 调工具时 `content` 是 `null` —— 原来直接取 `data[...]['content']` 会抛 KeyError，
+         一次**正常**的工具调用被当成"响应结构不符合预期"，于是永远写不进去；
+      2. 模型给的 `arguments` 是坏 JSON —— 不能整次失败，也不能悄悄丢掉（丢掉了就查不出
+         "模型为什么总选错工具"）；
+      3. 不传 `tools` 时请求体必须与以前**完全一样** —— 降级路径依赖这一点。
+    """
+
+    class _FakeResponse:
+        """`requests.post` 的最小替身（只要 status_code / text / json()）"""
+
+        def __init__(self, payload, status_code=200):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = json.dumps(payload, ensure_ascii=False)
+
+        def json(self):
+            return self._payload
+
+    @staticmethod
+    def _payload(message, finish_reason='stop'):
+        return {'model': 'stub-model',
+                'choices': [{'message': message, 'finish_reason': finish_reason}],
+                'usage': {'prompt_tokens': 11, 'completion_tokens': 3}}
+
+    def _call(self, response, **kwargs):
+        captured = {}
+
+        def fake_post(url, **post_kwargs):
+            captured['payload'] = post_kwargs.get('json')
+            return response
+
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm.requests, 'post', new=fake_post):
+            result = llm.chat([{'role': 'user', 'content': 'x'}], **kwargs)
+        return result, captured['payload']
+
+    def test_tools_are_sent_only_when_given(self):
+        """不传 `tools` 时请求体里没有这个字段（老调用方行为不变）"""
+        response = self._FakeResponse(self._payload({'content': 'ok'}))
+        _result, payload = self._call(response)
+        self.assertNotIn('tools', payload)
+
+        tools = [{'type': 'function',
+                  'function': {'name': 't', 'parameters': {'type': 'object'}}}]
+        _result, payload = self._call(response, tools=tools, tool_choice='auto')
+        self.assertEqual(payload['tools'], tools)
+        self.assertEqual(payload['tool_choice'], 'auto')
+
+    def test_tool_calls_are_parsed_with_null_content(self):
+        response = self._FakeResponse(self._payload(
+            {'content': None, 'tool_calls': [{
+                'id': 'call_1', 'type': 'function',
+                'function': {'name': 'verify_feedback_sample',
+                             'arguments': '{"feedback_id": 12, "verify_status": "confirmed"}'},
+            }]},
+            finish_reason='tool_calls',
+        ))
+        result, _payload = self._call(response, tools=[])
+        self.assertEqual(result.text, '')
+        self.assertTrue(result.has_tool_calls)
+        self.assertEqual(result.finish_reason, 'tool_calls')
+        call = result.tool_calls[0]
+        self.assertEqual(call.name, 'verify_feedback_sample')
+        self.assertEqual(call.arguments, {'feedback_id': 12, 'verify_status': 'confirmed'})
+
+    def test_broken_arguments_are_kept_not_swallowed(self):
+        response = self._FakeResponse(self._payload(
+            {'content': None, 'tool_calls': [{
+                'id': 'call_1', 'type': 'function',
+                'function': {'name': 'reply_feedback', 'arguments': 'not-json'},
+            }]},
+            finish_reason='tool_calls',
+        ))
+        result, _payload = self._call(response, tools=[])
+        self.assertEqual(result.tool_calls[0].arguments, {'__raw__': 'not-json'})
+        self.assertEqual(result.tool_calls[0].raw_arguments, 'not-json')
+
+    def test_plain_answer_has_no_tool_calls(self):
+        response = self._FakeResponse(self._payload({'content': ' 一切正常 '}))
+        result, _payload = self._call(response)
+        self.assertEqual(result.text, '一切正常')
+        self.assertFalse(result.has_tool_calls)
+
+
+class OpsAssistantActionRulesTests(SimpleTestCase):
+    """写操作的规则层 + 唯一校验器（第 423 批）
+
+    这一层是**模型不可用时的兜底**，也是"疑问句不执行"的那道闸门。
+    每条用例对应一次真实的误执行风险，不是凑数。
+    """
+
+    def test_imperative_phrasings_are_understood(self):
+        cases = (
+            ('把反馈 #12 标为已处理', 'mark_feedback_handled',
+             {'feedback_id': 12, 'status': 'resolved'}),
+            ('把 #12 的样本标为已确认', 'verify_feedback_sample',
+             {'feedback_id': 12, 'verify_status': 'confirmed'}),
+            ('确认反馈 12', 'verify_feedback_sample',
+             {'feedback_id': 12, 'verify_status': 'confirmed'}),
+            ('排除 #12', 'verify_feedback_sample',
+             {'feedback_id': 12, 'verify_status': 'rejected'}),
+            ('反馈 #12 已排除', 'verify_feedback_sample',
+             {'feedback_id': 12, 'verify_status': 'rejected'}),
+            ('12 号那条反馈标为已处理', 'mark_feedback_handled',
+             {'feedback_id': 12, 'status': 'resolved'}),
+            ('回复 #12：已修复，请升级后重试', 'reply_feedback',
+             {'feedback_id': 12, 'reply': '已修复，请升级后重试'}),
+        )
+        for question, tool, args in cases:
+            with self.subTest(question=question):
+                hint = ops_intent.detect_action(question)
+                self.assertIsNotNone(hint, question)
+                self.assertEqual(hint.tool, tool)
+                self.assertEqual(hint.args, args)
+
+    def test_question_sentences_never_write(self):
+        """"确认一下 #12 是不是已处理" 是查询，照字面执行会改掉一条反馈"""
+        for question in (
+            '确认一下反馈 #12 是不是已经处理了',
+            '反馈 #12 现在是什么状态',
+            '近 30 天确认样本有多少',
+            '把反馈 #12 标为已处理，可以吗',
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(ops_intent.is_command(question), question)
+                self.assertIsNone(ops_intent.detect_action(question), question)
+
+    def test_missing_id_or_verb_returns_guidance_instead_of_guessing(self):
+        hint = ops_intent.detect_action('把这条反馈标为已处理')
+        self.assertIsNotNone(hint)
+        self.assertIsNone(hint.tool)
+        self.assertEqual(hint.reason, 'missing_id')
+
+        hint = ops_intent.detect_action('把反馈 #12 处理一下')
+        self.assertIsNotNone(hint)
+        self.assertIsNone(hint.tool)
+        self.assertEqual(hint.reason, 'missing_verb')
+
+    def test_noun_phrase_is_not_a_command(self):
+        """"已处理的反馈列表" 里有动作词、也不是疑问句，但它是名词短语 ——
+        掉进"要改哪一条反馈？"的引导就是答非所问。"""
+        for question in ('已处理的反馈列表', '待确认样本', '处理中的反馈'):
+            with self.subTest(question=question):
+                self.assertIsNone(ops_intent.detect_action(question), question)
+        self.assertTrue(ops_intent.is_imperative('把这条反馈标为已处理'))
+        self.assertTrue(ops_intent.is_imperative('确认这条反馈'))
+        self.assertFalse(ops_intent.is_imperative('已处理的反馈列表'))
+
+    def test_id_must_come_from_the_question(self):
+        """模型幻觉一个 id 就能改到无关记录 —— 这条闸门挡住它"""
+        validated, error = ops_actions.validate(
+            'verify_feedback_sample',
+            {'feedback_id': 999, 'verify_status': 'confirmed'},
+            question='把反馈 #12 的样本标为已确认',
+        )
+        self.assertIsNone(validated)
+        self.assertIn('没有出现在你的原话里', error)
+
+        validated, _error = ops_actions.validate(
+            'verify_feedback_sample',
+            {'feedback_id': 12, 'verify_status': 'confirmed'},
+            question='把反馈 #12 的样本标为已确认',
+        )
+        self.assertIsNotNone(validated)
+
+    def test_unknown_tool_and_bad_arguments_are_refused(self):
+        for name, args, fragment in (
+            ('delete_feedback', {'feedback_id': 12}, '白名单'),
+            ('verify_feedback_sample', {'feedback_id': 12, 'verify_status': 'maybe'},
+             'verify_status'),
+            ('mark_feedback_handled', {'feedback_id': 12, 'status': 'done'}, 'status'),
+            ('reply_feedback', {'feedback_id': 12}, '回复正文'),
+            ('reply_feedback', {'feedback_id': 12, 'reply': 'x' * 1001}, '1000'),
+        ):
+            with self.subTest(name=name, fragment=fragment):
+                validated, error = ops_actions.validate(name, args, question='反馈 #12 回复')
+                self.assertIsNone(validated)
+                self.assertIn(fragment, error)
+
+    def test_reply_text_must_come_from_the_question(self):
+        """回复会**直接发给农户**，所以正文必须能在管理员原话里找到。
+
+        与"ID 必须来自原话"是同一条原则：少了它，模型可以"顺手润色"出一段
+        没人授权的话，以管理员的名义发给提交人。
+        """
+        validated, error = ops_actions.validate(
+            'reply_feedback',
+            {'feedback_id': 12, 'reply': '我们已经修好了，感谢您的支持'},
+            question='回复 #12：已修复，请升级后重试',
+        )
+        self.assertIsNone(validated)
+        self.assertIn('找不到', error)
+
+        validated, _error = ops_actions.validate(
+            'reply_feedback',
+            {'feedback_id': 12, 'reply': '已修复，请升级后重试'},
+            question='回复 #12：已修复，请升级后重试',
+        )
+        self.assertIsNotNone(validated)
+
+    def test_reply_length_matches_service(self):
+        from .services_feedback import MAX_REPLY_CHARS
+
+        self.assertEqual(ops_actions.MAX_REPLY_CHARS, MAX_REPLY_CHARS,
+                         '两处的长度上限必须一致，否则"校验通过但服务层截断"')
+
+    def test_the_model_can_only_call_whitelisted_tools(self):
+        """模型给的名字必须先过白名单，`ACTIONS` 之外的一律不执行"""
+        self.assertEqual(set(ops_actions.ACTIONS),
+                         {'verify_feedback_sample', 'mark_feedback_handled', 'reply_feedback'})
+        self.assertEqual(len(ops_actions.TOOL_SCHEMAS), 3)
+
+    def test_enums_match_model_choices(self):
+        """工具里的枚举是**抄的**（避免模块层 import 模型），所以要比对一次"""
+        self.assertEqual(set(ops_actions.VERIFY_VALUES),
+                         {choice[0] for choice in Feedback.VERIFY_CHOICES})
+        self.assertEqual(set(ops_actions.STATUS_VALUES),
+                         {choice[0] for choice in Feedback.STATUS_CHOICES})
+
+    def test_every_action_is_reversible_and_audited(self):
+        declared = {choice[0] for choice in AdminAuditLog.ACTION_CHOICES}
+        for name, spec in ops_actions.ACTIONS.items():
+            with self.subTest(name=name):
+                self.assertEqual(spec.reversibility, 'reversible',
+                                 '本期只开放可逆写；不可逆写要先有二次确认状态机')
+                self.assertIn(spec.audit_action, declared,
+                              f'{spec.audit_action} 没登记到 ACTION_CHOICES，日志会显示原始标识符')
+                schema = spec.schema()
+                self.assertEqual(schema['type'], 'function')
+                self.assertEqual(schema['function']['name'], name)
+                self.assertIn('feedback_id', schema['function']['parameters']['properties'])
+                self.assertEqual(schema['function']['parameters']['required'],
+                                 list(spec.required))
+
+    def test_write_tools_are_not_in_the_read_registry(self):
+        """写工具**不在** `tools.TOOLS` 里。
+
+        那个注册表被降级矩阵、`_execute()`、六条单测当作"只读"信任；
+        写工具混进去等于给"按名字跑一个工具"这条通用路径开了写权限。
+        """
+        self.assertEqual(set(ops_tools.TOOLS) & set(ops_actions.ACTIONS), set())
+
+
+class OpsAssistantWriteTests(TestCase):
+    """可逆写工具的执行 + 审计（第 423 批）
+
+    这一层是"AI 真的改了库"的地方，用例盯三件事：
+    **改对了没有**、**有没有留痕**、**能不能改回去**。
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_ops_write_admin', password='pw12345678', is_staff=True)
+        self.author = User.objects.create_user(
+            username='zz_ops_write_author', password='pw12345678')
+        self.pest = PestInfo.objects.create(
+            name='番茄早疫病', crop_type='番茄', english_identifier='ops_write_early_blight')
+        self.sample = Feedback.objects.create(
+            user=self.author, category='recognition', disease_name='番茄晚疫病',
+            is_correct=False, corrected_pest=self.pest,
+        )
+        self.plain = Feedback.objects.create(
+            user=self.author, category='suggestion', suggestion='希望加导出按钮')
+
+    def _execute(self, name, args, question):
+        validated, error = ops_actions.validate(name, args, question=question)
+        self.assertIsNotNone(validated, error)
+        return ops_actions.execute(validated, user=self.admin)
+
+    def test_verify_sample_writes_and_audits(self):
+        question = f'把反馈 #{self.sample.id} 的样本标为已确认'
+        result = self._execute('verify_feedback_sample',
+                               {'feedback_id': self.sample.id, 'verify_status': 'confirmed'},
+                               question)
+        self.assertTrue(result.ok, result.error)
+        self.sample.refresh_from_db()
+        self.assertEqual(self.sample.verify_status, 'confirmed')
+
+        log = AdminAuditLog.objects.filter(action='feedback.verify_sample').first()
+        self.assertIsNotNone(log, '写操作必须留痕')
+        self.assertEqual(log.actor_id, self.admin.id)
+        self.assertEqual(log.target_id, str(self.sample.id))
+        self.assertIn('系统助手自动执行', log.detail)
+        # 返回值要能把"改成什么样了"说清楚（答案就是照着它拼的）
+        self.assertEqual(result.data['after']['verify_status'], 'confirmed')
+        self.assertEqual(result.data['before']['verify_status'], 'pending')
+        self.assertIn('verify_status', result.data['changed'])
+
+    def test_write_is_reversible(self):
+        """可逆的定义就是"能改回去"（这是它敢自动执行的前提）"""
+        self._execute('verify_feedback_sample',
+                      {'feedback_id': self.sample.id, 'verify_status': 'confirmed'},
+                      f'确认反馈 #{self.sample.id}')
+        self._execute('verify_feedback_sample',
+                      {'feedback_id': self.sample.id, 'verify_status': 'pending'},
+                      f'把反馈 #{self.sample.id} 标为待确认')
+        self.sample.refresh_from_db()
+        self.assertEqual(self.sample.verify_status, 'pending')
+
+    def test_non_trainable_feedback_is_refused_without_audit(self):
+        question = f'把反馈 #{self.plain.id} 的样本标为已确认'
+        result = self._execute('verify_feedback_sample',
+                               {'feedback_id': self.plain.id, 'verify_status': 'confirmed'},
+                               question)
+        self.assertFalse(result.ok)
+        self.assertIn('不是可训练样本', result.error)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.verify_status, 'pending')
+        self.assertFalse(AdminAuditLog.objects.filter(action='feedback.verify_sample').exists(),
+                         '没改成就不该有审计记录')
+
+    def test_missing_target_is_reported_not_crashed(self):
+        result = self._execute('mark_feedback_handled',
+                               {'feedback_id': 999999, 'status': 'resolved'},
+                               '把反馈 #999999 标为已处理')
+        self.assertFalse(result.ok)
+        self.assertIn('不存在', result.error)
+
+    def test_reply_writes_text_status_and_notifies_author(self):
+        question = f'回复 #{self.sample.id}：已修复，请升级后重试'
+        result = self._execute('reply_feedback',
+                               {'feedback_id': self.sample.id,
+                                'reply': '已修复，请升级后重试'},
+                               question)
+        self.assertTrue(result.ok, result.error)
+        self.assertIn('admin_reply', result.data['changed'],
+                      '回复正文写进去了，返回值里必须说"改了它"')
+        self.sample.refresh_from_db()
+        self.assertEqual(self.sample.admin_reply, '已修复，请升级后重试')
+        self.assertEqual(self.sample.status, 'resolved')
+        self.assertIsNotNone(self.sample.handled_at)
+        self.assertTrue(
+            Notification.objects.filter(recipient=self.author, type='feedback').exists(),
+            'AI 替管理员回复了，提交人必须收到通知（与网页端同一份实现）')
+        log = AdminAuditLog.objects.filter(action='feedback.reply').first()
+        self.assertEqual(log.target_id, str(self.sample.id))
+
+    def test_status_only_change_does_not_notify(self):
+        """与网页端同一条规矩：只改状态、没写回复，不打扰用户"""
+        question = f'把反馈 #{self.sample.id} 标为处理中'
+        result = self._execute('mark_feedback_handled',
+                               {'feedback_id': self.sample.id, 'status': 'processing'},
+                               question)
+        self.assertTrue(result.ok, result.error)
+        self.sample.refresh_from_db()
+        self.assertEqual(self.sample.status, 'processing')
+        self.assertFalse(
+            Notification.objects.filter(recipient=self.author, type='feedback').exists())
+
+
+class OpsAssistantActionApiTests(APITestCase):
+    """写操作的端到端（第 423 批）：接口 → 编排 → 工具 → 审计
+
+    两条路径都要测，因为它们的**权限边界不同**：
+
+      · 规则路径（模型关掉）：只有明确的命令句才执行；
+      · 模型路径（模型开着）：模型选工具，但 ID 必须来自管理员原话。
+    """
+
+    url = '/api/admin/assistant/ops/ask/'
+    stream_url = '/api/admin/assistant/ops/ask/stream/'
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_ops_action_admin', password='pw12345678', is_staff=True)
+        self.author = User.objects.create_user(
+            username='zz_ops_action_author', password='pw12345678')
+        self.pest = PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='ops_action_scab')
+        self.feedback = Feedback.objects.create(
+            user=self.author, category='recognition', disease_name='苹果黑腐病',
+            is_correct=False, corrected_pest=self.pest,
+        )
+
+    def _client(self):
+        token = Token.objects.create(user=self.admin)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        return client
+
+    def _ask(self, question):
+        return self._client().post(self.url, {'question': question}, format='json').data
+
+    def _stub_chat(self, tool_calls):
+        """桩模型的"选工具"返回（`llm.chat` 被整只替换）"""
+        def fake_chat(messages, **kwargs):
+            return llm.ChatResult(text='', model='stub', tool_calls=tool_calls)
+        return fake_chat
+
+    # ── 规则路径（LLM 关掉也要能执行）────────────────────────────────
+    def test_rule_parsed_command_executes_without_model(self):
+        data = self._ask(f'把反馈 #{self.feedback.id} 标为已处理')
+        self.assertEqual(data['intent'], 'action')
+        self.assertFalse(data['degraded'], data.get('degrade_reason'))
+        self.assertTrue(data['verified'])
+        self.assertIn('已执行', data['answer'])
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.status, 'resolved')
+        self.assertIsNotNone(AdminAuditLog.objects.filter(action='feedback.status').first())
+        turn = OpsAssistantTurn.objects.order_by('-id').first()
+        self.assertEqual(turn.intent, 'action', '写操作也要落库，否则观测不到')
+
+    def test_missing_id_does_not_write_and_explains_how(self):
+        data = self._ask('把这条反馈标为已处理')
+        self.assertTrue(data['degraded'])
+        self.assertEqual(data['degrade_reason'], 'action_failed')
+        self.assertIn('要改哪一条反馈', data['answer'])
+        self.assertEqual(self.feedback.status, 'pending', '没指明目标就不许改')
+
+    def test_question_is_not_treated_as_a_command(self):
+        data = self._ask(f'确认一下反馈 #{self.feedback.id} 是不是已经处理了')
+        self.assertNotEqual(data['intent'], 'action')
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.verify_status, 'pending')
+
+    def test_stream_action_yields_meta_delta_done(self):
+        response = self._client().post(
+            self.stream_url, {'question': f'把反馈 #{self.feedback.id} 标为已处理'},
+            format='json')
+        self.assertEqual(response.status_code, 200)
+        raw = b''.join(response.streaming_content).decode('utf-8')
+        names = [block.split('\n')[0][len('event: '):].strip()
+                 for block in raw.split('\n\n') if block.strip()]
+        self.assertEqual(names, ['meta', 'delta', 'done'])
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.status, 'resolved')
+
+    # ── 模型路径（说法自由时）────────────────────────────────────────
+    def test_model_picked_tool_is_executed(self):
+        """"标成已核实" 不在规则表里 —— 交给模型选工具，但参数仍要过校验"""
+        captured = {}
+
+        def fake_chat(messages, **kwargs):
+            captured['tools'] = kwargs.get('tools')
+            return llm.ChatResult(text='', model='stub', tool_calls=[
+                llm.ToolCall(id='c1', name='verify_feedback_sample',
+                             arguments={'feedback_id': self.feedback.id,
+                                        'verify_status': 'confirmed'}),
+            ])
+
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', new=fake_chat):
+            data = self._ask(f'把 {self.feedback.id} 号那条反馈标成已核实')
+
+        self.assertIn('已执行', data['answer'])
+        self.assertEqual(captured['tools'], ops_actions.TOOL_SCHEMAS,
+                         '规划调用必须带上写工具的 schema')
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.verify_status, 'confirmed')
+
+    def test_model_hallucinated_id_is_refused(self):
+        """模型填了一个管理员没说过的 ID —— 拒绝执行，一条都不改"""
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', new=self._stub_chat([
+                    llm.ToolCall(id='c1', name='mark_feedback_handled',
+                                 arguments={'feedback_id': 999999, 'status': 'resolved'}),
+                ])):
+            data = self._ask(f'反馈 #{self.feedback.id} 那条排除掉')
+
+        self.assertTrue(data['degraded'])
+        self.assertIn('没有出现在你的原话里', data['answer'])
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.status, 'pending')
+
+    def test_model_cannot_invent_a_tool_name(self):
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', new=self._stub_chat([
+                    llm.ToolCall(id='c1', name='delete_feedback',
+                                 arguments={'feedback_id': self.feedback.id}),
+                ])):
+            data = self._ask(f'反馈 #{self.feedback.id} 那条排除掉')
+
+        self.assertTrue(data['degraded'])
+        self.assertIn('白名单', data['answer'])
+        self.assertTrue(Feedback.objects.filter(pk=self.feedback.pk).exists())
+
+    def test_model_asking_for_two_writes_is_refused(self):
+        """一次要求两个写操作 = 没读懂，不是更聪明（没有回滚，做一半更糟）"""
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', new=self._stub_chat([
+                    llm.ToolCall(id='c1', name='verify_feedback_sample',
+                                 arguments={'feedback_id': self.feedback.id,
+                                            'verify_status': 'confirmed'}),
+                    llm.ToolCall(id='c2', name='reply_feedback',
+                                 arguments={'feedback_id': self.feedback.id,
+                                            'reply': '已处理'}),
+                ])):
+            data = self._ask(f'反馈 #{self.feedback.id} 那条排除掉并回复')
+
+        self.assertTrue(data['degraded'])
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.verify_status, 'pending')
+        self.assertEqual(self.feedback.admin_reply, '')
+
+    def test_model_is_not_called_for_a_read_question(self):
+        """"近 7 天确认样本有多少" 里有"确认"和数字 —— 但不许调写工具"""
+        calls = []
+
+        def fake_chat(messages, **kwargs):
+            calls.append(kwargs)
+            return llm.ChatResult(text='**结论**：见工具结果。', model='stub')
+
+        with patch.object(llm, 'enabled', return_value=True), \
+                patch.object(llm, 'chat', new=fake_chat):
+            data = self._ask('近 7 天确认样本有多少')
+
+        self.assertNotEqual(data['intent'], 'action')
+        self.assertEqual([kwargs.get('tools') for kwargs in calls], [None],
+                         '读问题可以调一次模型生成答案，但**不许**带写工具')
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.verify_status, 'pending')
 
 
 class OpsAssistantToolsTests(TestCase):

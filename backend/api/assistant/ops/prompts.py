@@ -81,6 +81,159 @@ If a tool returned no data or failed, say exactly what is missing. Do not fill t
 #: 语言 → 系统提示（键由 `_lang()` 归一后取用）
 SYSTEM_PROMPTS = {'zh': SYSTEM_PROMPT, 'en': SYSTEM_PROMPT_EN}
 
+
+# ══════════════════════════════════════════════════════════════════════
+# 写操作（第 423 批）—— 规划提示 + 确定性答案
+# ══════════════════════════════════════════════════════════════════════
+#
+# 为什么要**另一份**系统提示，而不是在上面那份里加一段：
+# 上面那份的第 3 条硬约束明写"不得建议任何写库动作"，而这里是"可以调用写工具"。
+# 把两种指令放进同一个提示词，模型只能二选一，实测会两种都不遵守。
+# 所以写操作走独立的一次调用（只带 tools、只要一个 tool_call），读操作永远不带 tools。
+
+ACTION_PROMPT = """你是「智能农作物叶片病虫害识别系统」管理端的**操作执行器**。
+
+管理员会让你改一条反馈，你要做的是**选对工具、填对参数**，然后调用它。
+只有一个回合：调用工具，或者什么都不调用。
+
+## 四条硬约束
+
+1. **只有管理员明确要求"改"的时候才调用工具**。问"有多少""为什么""在哪看"的，
+   一律不调用 —— 那是查询，不是命令。
+2. `feedback_id` **必须来自管理员原话**（`#12` / `反馈 12` / `12 号反馈`）。
+   原话里没有编号，就不要填、不要猜。
+3. `reply`（回复正文）**只能用管理员给出的原话**。管理员没写要回什么，
+   就不要调用 `reply_feedback` —— 这段话会直接发给农户，代写等于替他说话。
+4. 一次最多调用一个工具。参数含义见各工具的 schema。
+
+管理员的要求如果无法用现有工具表达，就**什么都不调用**（不要编一个工具名）。
+"""
+
+ACTION_PROMPT_EN = """You are the **action executor** of the "Smart Crop Leaf Disease Recognition System" admin console.
+
+The administrator asks you to change one feedback record. Pick the right tool, fill in the right
+arguments, and call it. One round only: either call a tool or call nothing.
+
+## Four hard rules
+
+1. Call a tool **only when the administrator explicitly asks for a change**. Questions such as
+   "how many", "why", "where do I look" are reads, not commands.
+2. `feedback_id` **must come from the administrator's own words** (`#12` / `feedback 12`). If no id
+   is present, do not invent one.
+3. `reply` must be the administrator's own text. If they did not say what to reply, do not call
+   `reply_feedback` — that text is delivered straight to the farmer.
+4. Call at most one tool. See each tool's schema for its arguments.
+
+If the request cannot be expressed with the available tools, call nothing — never invent a tool name.
+"""
+
+#: 写操作的系统提示（键与 `SYSTEM_PROMPTS` 一致，单测比对）
+ACTION_PROMPTS = {'zh': ACTION_PROMPT, 'en': ACTION_PROMPT_EN}
+
+#: 写操作路线的固定说法。`{...}` 由 `deterministic_action_answer` 填。
+ACTION_TEXT = {
+    'zh': {
+        'done': '已执行：{label}',
+        'undone': '没有执行',
+        'target': '目标：{target}',
+        'status': '处理状态：{before} → {after}',
+        'verify': '样本状态：{before} → {after}',
+        'changed': '实际改动：{fields}',
+        'unchanged': '实际改动：无（值本来就一样）',
+        'replied': '已写入回复正文（{n} 字，提交人会收到站内通知）',
+        'audited': '已写入管理操作日志（{action}）。',
+        'reversible': '本次操作可逆：把状态改回去即可复原。',
+        'reason': '原因：{error}',
+        'missing_id': ('要改哪一条反馈？请带上编号再说，例如：'
+                       '把反馈 #123 标为已处理 / 把 #123 的样本标为已确认 / 回复 #123：<回复内容>'),
+        'missing_verb': ('我看出你想改一条反馈，但没读懂要做什么。可以这样说：'
+                         '把反馈 #123 标为已处理、把 #123 的样本标为已确认，'
+                         '或者 回复 #123：<你要回复的内容>'),
+        'missing_value': '要把反馈 #{id} 改成哪个状态？可选：待处理 / 处理中 / 已处理。',
+    },
+    'en': {
+        'done': 'Done: {label}',
+        'undone': 'Not executed',
+        'target': 'Target: {target}',
+        'status': 'Handling status: {before} → {after}',
+        'verify': 'Sample status: {before} → {after}',
+        'changed': 'Changed: {fields}',
+        'unchanged': 'Changed: nothing (the value was already the same)',
+        'replied': 'Reply text written ({n} chars; the submitter is notified)',
+        'audited': 'Written to the admin audit log ({action}).',
+        'reversible': 'This action is reversible: set the status back to restore it.',
+        'reason': 'Reason: {error}',
+        'missing_id': ('Which feedback record? Include the id, e.g. '
+                       '"mark feedback #123 as handled" / "confirm sample #123".'),
+        'missing_verb': ('I can tell you want to change a feedback record, but not what to do. '
+                         'Try: "mark feedback #123 as handled", "confirm sample #123", '
+                         'or "reply to #123: <your reply>".'),
+        'missing_value': 'Which status should feedback #{id} have? pending / processing / resolved.',
+    },
+}
+
+
+def build_action_messages(*, question: str, history=None, lang: str = 'zh') -> list[dict]:
+    """写操作的规划消息：动作提示 + 最近几轮 + 管理员原话。
+
+    只带最近 `HISTORY_LIMIT` 轮，且**不带工具结果** —— 这一步不需要看系统状态，
+    看多了反而更容易把"某条反馈 12 号"误认成当前要改的对象。
+    """
+    code = _lang(lang)
+    messages = [{'role': 'system', 'content': ACTION_PROMPTS.get(code) or ACTION_PROMPT}]
+    for turn in (history or [])[-HISTORY_LIMIT:]:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get('role')
+        content = turn.get('content')
+        if role in ('user', 'assistant') and isinstance(content, str) and content.strip():
+            messages.append({'role': role, 'content': content[:2000]})
+    messages.append({'role': 'user', 'content': question})
+    return messages
+
+
+def action_guide(reason: str, *, lang: str = 'zh', feedback_id=None) -> str:
+    """"没读懂 / 缺参数"时的引导话术（这些情况下**什么都没执行**）"""
+    words = ACTION_TEXT.get(_lang(lang)) or ACTION_TEXT['zh']
+    template = words.get(reason or 'missing_verb') or words['missing_verb']
+    return template.format(id=feedback_id if feedback_id is not None else '')
+
+
+def deterministic_action_answer(result, *, lang: str = 'zh') -> str:
+    """把一次写操作的结果说清楚（**不经模型**）。
+
+    为什么写操作的答案默认走模板而不是让模型复述：这里要回答的是
+    "到底改没改成、改成了什么"，一个转述错误就等于向管理员谎报操作结果。
+    模型可以在这之后追加一段归纳（`ask()` 的正常路径），但**结论句**由这里给出。
+    """
+    code = _lang(lang)
+    words = ACTION_TEXT.get(code) or ACTION_TEXT['zh']
+    if not result.ok:
+        return '\n'.join([
+            words['undone'],
+            words['reason'].format(error=result.error or '未知原因'),
+        ])
+
+    data = result.data or {}
+    before = data.get('before') or {}
+    after = data.get('after') or {}
+    changed = data.get('changed') or []
+    lines = [words['done'].format(label=data.get('label') or result.name)]
+    lines.append(words['target'].format(target=data.get('target') or ''))
+    if before.get('status') != after.get('status'):
+        lines.append(words['status'].format(before=before.get('status'),
+                                            after=after.get('status')))
+    if before.get('verify_status') != after.get('verify_status'):
+        lines.append(words['verify'].format(before=before.get('verify_status'),
+                                            after=after.get('verify_status')))
+    lines.append(words['changed'].format(fields='、'.join(changed)) if changed
+                 else words['unchanged'])
+    if 'admin_reply' in changed:
+        lines.append(words['replied'].format(n=after.get('reply_len', 0)))
+    lines.append(words['audited'].format(action=data.get('audit_action') or ''))
+    lines.append(words['reversible'])
+    return '\n'.join(line for line in lines if line.strip())
+
 #: 降级原因的固定说法（给前端与答案抬头用）
 REASON_TEXT = {
     'llm_disabled': '模型未启用（LLM_ENABLED 或密钥未配置）',
@@ -88,6 +241,7 @@ REASON_TEXT = {
     'llm_error': '模型调用失败',
     'verify_failed': '模型答案里的数字与工具返回值对不上，结论已隐藏',
     'tool_failed': '工具执行失败',
+    'action_failed': '写操作没有执行（参数不合法或目标不存在）',
     'no_intent': '没有识别出要查什么',
     'empty': '工具没有返回数据',
     'sensitive': '问题命中敏感词',
@@ -101,6 +255,7 @@ REASON_TEXT_EN = {
     'llm_error': 'model call failed',
     'verify_failed': 'the numbers did not match tool output, so the conclusion was hidden',
     'tool_failed': 'tool execution failed',
+    'action_failed': 'the write action did not run (invalid arguments or missing target)',
     'no_intent': 'could not tell what you want to look up',
     'empty': 'the tool returned no data',
     'sensitive': 'the question contains blocked words',
@@ -146,7 +301,8 @@ CAN_ASK = (
     '· 运行数据（识别量、准确率、助手降级率）\n'
     '· 训练样本（可训练多少条、待核验队列）\n'
     '· 误判线索（哪里错得多、纠错去向）\n'
-    '· 该怎么做（部署、备份、回滚、换模型要跑什么命令）'
+    '· 该怎么做（部署、备份、回滚、换模型要跑什么命令）\n'
+    '也可以让我改一条反馈：把反馈 #123 标为已处理 / 把 #123 的样本标为已确认 / 回复 #123：<内容>'
 )
 
 CAN_ASK_EN = (
@@ -157,7 +313,9 @@ CAN_ASK_EN = (
     '· runtime data (detections, accuracy, assistant degradation)\n'
     '· training samples (how many are trainable, what is pending review)\n'
     '· misdetections (which diseases are wrong most often, and what they were corrected to)\n'
-    '· how-to (deploy, backup, roll back, which command after swapping a model)'
+    '· how-to (deploy, backup, roll back, which command after swapping a model)\n'
+    'You can also ask me to change one feedback record: "mark feedback #123 as handled", '
+    '"confirm sample #123", "reply to #123: <your reply>".'
 )
 
 #: 闸门拒绝时的话术
@@ -331,6 +489,23 @@ def _summary_errors(data: dict) -> list[str]:
     return lines
 
 
+def _summary_action(data: dict) -> list[str]:
+    """写操作的降级摘要（与 `deterministic_action_answer` 同一套说法）"""
+    words = ACTION_TEXT['zh']
+    before = data.get('before') or {}
+    after = data.get('after') or {}
+    lines = [words['done'].format(label=data.get('label') or data.get('action') or ''),
+             words['target'].format(target=data.get('target') or '')]
+    if before.get('status') != after.get('status'):
+        lines.append(words['status'].format(before=before.get('status'),
+                                            after=after.get('status')))
+    if before.get('verify_status') != after.get('verify_status'):
+        lines.append(words['verify'].format(before=before.get('verify_status'),
+                                            after=after.get('verify_status')))
+    lines.append(words['audited'].format(action=data.get('audit_action') or ''))
+    return lines
+
+
 _SUMMARIES = {
     'get_system_health': _summary_health,
     'get_health_trend': _summary_trend,
@@ -340,6 +515,10 @@ _SUMMARIES = {
     'get_detection_errors': _summary_errors,
     'search_ops_docs': _summary_docs,
     'run_check': _summary_check,
+    # 写操作（第 423 批）：降级时同样要说清"改成什么样了"
+    'verify_feedback_sample': _summary_action,
+    'mark_feedback_handled': _summary_action,
+    'reply_feedback': _summary_action,
 }
 
 

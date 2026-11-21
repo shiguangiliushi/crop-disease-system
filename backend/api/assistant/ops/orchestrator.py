@@ -1,6 +1,6 @@
 """系统助手编排 —— 对外唯一入口 `ask()`。
 
-链路：闸门 → 限流 → 意图 → 工具 → 上下文 → 生成 → 命令审计 → 数值校验 → 落库
+链路：闸门 → 限流 → （写操作 / 意图）→ 工具 → 上下文 → 生成 → 命令审计 → 数值校验 → 落库
 
 ## 三条不能破的规矩
 
@@ -15,6 +15,16 @@
   · 那边是"检索 → 拼知识 → 生成"，这边是"选工具 → 跑工具 → 拼结果 → 生成"；
   · 那边失败要**保守**（无来源不回答），这边失败要**照样给数据**（表格本身就有用）；
   · 那边多一轮"引用校验"，这边是"数值校验 + 命令白名单"。
+
+## 写操作是**独占的一轮**（第 423 批）
+
+命中写操作时：不跑读工具、不再判断读意图、**不让模型转述结果**，直接返回
+`prompts.deterministic_action_answer()` 的确认文案。理由：这一轮的产品是
+"到底改没改成、改成了什么"，模型转述错一个字，管理员就以为操作失败或成功了。
+模型的角色只剩下**选工具、填参数**（`_run_action` 里那一次 `tools=` 调用）。
+
+`degraded` 在这一轮的含义也顺带澄清了：**成功执行不算降级**（答案是准确的，
+只是不经模型），只有"拒绝执行 / 执行失败"才 `degraded=True` + `action_failed`。
 """
 from __future__ import annotations
 
@@ -29,6 +39,7 @@ from django.utils import timezone
 from ...models_assistant_ops import OpsAssistantTurn
 from .. import guard, llm
 from ..llm import LLMError
+from . import actions as action_tools
 from . import intent as intent_mod
 from . import prompts, redact, tools, verify
 
@@ -36,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 #: 一次问答最多跑几个工具（见 `docs/系统助手框架.md` 四、核心取舍）
 MAX_TOOLS = 2
+
+#: 落库用的写操作意图名（`OpsAssistantTurn.intent`）
+ACTION_INTENT = 'action'
 
 #: 意图 → 工具计划。`query` 占位符表示"用管理员原话当检索词"。
 INTENT_TOOLS: dict[str, tuple[tuple[str, dict], ...]] = {
@@ -107,6 +121,101 @@ def _plan(intents: list[str], question: str) -> list[tuple[str, dict]]:
             break
 
     return plan[:MAX_TOOLS]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 写操作（第 423 批）—— 独占一轮
+# ══════════════════════════════════════════════════════════════════════
+
+def _refuse(name: str, message: str) -> tools.ToolResult:
+    """一次**没有发生**的写操作。`ok=False` 是关键：编排层据此不入生成路径。"""
+    return tools.ToolResult(name=name or 'action', ok=False, error=message)
+
+
+def _model_may_plan(question: str) -> bool:
+    """要不要请模型来选写工具。
+
+    三个条件同时成立才请 —— 缺一条就不请，宁可回一句引导：
+
+      1. 问题**像一条命令**（`intent.is_command`，疑问句一律不写）；
+      2. 里面有一个**带明确指向的 ID**（`intent.find_feedback_id`，与校验同一套写法）；
+      3. 模型可用。
+
+    第 1、2 条是安全闸门，不是优化："近 30 天确认样本有多少" 里也有"确认"和数字，
+    只靠模型自觉不调用工具是不保险的 —— 模型每次都可能"这次想帮个忙"。
+    """
+    return bool(llm.enabled()
+                and intent_mod.is_command(question)
+                and intent_mod.find_feedback_id(question) is not None)
+
+
+def _merge_guide(message: str, *, lang: str) -> str:
+    """在拒绝原因后面补一句"该怎么说"，避免只回一句冷冰冰的"已拒绝"。"""
+    return f'{message}\n\n{prompts.action_guide("missing_verb", lang=lang)}'
+
+
+def _run_action(*, user, question: str, history=None, lang: str = 'zh'):
+    """判断并执行写操作。
+
+    :returns: `(是否写请求, ToolResult)`。`ok=True` 表示**真的改了库**；
+        其余情况（拒绝、参数不合法、目标不存在、模型挂了）都是 `ok=False`，
+        且此时**没有任何写入发生**。
+    """
+    hint = intent_mod.detect_action(question)
+
+    # ① 规则读懂了句式 → 直接执行（模型不可用时这是唯一路径）
+    if hint is not None and hint.tool is not None:
+        validated, error = action_tools.validate(hint.tool, hint.args, question=question)
+        if validated is None:
+            return True, _refuse(hint.tool, error)
+        return True, action_tools.execute(validated, user=user)
+
+    # ② 句式是命令、但规则没读懂 → 请模型选工具（只这一次调用，不循环）
+    if _model_may_plan(question):
+        messages = prompts.build_action_messages(question=question, history=history, lang=lang)
+        try:
+            chat = llm.chat(messages, tools=action_tools.TOOL_SCHEMAS,
+                            temperature=0, max_tokens=300, timeout=15)
+        except LLMError as exc:
+            logger.warning('写操作规划调用失败：%s', exc)
+            return True, _refuse('', _merge_guide(
+                f'没能解析这条写命令（模型调用失败：{exc}）。', lang=lang))
+
+        calls = chat.tool_calls or []
+        if not calls:
+            # 模型也觉得这不是一条能执行的命令。**不执行任何事**，回引导。
+            return True, _refuse('', _merge_guide(
+                '没能从这句话里确定要改哪一条反馈、改成什么。', lang=lang))
+        if len(calls) > 1:
+            # 一次要求多个写操作：这是模型没读懂，不是它更聪明。全部拒绝。
+            return True, _refuse('', prompts.action_guide('missing_verb', lang=lang))
+
+        call = calls[0]
+        validated, error = action_tools.validate(call.name, call.arguments, question=question)
+        if validated is None:
+            return True, _refuse(call.name, _merge_guide(error, lang=lang))
+        return True, action_tools.execute(validated, user=user)
+
+    # ③ 看得出是写请求、但连目标都没说清 → 回一句引导，**什么都不改**
+    if hint is not None:
+        feedback_id = (hint.args or {}).get('feedback_id')
+        return True, _refuse('', prompts.action_guide(
+            hint.reason, lang=lang, feedback_id=feedback_id))
+
+    return False, None
+
+
+def _action_payload(result: tools.ToolResult, *, user, question: str, started: float,
+                    lang: str = 'zh') -> dict:
+    """写操作这一轮的完整返回体（**不经模型**，见模块说明）。"""
+    answer = prompts.deterministic_action_answer(result, lang=lang)
+    return _respond(
+        user=user, question=question, answer=answer, intents=[ACTION_INTENT],
+        results=[result],
+        # 成功执行**不算降级**：答案是准确的，只是不经模型（见模块说明）
+        degraded=not result.ok, reason='' if result.ok else 'action_failed',
+        verified=True, started=started,
+    )
 
 
 def _audit_check(user, command: str, result: tools.ToolResult) -> None:
@@ -197,6 +306,69 @@ def _respond(*, user, question: str, answer: str, intents: list[str],
     return payload
 
 
+#: agent 路径的意图标识（`OpsAssistantTurn.intent`）。与关键词意图区分开，
+#: 统计里能直接看出"这条是图编排答的"，不用靠猜。
+AGENT_INTENT = 'agent'
+
+
+def ask_with_agent(*, user, question: str, history=None, lang: str = 'zh') -> dict:
+    """走 agent 层（LangGraph）的问答入口（第 425 批）—— 由开关决定是否启用。
+
+    ## 为什么开关放在这里，不放在视图里
+
+    闸门（`guard.check`）、限流（`rate_limited`）、落库（`_respond`）三件事都在这条链路上。
+    放到视图里就要么复制这三件事，要么把它们的私有实现搬出去 ——
+    两条路都会长出第二套口径，而"两份实现早晚分叉"是这个仓库反复吃过的亏。
+
+    ## 为什么延迟导入 `run_agent`
+
+    `agent/` 依赖 `ops/`（工具注册表、校验、确定性答案）。在模块顶层导入会成环。
+    延迟导入还有一个好处：**没装 langgraph 的环境仍能 import 本模块**，
+    只是这条路径在调用时才报错 —— 这也让"不启用 agent"的部署不需要多一个依赖。
+
+    ## 与 `ask()` 的差别
+
+    `ask()` 是"意图分类 → 固定映射工具"，`ask_with_agent()` 是"模型自主选工具"。
+    两者共用闸门、限流、落库与返回体结构，所以**前端不需要改**：
+    多出来的只有 `pending` / `token` 两个字段（只在不可逆写提议时出现）。
+    """
+    from ..agent.runner import run_agent  # 延迟导入，见上面的说明
+
+    started = time.time()
+
+    gate = guard.check(question, user=None)
+    if not gate.ok:
+        return _respond(
+            user=user, question=question, answer=_guard_text(gate, lang=lang),
+            intents=[], results=[], degraded=True, reason=gate.reason,
+            verified=True, started=started, persist=gate.reason != 'rate_limited',
+        )
+
+    if rate_limited(user):
+        words = prompts.GUARD_TEXT.get(lang) or prompts.GUARD_TEXT['zh']
+        return _respond(
+            user=user, question=question,
+            answer=words['rate_limited'].format(limit=_rate_limit()),
+            intents=[], results=[], degraded=True, reason='rate_limited',
+            verified=True, started=started, persist=False,
+        )
+
+    outcome = run_agent(question=question, user=user, lang=lang)
+    results = [tools.ToolResult(**item) for item in (outcome.get('results') or [])]
+    reason = str(outcome.get('degraded') or '')
+
+    payload = _respond(
+        user=user, question=question, answer=str(outcome.get('answer') or ''),
+        intents=[AGENT_INTENT], results=results,
+        degraded=bool(reason), reason=reason, verified=True, started=started,
+    )
+    if outcome.get('pending'):
+        # 不可逆写的提议：把 token 交给前端，执行发生在 /confirm/（不经过模型）
+        payload['pending'] = outcome.get('pending')
+        payload['token'] = outcome.get('token') or ''
+    return payload
+
+
 def _degrade(*, user, question, intents, results, reason, started, note='',
              verified: bool = True, persist: bool = True, lang: str = 'zh') -> dict:
     answer = prompts.deterministic_answer(results, reason=reason, note=note, lang=lang)
@@ -207,8 +379,8 @@ def _degrade(*, user, question, intents, results, reason, started, note='',
     )
 
 
-def _prepare(*, user, question: str, started: float, lang: str = 'zh'):
-    """闸门 → 限流 → 意图 → 工具 → 能不能调模型。
+def _prepare(*, user, question: str, started: float, lang: str = 'zh', history=None):
+    """闸门 → 限流 → 写操作 → 意图 → 工具 → 能不能调模型。
 
     :returns: `(early, intents, results)`。`early` 非空表示"这条路已经走完了" ——
         它是一份完整的返回体（已落库），调用方直接返回/直接发一个 delta 即可。
@@ -234,7 +406,16 @@ def _prepare(*, user, question: str, started: float, lang: str = 'zh'):
             verified=True, started=started, persist=False,
         ), [], []
 
-    # ② 意图
+    # ② 写操作（第 423 批）—— **独占这一轮**：命中就不再看读意图、不跑读工具。
+    #    理由见模块说明：这一轮的产品是"改没改成"，混进读工具会让答案变成两份结论。
+    is_action, action_result = _run_action(user=user, question=question,
+                                           history=history, lang=lang)
+    if is_action:
+        payload = _action_payload(action_result, user=user, question=question,
+                                  started=started, lang=lang)
+        return payload, [ACTION_INTENT], [action_result]
+
+    # ③ 意图
     intents = intent_mod.detect(question)
     if not intents:
         words = prompts.GUARD_TEXT.get(lang) or prompts.GUARD_TEXT['zh']
@@ -298,7 +479,8 @@ def ask(*, user, question: str, history=None, lang: str = 'zh') -> dict:
     """系统助手的唯一入口（一次返回完整答案）。返回体见框架文档第八节。"""
     started = time.time()
 
-    early, intents, results = _prepare(user=user, question=question, started=started, lang=lang)
+    early, intents, results = _prepare(user=user, question=question, started=started,
+                                       lang=lang, history=history)
     if early is not None:
         return early
 
@@ -383,7 +565,8 @@ def ask_stream(*, user, question: str, history=None, lang: str = 'zh'):
     """
     started = time.time()
 
-    early, intents, results = _prepare(user=user, question=question, started=started, lang=lang)
+    early, intents, results = _prepare(user=user, question=question, started=started,
+                                       lang=lang, history=history)
     if early is not None:
         yield _sse('meta', _meta(early))
         yield _sse('delta', {'text': early.get('answer') or ''})

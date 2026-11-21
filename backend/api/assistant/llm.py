@@ -42,6 +42,25 @@ class LLMError(RuntimeError):
 
 
 @dataclass
+class ToolCall:
+    """模型要求调用的一个工具（OpenAI 兼容 `tool_calls` 的一项）。
+
+    `arguments` 已经是**解析过的 dict**：上层要拿它去校验参数，不该自己再拆 JSON。
+    解析失败时退回 `{'__raw__': '<原始字符串>'}` —— 保留原文而不是丢掉，
+    否则"模型吐了坏 JSON"这件事在日志里完全看不见（只表现为"没选出工具"）。
+    """
+
+    id: str = ''
+    name: str = ''
+    arguments: dict = field(default_factory=dict)
+    #: 模型原始给的 arguments 字符串（排查"参数为什么是坏的"时需要）
+    raw_arguments: str = ''
+
+    def as_dict(self) -> dict:
+        return {'id': self.id, 'name': self.name, 'arguments': self.arguments}
+
+
+@dataclass
 class ChatResult:
     """一次调用的结果。`usage` 与 `model` 都要留下来：
     · `usage` → 用量台账（框架文档第六节）；
@@ -54,21 +73,69 @@ class ChatResult:
     用户看到的是半句话（"具体用药请以…"之前就断了），而系统以为答完了、
     还照常提示"已生成"。**用药建议被截尾比"答得短"严重得多**，
     所以这个字段必须一路传到前端。
+
+    ## `tool_calls`（第 423 批）
+
+    带 `tools` 调用时，模型可能**一个字都不答**、只回工具名与参数
+    （`content` 为 `null`，`finish_reason='tool_calls'`）。所以：
+      · `text` 允许为空 —— 上层的"有答案吗"判定必须看 `has_tool_calls`；
+      · 不要把 `tool_calls` 塞进 `text` 拼成 JSON 字符串再解析一遍 ——
+        那等于让调用方重现本模块已经做完的解析，坏 JSON 的兜底也会丢。
     """
 
-    text: str
+    text: str = ''
     model: str = ''
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: int = 0
-    #: OpenAI 兼容字段：`'stop'` 正常结束、`'length'` 触到 max_tokens 被截断
+    #: OpenAI 兼容字段：`'stop'` 正常结束、`'length'` 触到 max_tokens 被截断、
+    #: `'tool_calls'` 要求调用工具
     finish_reason: str = ''
+    #: 模型要求调用的工具（按响应顺序）。空列表表示"这次没有要调的工具"。
+    tool_calls: list = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
     @property
     def truncated(self) -> bool:
         """是否被长度上限截断（`finish_reason == 'length'`）。"""
         return self.finish_reason == 'length'
+
+    @property
+    def has_tool_calls(self) -> bool:
+        """模型这次是不是要求调工具（此时 `text` 通常为空）。"""
+        return bool(self.tool_calls)
+
+
+def _parse_tool_call(item) -> ToolCall | None:
+    """把响应里的一项 `tool_calls` 解析成 `ToolCall`；结构不对返回 None。
+
+    结构不对**不抛异常**：一个坏项不该让整次调用失败（其余项还能用）；
+    上层拿到空列表时的表现是"没选工具"，与模型本来就没选是同一条降级路径。
+    """
+    if not isinstance(item, dict):
+        return None
+    function = item.get('function') or {}
+    name = str(function.get('name') or '').strip()
+    if not name:
+        return None
+    raw_arguments = function.get('arguments')
+    if isinstance(raw_arguments, dict):
+        # 少数兼容端点直接回对象而不是字符串（OpenAI 规范是字符串）
+        return ToolCall(id=str(item.get('id') or ''), name=name,
+                        arguments=raw_arguments, raw_arguments='')
+    text = '' if raw_arguments is None else str(raw_arguments)
+    try:
+        arguments = json.loads(text) if text.strip() else {}
+    except ValueError:
+        logger.warning('模型给出的工具参数不是合法 JSON：%s', text[:200])
+        return ToolCall(id=str(item.get('id') or ''), name=name,
+                        arguments={'__raw__': text[:500]}, raw_arguments=text)
+    if not isinstance(arguments, dict):
+        logger.warning('模型给出的工具参数不是对象：%s', text[:200])
+        return ToolCall(id=str(item.get('id') or ''), name=name,
+                        arguments={'__raw__': text[:500]}, raw_arguments=text)
+    return ToolCall(id=str(item.get('id') or ''), name=name,
+                    arguments=arguments, raw_arguments=text)
 
 
 def _cfg(name: str, default):
@@ -110,11 +177,26 @@ def _endpoint() -> str:
 
 
 def chat(messages: list[dict], *, max_tokens: int | None = None,
-         temperature: float = 0.2, timeout: float | None = None) -> ChatResult:
+         temperature: float = 0.2, timeout: float | None = None,
+         tools: list[dict] | None = None,
+         tool_choice: str | dict | None = None) -> ChatResult:
     """调一次 `/chat/completions`。失败抛 `LLMError`（由调用方降级）。
 
     `temperature` 默认 0.2 而不是 0：完全贪心在长上下文里容易反复重复同一句；
     但也不能高 —— 农业问答要的是稳定复述语料，不是发挥。
+
+    ## `tools`（第 423 批）
+
+    传 `tools` 就用 OpenAI 兼容的 function calling：请求体多一个 `tools`，
+    响应的 `message` 里可能带 `tool_calls`（此时 `content` 为 `null`）。
+
+    三条刻意的边界：
+
+      1. **只做一次往返**，本模块不循环、不执行工具 —— 它不知道工具是什么，
+         也不该知道。"模型说要调 X，要不要真调"是编排层的判断；
+      2. `tools` 传 `None` 时请求体与以前**完全一致**（不带 `tools` 字段）。
+         降级路径依赖这一点：不需要工具的老调用方不受影响；
+      3. 工具参数解析失败**不抛异常**（见 `_parse_tool_call`）—— 上层按"没选工具"处理。
     """
     if not enabled():
         raise LLMError('LLM 未启用或配置不全（LLM_ENABLED / LLM_API_URL / LLM_API_KEY / LLM_MODEL）')
@@ -135,6 +217,10 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
         'temperature': temperature,
         'stream': False,
     }
+    if tools:
+        payload['tools'] = tools
+        if tool_choice is not None:
+            payload['tool_choice'] = tool_choice
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {_cfg("LLM_API_KEY", "")}',
@@ -155,11 +241,18 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
 
     try:
         data = resp.json()
-        text = data['choices'][0]['message']['content']
+        message = data['choices'][0]['message']
+        # 第 423 批：调工具时 `content` 是 `null` —— 原来直接 `data[...]['content']`
+        # 会抛 KeyError，一次正常的工具调用被当成"响应结构不符合预期"。
+        text = message.get('content') or ''
         # 第 204 批：`finish_reason == 'length'` 表示触到了 max_tokens、答案被截断
         finish_reason = str(data['choices'][0].get('finish_reason') or '')
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
         raise LLMError(f'响应结构不符合预期：{(resp.text or "")[:200]}') from exc
+
+    tool_calls = [call for call in
+                  (_parse_tool_call(item) for item in (message.get('tool_calls') or []))
+                  if call is not None]
 
     usage = data.get('usage') or {}
     actual_model = str(data.get('model') or '')
@@ -175,6 +268,7 @@ def chat(messages: list[dict], *, max_tokens: int | None = None,
         completion_tokens=int(usage.get('completion_tokens') or 0),
         latency_ms=latency_ms,
         finish_reason=finish_reason,
+        tool_calls=tool_calls,
         raw=data,
     )
 

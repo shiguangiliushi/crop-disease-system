@@ -1608,9 +1608,13 @@ class FeedbackView(viewsets.ModelViewSet):
         #: ⚠️ 第 224 批：批量流转同样要通知到人 —— 否则"批量标记已处理 + 填了回复"
         #: 的用户端体验是：状态和回复都在库里，但没人知道。
         #: 注意只通知**真的变成已处理**的那些（批量里可能夹着不在权限范围内的 id）。
+        #: 第 423 批：通知实现搬到 `services_feedback.notify_replied()`，与单条回复、
+        #: 系统助手共用一份（这条链路最容易"一边改文案、另一边没改"）。
+        from .services_feedback import notify_replied
+
         for feedback in feedbacks.values():
             if feedback.status == 'resolved':
-                self._notify_feedback_replied(feedback, request.user)
+                notify_replied(feedback, request.user)
         return Response({
             'status': status_value,
             'requested': len(ids),
@@ -1701,31 +1705,28 @@ class FeedbackView(viewsets.ModelViewSet):
             POST /api/feedback/{id}/verify-sample/  {"verify_status": "confirmed"}
 
         `verify_status` 取值见 `Feedback.VERIFY_CHOICES`（pending / confirmed / rejected）。
+
+        ⚠️ 第 423 批：校验与写库已抽到 `services_feedback.apply_sample_verify()`
+        —— 系统助手的写工具走同一份实现，两边不会在"什么算可训练样本"上分叉。
         """
+        from .services_feedback import FeedbackWriteError, apply_sample_verify
+
         feedback = self.get_object()
-        value = (request.data.get('verify_status') or '').strip()
-        valid = {choice[0] for choice in Feedback.VERIFY_CHOICES}
-        if value not in valid:
-            return Response({'verify_status': [f'只能取 {sorted(valid)} 之一']},
-                            status=status.HTTP_400_BAD_REQUEST)
-        #: 只有"识别纠错 + 用户说错了 + 给了正确类别"才算训练样本（模型属性已定义好口径）。
-        #: 对无关反馈点"确认"没有意义，而且会让统计里的"样本数"虚高。
-        if not feedback.is_trainable:
-            return Response(
-                {'detail': '这条反馈不是可训练样本（需要：类型为识别纠错、用户判定识别有误、'
-                           '并给出了正确病害）'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        feedback.verify_status = value
-        feedback.save(update_fields=['verify_status'])
-        logger.info('样本确认 feedback=%s -> %s by=%s',
-                    feedback.id, value, request.user.username)
+        try:
+            apply_sample_verify(feedback, request.data.get('verify_status'))
+        except FeedbackWriteError as exc:
+            # 字段级错误按 DRF 习惯给数组；对象级（"这条不是可训练样本"）保持原来的字符串，
+            # 前端 `formatApiError` 对 `detail` 走的是"整句"分支，换成数组会变成拼接文本。
+            payload = [str(exc)] if exc.field != 'detail' else str(exc)
+            return Response({exc.field: payload}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(feedback).data)
 
     @action(detail=False, methods=['post'], url_path='bulk-verify-samples',
             permission_classes=[IsFeedbackEditor])
     def bulk_verify_samples(self, request):
         """批量确认/排除（body: {"ids": [...], "verify_status": "confirmed"}）"""
+        from .services_feedback import FeedbackWriteError, apply_sample_verify
+
         value = (request.data.get('verify_status') or '').strip()
         valid = {choice[0] for choice in Feedback.VERIFY_CHOICES}
         if value not in valid:
@@ -1742,11 +1743,11 @@ class FeedbackView(viewsets.ModelViewSet):
             if feedback is None:
                 results.append({'id': feedback_id, 'ok': False, 'detail': '反馈不存在'})
                 continue
-            if not feedback.is_trainable:
-                results.append({'id': feedback_id, 'ok': False, 'detail': '不是可训练样本'})
+            try:
+                apply_sample_verify(feedback, value)
+            except FeedbackWriteError as exc:
+                results.append({'id': feedback_id, 'ok': False, 'detail': str(exc)})
                 continue
-            feedback.verify_status = value
-            feedback.save(update_fields=['verify_status'])
             ok_count += 1
             results.append({'id': feedback_id, 'ok': True})
         logger.info('批量确认样本 %s 条 -> %s by=%s', ok_count, value, request.user.username)
@@ -1869,78 +1870,26 @@ class FeedbackView(viewsets.ModelViewSet):
         `status` 与 `admin_reply` 在序列化器里是**只读**的（普通用户不能自评"已处理"），
         所以管理员不能直接 PATCH 这两个字段 —— 这里给管理端一个专门的动作：
             POST /api/feedback/{id}/reply/  {"status": "resolved", "admin_reply": "..."}
+
+        ⚠️ 第 423 批：写库、自动翻译、给提交人发通知这三件事已抽到
+        `services_feedback.apply_reply()` —— 系统助手的写工具走**同一份**实现。
+        这里只保留"收参数 / 回响应"。
         """
+        from .services_feedback import FeedbackWriteError, apply_reply
+
         feedback = self.get_object()
-
-        status_value = (request.data.get('status') or '').strip()
-        valid_status = {choice[0] for choice in Feedback.STATUS_CHOICES}
-        if status_value and status_value not in valid_status:
-            return Response({'status': ['无效的处理状态']}, status=status.HTTP_400_BAD_REQUEST)
-
-        if status_value:
-            feedback.status = status_value
-        if request.data.get('admin_reply') is not None:
-            feedback.admin_reply = request.data.get('admin_reply')
-
-        # 只有"已处理"才记录处理时间；从已处理退回其它状态则清空
-        if feedback.status == 'resolved':
-            feedback.handled_at = feedback.handled_at or timezone.now()
-        else:
-            feedback.handled_at = None
-
-        feedback.save(update_fields=['status', 'admin_reply', 'handled_at'])
-
-        # 第 85 批：管理员回复是给用户看的中文，英文界面下需要英文版本。
-        # 回复内容变了就重译一次（失败只记日志，不影响回复本身）；
-        # 管理员若在请求里直接给了 admin_reply_en，则视为人工译文，跳过自动翻译。
-        manual_reply_en = (request.data.get('admin_reply_en') or '').strip()
-        if manual_reply_en:
-            feedback.admin_reply_en = manual_reply_en
-            feedback.mark_translated(feedback.SOURCE_MANUAL)
-            feedback.save(update_fields=['admin_reply_en', 'translation_hash',
-                                         'translation_source', 'translated_at'])
-        elif getattr(settings, 'TRANSLATE_ON_WRITE', True):
-            try:
-                from .services_translate import safe_translate_instance
-                safe_translate_instance(feedback)
-            except Exception:  # noqa: BLE001 —— 翻译失败不能影响管理员处理反馈
-                logger.exception('反馈回复翻译调度失败 feedback=%s', feedback.id)
-
-        logger.info('管理员 %s 处理了反馈 id=%s -> %s', request.user.username, feedback.id, feedback.status)
-        #: ⚠️ 第 224 批：**回复要通知到提交人**。
-        #: 改前一次性回复完，用户那边**什么都收不到** —— 站内信体系里论坛回复、
-        #: 专家咨询、点赞都接了 `notify()`，唯独反馈的 reply/bulk_status 没接，
-        #: 用户必须自己再进一次"反馈中心"才看得到回复。闭环断在这里。
-        self._notify_feedback_replied(feedback, request.user)
-        return Response(self.get_serializer(feedback).data)
-
-    def _notify_feedback_replied(self, feedback, actor):
-        """标记「已处理」或写了回复时，给提交人发一条站内通知（失败只记日志）"""
-
-        if feedback.user_id is None:
-            return
-        if feedback.status != 'resolved' and not (feedback.admin_reply or '').strip():
-            return
         try:
-            from .views_notify import notify
-
-            snippet = (feedback.admin_reply or '').strip()
-            if len(snippet) > 60:
-                snippet = snippet[:60] + '…'
-            notify(
-                feedback.user,
-                type='feedback',
-                title='你的反馈已有回复',
-                message=(f'{actor.username} 回复了你的反馈：{snippet}' if snippet
-                         else f'{actor.username} 已处理你的反馈'),
-                title_en='Your feedback has a reply',
-                message_en=(f'{actor.username} replied to your feedback' if not snippet
-                            else f'{actor.username} replied to your feedback: {snippet}'),
-                url='/feedback',
-                actor=actor,
+            apply_reply(
+                feedback,
+                status=request.data.get('status'),
+                admin_reply=request.data.get('admin_reply'),
+                actor=request.user,
+                manual_reply_en=(request.data.get('admin_reply_en') or ''),
             )
-        except Exception:  # noqa: BLE001 —— 通知失败绝不能影响管理员处理反馈
-            logger.exception('反馈回复通知投递失败 feedback=%s', feedback.id)
+        except FeedbackWriteError as exc:
+            return Response({exc.field: [str(exc)]}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(feedback).data)
 
 
 class PestEncyclopediaViewSet(viewsets.ModelViewSet):
