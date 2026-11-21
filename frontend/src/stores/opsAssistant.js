@@ -20,7 +20,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
-import { askOpsAssistantStream } from '@/api/opsAssistant';
+import { askOpsAssistantStream, confirmOpsAction } from '@/api/opsAssistant';
 
 export const useOpsAssistantStore = defineStore('opsAssistant', () => {
   const turns = ref([]);
@@ -57,6 +57,10 @@ export const useOpsAssistantStore = defineStore('opsAssistant', () => {
       question: text, answer: '', intent: '', tools: [],
       degraded: false, degrade_reason: '', verified: true, evidence: [],
       streaming: true, failed: false,
+      //: 第 426 批：不可逆写的提议。`pending` 非空且 `token` 有效时，页面上出现确认按钮
+      pending: null, token: '',
+      //: 确认结果（`null` = 还没决定）。有了它就不再显示按钮 —— 凭据是一次性的
+      pendingResult: null, confirming: false, pendingError: '',
     };
     turns.value.push(turn);
 
@@ -78,9 +82,41 @@ export const useOpsAssistantStore = defineStore('opsAssistant', () => {
     }
   }
 
+  /**
+   * 确认 / 取消一条不可逆写（第 426 批）
+   *
+   * 三件刻意的事：
+   *  1. **只认 `confirm` / `cancel`**（后端同样只认这两个词）—— 不做"AI 判断这句话算不算确认"；
+   *  2. 成功后就**清掉 token**：一次性的东西留在内存里，只会让按钮被再点一次
+   *     （后端会拒，但让用户点了再看到"已经处理过了"是多余的坏体验）；
+   *  3. 失败时**保留 token 并抛出**：网络没到、400 之类的情况重试是合法的；
+   *     真正"不可重试"的失败（过期/已处理）由后端 `ok=false` 表达，会写进 `pendingResult`。
+   *
+   * @param {object} turn store 里的那一条对话
+   * @param {'confirm'|'cancel'} decision
+   * @returns {Promise<object|null>} 后端返回体；不该发请求时返回 null
+   */
+  async function confirm(turn, decision = 'confirm') {
+    if (!turn || !turn.token || turn.confirming || turn.pendingResult) return null;
+    turn.confirming = true;
+    turn.pendingError = '';
+    try {
+      const result = await confirmOpsAction({ token: turn.token, decision });
+      turn.pendingResult = result;
+      //: 凭据一次性：不管执行成功、失败、取消、过期，都不再重试
+      turn.token = '';
+      return result;
+    } catch (error) {
+      turn.pendingError = error;
+      throw error;
+    } finally {
+      turn.confirming = false;
+    }
+  }
+
   function reset() {
     turns.value = [];
   }
 
-  return { turns, loading, ask, reset, historyPayload };
+  return { turns, loading, ask, confirm, reset, historyPayload };
 });

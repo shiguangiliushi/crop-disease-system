@@ -1,9 +1,10 @@
 /**
  * 系统助手（管理端运维侧）接口
  *
- * 两个接口，同一个问题：
+ * 三个接口，同一个问题：
  *   · `POST /api/admin/assistant/ops/ask/`        —— 一次返回完整答案
  *   · `POST /api/admin/assistant/ops/ask/stream/` —— SSE，逐段返回（**页面用这个**）
+ *   · `POST /api/admin/assistant/ops/confirm/`    —— 确认 / 取消一条**不可逆**写（第 426 批）
  *
  * 三个后端约定（页面必须照做，否则会把"答得保守"显示成报错）：
  *
@@ -13,6 +14,16 @@
  *  3. 流式下 **`done.answer` 是权威答案**：数值校验在结束时做，不通过会换成表格 ——
  *     逐字拼接的结果只是"过程"。所以前端收到 `done` 必须**整体替换**已渲染的文本，
  *     否则用户会看到一段被判定为不可信的答案。
+ *
+ * ## `pending` / `token`（第 426 批）
+ *
+ * 回答里出现 `pending` 时，说明这条写操作**不可逆**、**还没有执行**：
+ * 后端只落了一行待确认记录并把一次性 `token` 交回来。真正执行要调 `confirmOpsAction()`，
+ * 那一步不经过模型 —— 确认的判定是后端纯函数（`ops/pending.is_confirm()`），
+ * 不是"AI 觉得你说的是确认"。
+ *
+ * `token` 一次性：确认过、取消过、过期（10 分钟）之后再提交都会被拒（`ok=false`），
+ * 前端不要把它当成"可以重试的请求"。
  *
  * 会话不落库：`history` 由页面持有，最多带最近 8 条（后端只取最近几轮）。
  */
@@ -67,6 +78,8 @@ export async function askOpsAssistantStream({ question, history, lang = 'zh' } =
     answer: '', intent: '', tools: [],
     degraded: false, degrade_reason: '', verified: true,
     evidence: [], usage: {}, latency_ms: 0,
+    //: 第 426 批：不可逆写的提议（`pending` 非空 = 还没执行，等管理员确认）
+    pending: null, token: '',
   };
 
   const reader = response.body.getReader();
@@ -108,6 +121,9 @@ export async function askOpsAssistantStream({ question, history, lang = 'zh' } =
       result.evidence = Array.isArray(data.evidence) ? data.evidence : [];
       result.usage = data.usage || {};
       result.latency_ms = data.latency_ms || 0;
+      //: 第 426 批：提议 + 一次性凭据。**必须在 done 里取** —— meta 阶段还没提出写。
+      result.pending = data.pending || null;
+      result.token = data.token || '';
       if (onDelta) onDelta(null, result.answer);
     }
   };
@@ -127,6 +143,31 @@ export async function askOpsAssistantStream({ question, history, lang = 'zh' } =
   if (buffer.trim()) handleEvent(buffer);
 
   return result;
+}
+
+/**
+ * 确认 / 取消一条**不可逆**写操作（第 426 批）
+ *
+ * 只做"把 token 交回去 + 说一句要不要做"：**没有模型参与**，也没有自然语言解析 ——
+ * 后端只认 `confirm` / `cancel` 两个词（`ops/pending.CONFIRM_WORDS`）。
+ *
+ * @param {{token: string, decision?: 'confirm'|'cancel'}} payload
+ * @returns {Promise<{ok: boolean, status: string, reason?: string, answer: string, token: string}>}
+ *   `status` ∈ `confirmed` / `cancelled` / `expired` / `failed` / `rejected`；
+ *   失败也是 **200**（`ok=false` + `reason`），只有参数错才 400。
+ */
+export async function confirmOpsAction({ token, decision = 'confirm' } = {}) {
+  const authStore = useAuthStore();
+  const response = await fetch(`${baseURL}/admin/assistant/ops/confirm/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authStore.authToken ? { Authorization: `Token ${authStore.authToken}` } : {}),
+    },
+    body: JSON.stringify({ token, decision }),
+  });
+  if (!response.ok) throw await httpError(response);
+  return response.json();
 }
 
 /**

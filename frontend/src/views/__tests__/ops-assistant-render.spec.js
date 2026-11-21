@@ -25,6 +25,7 @@ import { describe, expect, it } from 'vitest';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = readFileSync(resolve(HERE, '../AdminOpsAssistantView.vue'), 'utf8');
+const STORE = readFileSync(resolve(HERE, '../../stores/opsAssistant.js'), 'utf8');
 
 describe('系统助手页签的回答渲染', () => {
   it('用共用的受控解析器，而不是把回答直出', () => {
@@ -54,5 +55,28 @@ describe('系统助手页签的对话状态', () => {
 
   it('把界面语言带进请求（切英文后新问的问题才是英文）', () => {
     expect(SOURCE).toMatch(/opsStore\.ask\(text, \{ lang:/);
+  });
+});
+
+describe('不可逆写的二次确认（第 426 批）', () => {
+  // 静态扫描，理由同上：接口可用但**页面上没有调用点**，等于没做（第 425 批就是这样）。
+  it('页面上确实有确认 / 取消两个按钮，且都挂到 store.confirm', () => {
+    expect(SOURCE).toContain("v-if=\"turn.pending\"");
+    expect(SOURCE).toMatch(/@click="decide\(turn, 'confirm'\)"/);
+    expect(SOURCE).toMatch(/@click="decide\(turn, 'cancel'\)"/);
+    expect(SOURCE).toContain('opsStore.confirm(turn, decision)');
+    expect(STORE).toContain('confirmOpsAction');
+  });
+
+  it('发给后端的只有 confirm / cancel，不是自然语言', () => {
+    // 让模型判断"这句话算不算确认"= 模型可以确认自己刚提的议，是二次确认要防的那件事
+    expect(SOURCE).not.toMatch(/confirmOpsAction\(/);      // 组件不直接发请求，统一走 store
+    expect(STORE).toMatch(/confirmOpsAction\(\{ token: turn\.token, decision \}\)/);
+  });
+
+  it('决定之后按钮消失（凭据一次性）', () => {
+    // `!turn.pendingResult` 才渲染按钮 —— 留着它只会让人重复点、再看到"已经处理过了"
+    expect(SOURCE).toContain('v-if="!turn.pendingResult"');
+    expect(STORE).toMatch(/turn\.token = ''/);
   });
 });

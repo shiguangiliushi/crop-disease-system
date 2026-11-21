@@ -127,6 +127,59 @@
           </div>
           <p v-else-if="turn.failed" class="ops-text is-failed">{{ t('opsAssistant.failed') }}</p>
           <p v-else class="ops-text is-waiting">{{ t('opsAssistant.thinking') }}</p>
+
+          <!--
+            不可逆写的二次确认（第 426 批）
+            ------------------------------------------------------------------
+            `turn.pending` 非空 = 后端**只落了一条待确认记录，没有执行**；
+            真正的执行只发生在下面这个按钮上（`/ops/confirm/`，不经过模型）。
+            凭据一次性：一旦有 `pendingResult`（执行/取消/过期/已被处理），
+            按钮就不再出现 —— 留着它只会让人重复点、再看到"已经处理过了"。
+          -->
+          <div v-if="turn.pending" class="ops-confirm">
+            <p class="ops-confirm-head">
+              <i class="fas fa-triangle-exclamation"></i> {{ t('opsAssistant.confirmTitle') }}
+            </p>
+            <ul class="ops-confirm-facts">
+              <li>
+                <span>{{ t('opsAssistant.confirmAction') }}</span>
+                {{ turn.pending.label || turn.pending.action || '—' }}
+              </li>
+              <li v-if="turn.pending.target">
+                <span>{{ t('opsAssistant.confirmTarget') }}</span>{{ turn.pending.target }}
+              </li>
+              <li v-if="(turn.pending.changes || []).length">
+                <span>{{ t('opsAssistant.confirmChanges') }}</span>{{ changeText(turn.pending.changes) }}
+              </li>
+            </ul>
+            <p class="ops-confirm-warn">{{ t('opsAssistant.confirmIrreversible') }}</p>
+
+            <div v-if="!turn.pendingResult" class="ops-confirm-actions">
+              <el-button
+                type="danger"
+                size="small"
+                :loading="turn.confirming"
+                :disabled="turn.confirming"
+                @click="decide(turn, 'confirm')"
+              >
+                {{ t('opsAssistant.confirmRun') }}
+              </el-button>
+              <el-button size="small" :disabled="turn.confirming" @click="decide(turn, 'cancel')">
+                {{ t('opsAssistant.confirmCancel') }}
+              </el-button>
+            </div>
+            <p
+              v-else
+              class="ops-confirm-result"
+              :class="turn.pendingResult.ok ? 'is-ok' : 'is-failed'"
+            >
+              {{ confirmResultText(turn.pendingResult) }}
+            </p>
+            <!-- 请求本身失败（网络 / 400 / 403）：不是"后端拒绝了这次确认"，要分开显示 -->
+            <p v-if="turn.pendingError" class="ops-confirm-result is-failed">
+              {{ formatApiError(turn.pendingError, t('opsAssistant.confirmFailed')) }}
+            </p>
+          </div>
           <div class="ops-meta">
             <el-tag v-if="turn.intent" size="small" effect="plain">{{ turn.intent }}</el-tag>
             <el-tag
@@ -138,7 +191,8 @@
             >
               {{ tool.name }} · {{ tool.ms }} ms
             </el-tag>
-            <el-tag v-if="turn.degraded" size="small" type="warning" effect="plain">
+            <!-- `degraded` 标签在"待确认"时**不显示**：那不是降级，是等管理员点确认 -->
+            <el-tag v-if="turn.degraded && !turn.pending" size="small" type="warning" effect="plain">
               {{ t('opsAssistant.degradedLabel') }}{{ turn.degrade_reason ? ` · ${turn.degrade_reason}` : '' }}
             </el-tag>
             <el-tag v-if="turn.verified === false" size="small" type="danger" effect="plain">
@@ -285,6 +339,59 @@ async function submit() {
 function askExample(example) {
   question.value = example;
   submit();
+}
+
+/* ── 不可逆写的确认 / 取消（第 426 批） ─────────────────────────────── */
+
+/**
+ * 点"确认执行"或"取消"。**这里不发自然语言**，只发 `confirm` / `cancel` ——
+ * 后端也只认这两个词（`ops/pending.CONFIRM_WORDS`）。让模型去解析"他说的是确认吗"
+ * 正是二次确认要防的那件事（模型可以确认自己刚提的议）。
+ */
+async function decide(turn, decision) {
+  try {
+    await opsStore.confirm(turn, decision);
+  } catch {
+    // 真正的请求失败：错误已经写进 `turn.pendingError`，卡片里就地显示，不再弹一个
+  }
+}
+
+/**
+ * 确认结果 → 一句人读的话。
+ *
+ * 为什么**按 `status` / `reason` 映射**而不是直接显示后端的 `answer`：
+ * 后端失败文案是中文的（`pending.REASON_TEXT`），英文界面下照搬会中英混排。
+ * 执行成功时 `answer` 是 lang-aware 的确定性摘要，可以带出来。
+ */
+function confirmResultText(result) {
+  if (!result) return '';
+  if (result.ok) {
+    const detail = String(result.answer || '').trim();
+    return detail
+      ? `${t('opsAssistant.confirmExecuted')} · ${detail}`
+      : t('opsAssistant.confirmExecuted');
+  }
+  const reason = String(result.reason || '');
+  if (result.status === 'cancelled') return t('opsAssistant.confirmCancelled');
+  if (reason === 'expired' || result.status === 'expired') return t('opsAssistant.confirmExpired');
+  if (reason === 'consumed') return t('opsAssistant.confirmAlreadyDone');
+  if (reason === 'not_found') return t('opsAssistant.confirmNotFound');
+  const detail = String(result.answer || '').trim();
+  return detail
+    ? `${t('opsAssistant.confirmNotRun')}：${detail}`
+    : t('opsAssistant.confirmNotRun');
+}
+
+/**
+ * "会改动哪些字段" → 人读文本。
+ *
+ * 后端的 `changes` 是**字段名/标记**（`deleted` / `admin_reply` / `status`），
+ * 直接把 `deleted` 摆在界面上等于把内部标识符露给管理员。只对已知的几个给中文，
+ * 其余原样显示 —— **不翻译未知值**：翻错了比露字段名更糟（比如把"删除"说成"修改"）。
+ */
+function changeText(changes) {
+  const labels = { deleted: t('opsAssistant.confirmChangeDeleted') };
+  return (changes || []).map((key) => labels[key] || key).join('、');
 }
 
 function reset() {
@@ -478,6 +585,67 @@ function reset() {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+/* 不可逆写的二次确认卡（第 426 批）—— 用 danger 色系，和"降级提示"区分开：
+   降级是"答案可能不可信"，这里是"马上要删东西了"，两者的分量不一样。 */
+.ops-confirm {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-color-danger-light-5);
+  border-radius: 9px;
+  background: var(--el-color-danger-light-9);
+}
+
+.ops-confirm-head {
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--el-color-danger);
+}
+
+.ops-confirm-head i {
+  margin-right: 6px;
+}
+
+.ops-confirm-facts {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.ops-confirm-facts span {
+  display: inline-block;
+  min-width: 4em;
+  margin-right: 8px;
+  color: var(--el-text-color-secondary);
+}
+
+.ops-confirm-warn {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--el-color-danger);
+}
+
+.ops-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ops-confirm-result {
+  margin: 8px 0 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.ops-confirm-result.is-ok {
+  color: var(--el-color-success);
+}
+
+.ops-confirm-result.is-failed {
+  color: var(--el-color-danger);
 }
 
 .ops-evidence {
