@@ -67,8 +67,14 @@ def read_schemas() -> list[dict]:
 
 
 def all_schemas() -> list[dict]:
-    """交给模型的全集：只读 + 写（写的那几个带明确描述，模型才知道不能自己决定）"""
-    return read_schemas() + list(actions.TOOL_SCHEMAS)
+    """交给模型的全集：只读 + 写（写的那几个带明确描述，模型才知道不能自己决定）。
+
+    第 426 批：不可逆动作只在功能开关打开时才出现在这里。开关关着却把 schema
+    发给模型，会得到一条"模型能提出、但永远执行不了"的死路 ——
+    管理员看到的是"已提交，请确认"，然后确认接口告诉他不可用。
+    """
+    writes = actions.tool_schemas()
+    return read_schemas() + writes
 
 
 def run_read(name: str, args: dict, *, user=None) -> ops_tools.ToolResult:

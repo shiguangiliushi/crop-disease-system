@@ -114,8 +114,16 @@ class AgentToolSchemaTests(SimpleTestCase):
         self.assertEqual(trend['required'], [])  # days 有默认值，不是必填
 
     def test_all_schemas_add_write_tools(self):
+        """可逆写全部交给模型；不可逆写**默认不交**（第 426 批的开关）。
+
+        开关关着却把 schema 发出去，模型就会去调一个永远执行不了的动作 ——
+        管理员看到"请确认"，然后确认接口告诉他不可用。看不见 = 不会走死路。
+        """
         names = {item['function']['name'] for item in agent_tools.all_schemas()}
-        self.assertEqual(names, set(ops_tools.TOOLS) | set(ops_actions.ACTIONS))
+        reversible = {name for name, spec in ops_actions.ACTIONS.items()
+                      if spec.reversibility == 'reversible'}
+        self.assertEqual(names, set(ops_tools.TOOLS) | reversible)
+        self.assertNotIn('delete_feedback', names)
 
     def test_write_tools_stay_out_of_the_read_registry(self):
         """写工具不能借 agent 之手混进只读注册表（与第 423 批同一条红线）。"""
@@ -383,7 +391,10 @@ class OpsPendingWriteTests(TestCase, _IrreversibleSetup):
             username='zz_pending_admin', password='pw12345678', is_staff=True)
         self.other = User.objects.create_user(
             username='zz_pending_other', password='pw12345678', is_staff=True)
-        _, _, self.validated = self._patches()
+        # ⚠️ 必须 addCleanup：这个 patch 改的是 `actions.validate` 这个**模块属性**，
+        # 不还原的话它会泄漏到后面所有测试类（表现为"随便什么名字都能校验通过"）。
+        self._stack, _, self.validated = self._patches()
+        self.addCleanup(self._stack.close)
 
     def _propose(self, user=None) -> OpsPendingWrite:
         row, error = pending.propose(
@@ -447,7 +458,8 @@ class OpsPendingWriteTests(TestCase, _IrreversibleSetup):
     def test_confirm_revalidates_before_executing(self):
         """提议与确认之间的几分钟里，目标可能被删、权限可能被收回。"""
         row = self._propose()
-        _, executed, _ = self._patches()
+        stack, executed, _ = self._patches()
+        self.addCleanup(stack.close)
         with mock.patch.object(ops_actions, 'validate', return_value=(None, '目标不存在')):
             result, reason, finished = pending.confirm(row.token, user=self.admin)
 
@@ -485,7 +497,9 @@ class OpsPendingConfirmApiTests(APITestCase, _IrreversibleSetup):
             username='zz_confirm_api_admin', password='pw12345678', is_staff=True)
         self.editor = User.objects.create_user(
             username='zz_confirm_api_editor', password='pw12345678')
-        _, _, self.validated = self._patches()
+        # 同上：不还原就会污染其它测试类
+        self._stack, _, self.validated = self._patches()
+        self.addCleanup(self._stack.close)
         row, error = pending.propose(
             user=self.admin, validated=self.validated, question='删除识别记录 #7')
         self.assertIsNotNone(row, error)
@@ -622,3 +636,135 @@ class OpsAgentSwitchTests(APITestCase):
         body = response.json()
         self.assertTrue(body['degraded'])
         self.assertEqual(body['degrade_reason'], 'model_unavailable')
+
+class OpsIrreversibleActionTests(TestCase):
+    """第一个真正的不可逆动作：delete_feedback（第 426 批）。
+
+    这个类盯的是**四道独立的闸门**，任何一道失效都算事故：
+
+    1. 开关关着时，模型**看不到**这个动作；
+    2. 直接调 execute()（老的模型工具路径就是这样）→ 拒绝执行；
+    3. 只有 `confirmed=True`（只有 `pending.confirm()` 会传）才真的删；
+    4. 删除要落审计、要清图片文件。
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_delete_admin', password='pw12345678', is_staff=True)
+        self.author = User.objects.create_user(
+            username='zz_delete_author', password='pw12345678')
+        self.feedback = Feedback.objects.create(
+            user=self.author, category='suggestion', suggestion='希望加导出按钮',
+            disease_name='番茄晚疫病')
+        self.question = f'把反馈 #{self.feedback.id} 删掉'
+
+    def _validated(self):
+        validated, error = ops_actions.validate(
+            'delete_feedback', {'feedback_id': self.feedback.id}, question=self.question)
+        self.assertIsNotNone(validated, error)
+        return validated
+
+    # ── ① 开关关着：看不见、也校验不过 ──────────────────────────────────
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=False)
+    def test_switch_off_hides_the_action_from_the_model(self):
+        names = {item['function']['name'] for item in agent_tools.all_schemas()}
+        self.assertNotIn('delete_feedback', names)
+
+        validated, error = ops_actions.validate(
+            'delete_feedback', {'feedback_id': self.feedback.id}, question=self.question)
+        self.assertIsNone(validated)
+        self.assertIn('未开启', error)
+
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=False)
+    def test_switch_off_keeps_the_reversible_actions_visible(self):
+        names = {item['function']['name'] for item in agent_tools.all_schemas()}
+        self.assertIn('verify_feedback_sample', names)
+
+    # ── ② 没有确认 → 一次都不执行 ────────────────────────────────────────
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=True)
+    def test_direct_execute_is_refused(self):
+        """老的"模型选工具 → 直接执行"路径必须被挡住。
+
+        _run_action() 会把模型选中的动作直接交给 execute()；没有这道闸门，
+        一次提示注入就能删掉一条反馈，而整套二次确认完全没被走到。
+        """
+        validated = self._validated()
+        result = ops_actions.execute(validated, user=self.admin)
+
+        self.assertFalse(result.ok)
+        self.assertIn('二次确认', result.error)
+        self.assertTrue(Feedback.objects.filter(pk=self.feedback.id).exists())
+
+    # ── ③ 确认之后：删除 + 审计 ─────────────────────────────────────────
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=True)
+    def test_confirmed_execute_deletes_and_audits(self):
+        validated = self._validated()
+        self.assertIn(f'#{self.feedback.id}', validated.target, '复述必须能说清删哪一条')
+
+        result = ops_actions.execute(validated, user=self.admin, confirmed=True)
+
+        self.assertTrue(result.ok, result.error)
+        self.assertFalse(Feedback.objects.filter(pk=self.feedback.id).exists())
+        log = AdminAuditLog.objects.filter(action='feedback.delete').first()
+        self.assertIsNotNone(log, '不可逆操作必须留痕')
+        self.assertEqual(log.actor_id, self.admin.id)
+        self.assertEqual(log.target_id, str(self.feedback.id))
+        self.assertIn('确认后删除', log.detail)
+
+    # ── ④ 图片文件一起清掉 ──────────────────────────────────────────────
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=True)
+    def test_image_file_is_removed_too(self):
+        from django.core.files.storage import default_storage
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.feedback.image = SimpleUploadedFile(
+            'zz_delete_pic.png', b'\x89PNG\r\n\x1a\nfake', content_type='image/png')
+        self.feedback.save(update_fields=['image'])
+        name = self.feedback.image.name
+        self.assertTrue(default_storage.exists(name))
+
+        validated = self._validated()
+        result = ops_actions.execute(validated, user=self.admin, confirmed=True)
+
+        self.assertTrue(result.ok, result.error)
+        self.assertFalse(default_storage.exists(name), '孤儿图片文件会让 media 越积越大')
+
+    # ── ⑤ 端到端：提议 → 确认，反馈在确认之前一直还在 ────────────────────
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=True)
+    def test_end_to_end_propose_then_confirm(self):
+        model = ScriptedModel(script=[
+            AIMessage(content='', tool_calls=[_tool_call(
+                'delete_feedback', {'feedback_id': self.feedback.id})]),
+        ])
+        proposed = run_agent(question=self.question, user=self.admin, model=model)
+
+        self.assertEqual(proposed['degraded'], 'needs_confirmation')
+        self.assertTrue(Feedback.objects.filter(pk=self.feedback.id).exists(),
+                        '提议阶段绝不能删')
+        row = OpsPendingWrite.objects.get(token=proposed['token'])
+        self.assertEqual(row.action, 'delete_feedback')
+        self.assertIn(f'#{self.feedback.id}', proposed['answer'])
+
+        result, reason, finished = pending.confirm(proposed['token'], user=self.admin)
+
+        self.assertTrue(result.ok, (result.error, reason))
+        self.assertFalse(Feedback.objects.filter(pk=self.feedback.id).exists())
+        finished.refresh_from_db()
+        self.assertEqual(finished.status, 'confirmed')
+
+    @override_settings(OPS_IRREVERSIBLE_ENABLED=True)
+    def test_confirm_is_refused_when_the_target_is_gone(self):
+        """提议之后目标被别人删了：确认时必须拒绝，而不是"假装删成功"。"""
+        validated = self._validated()
+        row, error = pending.propose(
+            user=self.admin, validated=validated, question=self.question)
+        self.assertIsNotNone(row, error)
+
+        Feedback.objects.filter(pk=self.feedback.id).delete()
+        result, reason, finished = pending.confirm(row.token, user=self.admin)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(reason, 'invalid')
+        finished.refresh_from_db()
+        self.assertEqual(finished.status, 'failed')

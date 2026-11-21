@@ -19074,7 +19074,9 @@ class OpsAssistantActionRulesTests(SimpleTestCase):
 
     def test_unknown_tool_and_bad_arguments_are_refused(self):
         for name, args, fragment in (
-            ('delete_feedback', {'feedback_id': 12}, '白名单'),
+            ('delete_everything', {'feedback_id': 12}, '白名单'),
+            # 第 426 批：`delete_feedback` 在白名单里，但**当前禁用**（不可逆）
+            ('delete_feedback', {'feedback_id': 12}, '未开启'),
             ('verify_feedback_sample', {'feedback_id': 12, 'verify_status': 'maybe'},
              'verify_status'),
             ('mark_feedback_handled', {'feedback_id': 12, 'status': 'done'}, 'status'),
@@ -19114,10 +19116,21 @@ class OpsAssistantActionRulesTests(SimpleTestCase):
                          '两处的长度上限必须一致，否则"校验通过但服务层截断"')
 
     def test_the_model_can_only_call_whitelisted_tools(self):
-        """模型给的名字必须先过白名单，`ACTIONS` 之外的一律不执行"""
-        self.assertEqual(set(ops_actions.ACTIONS),
-                         {'verify_feedback_sample', 'mark_feedback_handled', 'reply_feedback'})
-        self.assertEqual(len(ops_actions.TOOL_SCHEMAS), 3)
+        """模型给的名字必须先过白名单；且**不可逆动作默认不发给模型**。
+
+        第 426 批：`ACTIONS` 里多了 `delete_feedback`（不可逆）。开关关着时
+        `tool_schemas()` 不该把它交给模型 —— 否则模型会去调一个永远执行不了的动作。
+        """
+        reversible = {'verify_feedback_sample', 'mark_feedback_handled', 'reply_feedback'}
+        self.assertEqual(
+            {name for name, spec in ops_actions.ACTIONS.items()
+             if spec.reversibility == 'reversible'},
+            reversible,
+        )
+        self.assertEqual(
+            {item['function']['name'] for item in ops_actions.tool_schemas()},
+            reversible,
+        )
 
     def test_enums_match_model_choices(self):
         """工具里的枚举是**抄的**（避免模块层 import 模型），所以要比对一次"""
@@ -19126,12 +19139,22 @@ class OpsAssistantActionRulesTests(SimpleTestCase):
         self.assertEqual(set(ops_actions.STATUS_VALUES),
                          {choice[0] for choice in Feedback.STATUS_CHOICES})
 
-    def test_every_action_is_reversible_and_audited(self):
+    def test_every_action_is_declared_and_audited(self):
+        """每个动作都要在审计表里登记，且可逆性必须**显式**声明。
+
+        第 426 批：`ACTIONS` 里第一次出现了不可逆动作（`delete_feedback`），
+        原来这条用例断言"全是可逆的"。现在改成点名核对 ——
+        **谁再偷偷加一个不可逆动作，会在这里红**，而不是悄悄出现在模型可选列表里。
+        """
         declared = {choice[0] for choice in AdminAuditLog.ACTION_CHOICES}
+        irreversible = {'delete_feedback'}
+        self.assertTrue(irreversible <= set(ops_actions.ACTIONS))
         for name, spec in ops_actions.ACTIONS.items():
             with self.subTest(name=name):
-                self.assertEqual(spec.reversibility, 'reversible',
-                                 '本期只开放可逆写；不可逆写要先有二次确认状态机')
+                expected = 'irreversible' if name in irreversible else 'reversible'
+                self.assertEqual(
+                    spec.reversibility, expected,
+                    '可逆动作必须可逆；不可逆动作必须在这条用例里点名（并有二次确认）')
                 self.assertIn(spec.audit_action, declared,
                               f'{spec.audit_action} 没登记到 ACTION_CHOICES，日志会显示原始标识符')
                 schema = spec.schema()
@@ -19355,7 +19378,7 @@ class OpsAssistantActionApiTests(APITestCase):
             data = self._ask(f'把 {self.feedback.id} 号那条反馈标成已核实')
 
         self.assertIn('已执行', data['answer'])
-        self.assertEqual(captured['tools'], ops_actions.TOOL_SCHEMAS,
+        self.assertEqual(captured['tools'], ops_actions.tool_schemas(),
                          '规划调用必须带上写工具的 schema')
         self.feedback.refresh_from_db()
         self.assertEqual(self.feedback.verify_status, 'confirmed')
@@ -19375,9 +19398,15 @@ class OpsAssistantActionApiTests(APITestCase):
         self.assertEqual(self.feedback.status, 'pending')
 
     def test_model_cannot_invent_a_tool_name(self):
+        """模型编一个不存在的工具名 —— 白名单拒绝，一条都不改。
+
+        第 426 批：这个用例原来用的是 `delete_feedback`，它现在是**真实存在**的动作，
+        所以换成一个真正编出来的名字。否则这条用例会在"删除被拒绝"上通过，
+        但它想验证的"名字不在白名单"其实没被验证到。
+        """
         with patch.object(llm, 'enabled', return_value=True), \
                 patch.object(llm, 'chat', new=self._stub_chat([
-                    llm.ToolCall(id='c1', name='delete_feedback',
+                    llm.ToolCall(id='c1', name='delete_everything',
                                  arguments={'feedback_id': self.feedback.id}),
                 ])):
             data = self._ask(f'反馈 #{self.feedback.id} 那条排除掉')
@@ -19902,6 +19931,45 @@ class OpsAssistantApiTests(APITestCase):
         list(first.streaming_content)
         second = client.post(self.stream_url, {'question': '系统健康'}, format='json')
         self.assertEqual(second.status_code, 429)
+
+    # ── 流式 × agent 开关（第 426 批）──────────────────────────────────
+    @override_settings(OPS_AGENT_ENABLED=True)
+    def test_stream_uses_agent_when_switch_is_on(self):
+        """开关打开时，流式也走 agent —— 否则确认入口是死代码。
+
+        页面只用 SSE，而 `pending` / `token` 只有 agent 路径产出。第 425 批把它们
+        只挂在非流式 `ask_with_agent()` 上，于是"确认按钮"永远等不到凭据。
+        """
+        proposal = {
+            'action': 'delete_feedback', 'label': '删除反馈',
+            'target': '反馈 #12 番茄晚疫病', 'changes': ['deleted'],
+            'args': {'feedback_id': 12}, 'token': 'tok-123', 'expires_at': '2026-11-22T00:00:00',
+        }
+        payload = {
+            'answer': '准备执行：**删除反馈**', 'intent': 'agent', 'tools': [],
+            'degraded': True, 'degrade_reason': 'needs_confirmation',
+            'verified': True, 'evidence': [], 'usage': {}, 'latency_ms': 5,
+            'pending': proposal, 'token': 'tok-123',
+        }
+        with patch.object(ops_orchestrator, 'ask_with_agent', return_value=payload):
+            response = self._client(self.admin).post(
+                self.stream_url, {'question': '删掉反馈 #12'}, format='json')
+            events = self._events(response)
+
+        self.assertEqual([name for name, _ in events], ['meta', 'delta', 'done'])
+        self.assertEqual(events[1][1]['text'], payload['answer'])
+        done = events[-1][1]
+        self.assertEqual(done['token'], 'tok-123')
+        self.assertEqual(done['pending']['action'], 'delete_feedback')
+        self.assertEqual(done['degrade_reason'], 'needs_confirmation')
+
+    def test_stream_stays_on_old_path_when_switch_is_off(self):
+        """默认关：老链路照旧，`done` 里 pending 为 None、token 为空串（字段恒定存在）"""
+        response = self._client(self.admin).post(
+            self.stream_url, {'question': '系统健康'}, format='json')
+        done = self._events(response)[-1][1]
+        self.assertIsNone(done['pending'])
+        self.assertEqual(done['token'], '')
 
 
 class OpsAssistantStatsTests(APITestCase):

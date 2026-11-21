@@ -148,10 +148,50 @@ ACTIONS: dict[str, ActionSpec] = {
         },
         required=('feedback_id', 'reply'),
     ),
+    # ── 以下为**不可逆**写（第 426 批）────────────────────────────────────
+    # 只有在 OPS_IRREVERSIBLE_ENABLED 打开时才会发给模型 / 被校验放行，
+    # 且执行前必须经 `pending.confirm()`（`execute(confirmed=True)`）。
+    'delete_feedback': ActionSpec(
+        name='delete_feedback',
+        label='删除反馈',
+        reversibility='irreversible',
+        audit_action='feedback.delete',
+        description=('删除一条反馈**及其图片文件**。'
+                     '**不可逆**：删除后无法恢复，也没有"撤销"。'
+                     '只在管理员明确说要删某一条反馈时使用，编号必须出自管理员原话；'
+                     '执行前系统会向管理员复述目标并要求二次确认。'),
+        properties={
+            'feedback_id': {'type': 'integer', 'description': '反馈 ID（必须出现在管理员原话里）'},
+        },
+        required=('feedback_id',),
+    ),
 }
 
-#: 给 `llm.chat(tools=...)` 用
-TOOL_SCHEMAS: list[dict] = [spec.schema() for spec in ACTIONS.values()]
+def tool_schemas() -> list[dict]:
+    """交给模型的写工具 schema —— **只包含当前启用的**。
+
+    第 426 批从"模块级常量 `TOOL_SCHEMAS`"改成函数：开关是设置项，
+    常量在 import 时就定死了，`override_settings` 与运行期切换都会失真。
+    函数每次按当前设置算，行为才与 `validate()` / `all_schemas()` 一致。
+    """
+    return [spec.schema() for spec in ACTIONS.values() if action_enabled(spec)]
+
+
+def action_enabled(spec: ActionSpec) -> bool:
+    """这条动作现在能不能被模型看到 / 被校验放行。
+
+    ## 为什么要一个"开关"，而不是把不可逆动作直接注册进来
+
+    不可逆写一旦出现在 `tool_schemas()` 里，模型就会去调它。功能没准备好时，
+    它要么被 `validate()` 拒（管理员得到一句"不能用"，但它明明是列出来的），
+    要么真的进了待确认（而前端还没有确认入口，管理员只能拿 curl 完成）。
+
+    **看不见 = 不会走死路**。所以开关关着时，连 schema 都不发给模型。
+    """
+    if spec.reversibility == 'reversible':
+        return True
+    from django.conf import settings
+    return bool(getattr(settings, 'OPS_IRREVERSIBLE_ENABLED', False))
 
 
 @dataclass
@@ -202,6 +242,9 @@ def validate(name: str, args: dict, *, question: str = '') -> tuple[Validated | 
     spec = ACTIONS.get(str(name or '').strip())
     if spec is None:
         return None, f'工具 {name} 不在写操作白名单内，已拒绝执行'
+    if not action_enabled(spec):
+        # 开关关着时连校验都不放行 —— 不只是"不该执行"，而是"这件事不存在"
+        return None, f'{spec.label}是不可逆操作，当前未开启（OPS_IRREVERSIBLE_ENABLED=False）'
     if not isinstance(args, dict):
         return None, f'{name} 的参数不是对象，已拒绝执行'
 
@@ -214,6 +257,7 @@ def validate(name: str, args: dict, *, question: str = '') -> tuple[Validated | 
 
     changes: list[str] = []
     normalized: dict = {'feedback_id': feedback_id}
+    target = ''
 
     if name == 'verify_feedback_sample':
         value = str(args.get('verify_status') or '').strip()
@@ -244,8 +288,16 @@ def validate(name: str, args: dict, *, question: str = '') -> tuple[Validated | 
         normalized['reply'] = reply
         normalized['status'] = value
         changes.extend(['admin_reply', 'status', 'handled_at'])
+    elif name == 'delete_feedback':
+        # 二次确认的复述必须能说清"删哪一条"，所以这里就把目标解析出来。
+        # 顺手把"目标不存在"提前到校验阶段 —— 让管理员在确认之前就知道，
+        # 而不是点了确认才看到"反馈不存在"。
+        target, error = _delete_target(feedback_id)
+        if error:
+            return None, error
+        changes.append('deleted')
 
-    return Validated(spec=spec, args=normalized, changes=changes), ''
+    return Validated(spec=spec, args=normalized, changes=changes, target=target), ''
 
 
 def _snapshot(feedback) -> dict:
@@ -267,6 +319,21 @@ def _target_of(feedback) -> str:
     return f'反馈 #{feedback.id}' + (f' {name}' if name else '')
 
 
+def _delete_target(feedback_id: int) -> tuple[str, str]:
+    """解析"要删哪一条"。返回 `(人读目标, 错误说明)`。
+
+    刻意**不**返回反馈对象：校验阶段不该把 ORM 实例带出去（调用方可能存起来、
+    也可能跨请求用），而且确认阶段会重新查一遍 —— 提议与确认之间目标可能已经变了。
+    """
+    from ...models import Feedback
+
+    feedback = (Feedback.objects.filter(pk=feedback_id)
+                .only('id', 'disease_name').first())
+    if feedback is None:
+        return '', f'反馈 #{feedback_id} 不存在'
+    return _target_of(feedback), ''
+
+
 def _changed(before: dict, after: dict, changes) -> list[str]:
     """这次**真的**改了哪些字段（值本来就一样的字段不算）。
 
@@ -285,17 +352,35 @@ def _changed(before: dict, after: dict, changes) -> list[str]:
     return out
 
 
-def execute(validated: Validated, *, user=None) -> ToolResult:
+def execute(validated: Validated, *, user=None, confirmed: bool = False) -> ToolResult:
     """执行一条已校验的写请求：写库 → 落审计 → 返回结构化结果。
 
     **不抛异常**（与 `tools._tool` 的约定一致）：任何失败都变成 `ok=False`，
     答案里如实说"没改成"，而不是假装成功或整页 500。
+
+    ## `confirmed` 是一道**结构上**的闸门（第 426 批）
+
+    不可逆动作（`reversibility='irreversible'`）只有 `confirmed=True` 才允许执行，
+    而这个参数**只有 `ops/pending.confirm()` 会传** —— 它在此之前已经完成
+    "认领 token → 重新校验"。
+
+    为什么不靠"调用方记得先确认"：`_run_action()` 那条老路径会把模型选中的工具
+    直接交给 `execute()`。加了这个参数之后，**即使模型在只读问答里点了删除，
+    那句代码也执行不了**。安全属性写在最底层，换调用方也绕不过去。
     """
     from ...models import Feedback
     from ...services_feedback import (FeedbackWriteError, apply_reply,
                                       apply_sample_verify)
 
     started = time.time()
+
+    if validated.spec.reversibility != 'reversible' and not confirmed:
+        result = ToolResult(
+            name=validated.name, ok=False,
+            error='这是一条不可逆操作，必须经"待确认 → 二次确认"执行，不能直接调用')
+        result.ms = int((time.time() - started) * 1000)
+        return result
+
     name = validated.name
     feedback_id = int(validated.args['feedback_id'])
     result = ToolResult(name=name, ok=False)
@@ -306,6 +391,10 @@ def execute(validated: Validated, *, user=None) -> ToolResult:
         return result
 
     before = _snapshot(feedback)
+    if name == 'delete_feedback':
+        # 删除不写 Feedback 的字段，走单独一条路径（删完就没法 refresh 了）
+        return _execute_delete(validated, feedback, before, user=user, started=started)
+
     try:
         if name == 'verify_feedback_sample':
             apply_sample_verify(feedback, validated.args['verify_status'])
@@ -351,6 +440,73 @@ def execute(validated: Validated, *, user=None) -> ToolResult:
             f'目标：{target}',
             f'处理状态：{before["status"]} → {after["status"]}',
             f'样本状态：{before["verify_status"]} → {after["verify_status"]}',
+        ],
+    }]
+    result.ms = int((time.time() - started) * 1000)
+    return result
+
+
+def _execute_delete(validated: Validated, feedback, before: dict, *, user,
+                    started: float) -> ToolResult:
+    """真的删掉一条反馈（含图片文件）。**调用前必须已 `confirmed=True`。**
+
+    与 `views.py` 的批量删除保持同一口径：先记下图片名，删记录，再删文件——
+    反过来做的话，删文件成功、删记录失败会留下一条"没有图的反馈"，
+    而那条记录从此再也点不开图，也说不清原因。
+
+    文件删失败**不让整次操作失败**：记录已经没了，报错只会让管理员以为没删掉、
+    于是一遍遍重试（重试会把已经不存在的东西再删一次）。
+    """
+    target = _target_of(feedback)
+    feedback_id = feedback.id
+    image_name = feedback.image.name if feedback.image else ''
+    result = ToolResult(name=validated.name, ok=False)
+
+    try:
+        feedback.delete()
+    except Exception as exc:  # noqa: BLE001 —— 删除失败也要如实回报，不能 500
+        logger.exception('系统助手删除反馈失败 feedback=%s', feedback_id)
+        result.error = redact.text(str(exc) or type(exc).__name__)
+        result.ms = int((time.time() - started) * 1000)
+        return result
+
+    if image_name:
+        try:
+            from django.core.files.storage import default_storage
+            if default_storage.exists(image_name):
+                default_storage.delete(image_name)
+        except Exception:  # noqa: BLE001 —— 记录已删掉，孤儿文件不该让操作变成失败
+            logger.warning('反馈已删除，但图片文件清理失败 name=%s', image_name)
+
+    log_admin_action(
+        user, validated.spec.audit_action,
+        target_type='feedback', target_id=str(feedback_id),
+        target_repr=target[:200],
+        detail=(f'系统助手确认后删除：处理状态 {before["status"]}；'
+                f'图片{"已删除" if image_name else "无"}'),
+    )
+
+    result.ok = True
+    result.data = {
+        'action': validated.name,
+        'label': validated.spec.label,
+        'target': target,
+        'feedback_id': feedback_id,
+        'before': before,
+        'after': {'deleted': True},
+        'changed': ['deleted'],
+        'reversibility': validated.spec.reversibility,
+        'audited': True,
+        'audit_action': validated.spec.audit_action,
+        'note': '本条操作已写入管理操作日志（action=%s）' % validated.spec.audit_action,
+    }
+    result.evidence = [{
+        'title': validated.spec.label,
+        'source': f'{validated.spec.audit_action} · Feedback#{feedback_id}',
+        'lines': [
+            f'目标：{target}',
+            f'删除前处理状态：{before["status"]}',
+            f'图片文件：{"已一并删除" if image_name else "无"}',
         ],
     }]
     result.ms = int((time.time() - started) * 1000)

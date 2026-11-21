@@ -187,7 +187,10 @@ def confirm(token: str, *, user) -> tuple[ToolResult, str, 'OpsPendingWrite | No
 
     try:
         with transaction.atomic():
-            result = actions.execute(validated, user=user)
+            # `confirmed=True` 是**唯一**的放行方式：它证明这条不可逆操作
+            # 已经过"认领 token → 重新校验"。别处（尤其老的关键词路径）调
+            # `execute()` 时拿不到这个参数，所以结构上绕不过二次确认。
+            result = actions.execute(validated, user=user, confirmed=True)
     except Exception as exc:  # noqa: BLE001 —— 执行失败必须落终态，不能留一条"已确认"的假记录
         _finish(row, 'failed')
         logger.exception('确认后执行失败 action=%s pk=%s', row.action, row.pk)

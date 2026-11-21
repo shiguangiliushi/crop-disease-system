@@ -993,6 +993,19 @@ if _IS_TESTING:
 # ⚠️ 只影响 `/admin/assistant/ops/ask/`；SSE 流式那条仍走 `orchestrator.ask_stream()`。
 OPS_AGENT_ENABLED = _env_bool('OPS_AGENT_ENABLED', False)
 
+# 第 426 批：系统助手是否可以执行**不可逆**写（删除一条反馈，含图片）。
+#
+# 默认 **False**，而且是双保险：
+#   1. 关闭时 `delete_feedback` 的动作 schema **不发给模型**，`validate()` 也拒绝 ——
+#      模型看不到、调不动，不存在"提议了却永远执行不了"的死路；
+#   2. 即使打开，`actions.execute()` 对不可逆动作还要求 `confirmed=True`，
+#      而这个参数只有 `ops/pending.confirm()` 会传 —— 也就是说
+#      **绕过"待确认 → 二次确认"那条路在代码结构上不存在**。
+#
+# 打开前请确认：`/admin/assistant/ops/confirm/` 的前端入口已经可用，
+# 否则管理员会收到一个只能靠 curl 完成的确认请求。
+OPS_IRREVERSIBLE_ENABLED = _env_bool('OPS_IRREVERSIBLE_ENABLED', False)
+
 # ----------------------------------------------------------------------------
 # 第 424 批：LangGraph 的遥测必须显式关掉
 #

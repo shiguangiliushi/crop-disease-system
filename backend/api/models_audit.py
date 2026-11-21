@@ -77,6 +77,10 @@ class AdminAuditLog(models.Model):
         ('feedback.verify_sample', '确认/排除训练样本'),
         ('feedback.status', '流转反馈状态'),
         ('feedback.reply', '回复反馈'),
+        # 第 426 批：系统助手的**不可逆**写（删除一条反馈）用它。
+        # 与 `feedback.bulk_delete` 分开：一个是一条、一个是批量，
+        # 混用会让审计里看不出"到底动了多少条"。
+        ('feedback.delete', '删除反馈'),
     )
 
     actor = models.ForeignKey(

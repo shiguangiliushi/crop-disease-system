@@ -174,7 +174,7 @@ def _run_action(*, user, question: str, history=None, lang: str = 'zh'):
     if _model_may_plan(question):
         messages = prompts.build_action_messages(question=question, history=history, lang=lang)
         try:
-            chat = llm.chat(messages, tools=action_tools.TOOL_SCHEMAS,
+            chat = llm.chat(messages, tools=action_tools.tool_schemas(),
                             temperature=0, max_tokens=300, timeout=15)
         except LLMError as exc:
             logger.warning('写操作规划调用失败：%s', exc)
@@ -550,6 +550,10 @@ def _done(payload: dict) -> dict:
         'evidence': payload.get('evidence') or [],
         'usage': payload.get('usage') or {},
         'latency_ms': payload.get('latency_ms') or 0,
+        #: 第 426 批：不可逆写的提议（`pending` 非空 + 一次性 `token`）。
+        #: 没有提议时是 `None` / `''` —— 字段恒定存在，前端不用判断"有没有这个键"。
+        'pending': payload.get('pending') or None,
+        'token': payload.get('token') or '',
     }
 
 
@@ -562,7 +566,21 @@ def ask_stream(*, user, question: str, history=None, lang: str = 'zh'):
 
     降级时**不装成流式**：一次 delta 把整段确定性答案发完。假装逐字吐字只会让人以为
     模型在思考，实际是模板。
+
+    ## 第 426 批：打开 agent 开关时，流式也必须走 agent
+
+    否则**确认入口是死代码**：页面只用 SSE，而 agent 路径（唯一会产出
+    `pending` / `token` 的那条）原先只挂在非流式 `ask_with_agent()` 上。
+    agent 一次返回完整答案，所以这里只发一个 `delta` 再发 `done` ——
+    与"降级时不装成流式"是同一条理由：没有真正的逐字生成，就不该假装有。
     """
+    if getattr(settings, 'OPS_AGENT_ENABLED', False):
+        payload = ask_with_agent(user=user, question=question, history=history, lang=lang)
+        yield _sse('meta', _meta(payload))
+        yield _sse('delta', {'text': payload.get('answer') or ''})
+        yield _sse('done', _done(payload))
+        return
+
     started = time.time()
 
     early, intents, results = _prepare(user=user, question=question, started=started,
