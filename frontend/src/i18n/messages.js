@@ -23,10 +23,13 @@ export const zhCN = {
   // 与农户端的 `assistant.*` 是两套文案：那边是病害问答，这边是运维问答。
   opsAssistant: {
     title: '系统助手',
-    subtitle: '问系统现在什么状态、该跑哪条命令。它读的是实时状态，不是文档里的说法。',
-    readonlyNote:
-      '这个助手只有读权限：能查健康检查、快照、操作日志、运行数据和 docs，不能停用账号、删内容或改配置；它建议的命令也只会落在只读白名单内。',
-    placeholder: '例如：系统健康现在有几项红？备份为什么过期了？这周谁删了帖子？（Ctrl+Enter 发送）',
+    subtitle: '问系统现在什么状态、该跑哪条命令；也可以让我改一条反馈（可逆操作，会留审计）。',
+    // 第 423 批：原来这里写的是"只有读权限"，助手已经能执行**可逆**写，文案必须跟着改 ——
+    // 页面上声明错了边界，比没有声明更糟（用的人会以为"它不会动数据"）。
+    permissionNote:
+      '能查健康检查、快照、操作日志、运行数据和 docs；也能执行可逆写：把反馈 #123 标为已处理、确认或排除训练样本、回复反馈。不可逆动作（删记录、清空历史）不做，它建议的命令也只会落在只读白名单内；每次写都会记进「操作日志」。',
+    placeholder:
+      '例如：系统健康现在有几项红？这周谁删了帖子？也可以说：把反馈 #123 标为已处理 / 回复 #123：已修复，请升级。（Ctrl+Enter 发送）',
     ask: '提问',
     clear: '清空对话',
     examplesLabel: '试试：',
@@ -3515,10 +3518,14 @@ export const en = {
   // disease questions, this one answers "what is the system doing right now".
   opsAssistant: {
     title: 'System assistant',
-    subtitle: 'Ask what the system looks like right now and which command to run. It reads live state, not what the docs claim.',
-    readonlyNote:
-      'This assistant is read-only: it can read health checks, snapshots, audit logs, runtime data and the docs, but cannot suspend accounts, delete content or change settings. The commands it suggests are limited to a read-only whitelist.',
-    placeholder: 'e.g. Which health checks are failing? Why is the backup stale? Who deleted posts this week? (Ctrl+Enter to send)',
+    subtitle: 'Ask what the system looks like right now and which command to run; you can also have it change one feedback record (reversible, always audited).',
+    // Batch 423: this used to say "read-only". The assistant can now perform
+    // *reversible* writes, so the note has to match — a wrong boundary stated on
+    // the page is worse than no boundary at all.
+    permissionNote:
+      'It can read health checks, snapshots, audit logs, runtime data and the docs, and it can perform reversible writes: mark feedback #123 as handled, confirm or reject a training sample, reply to feedback. Irreversible actions (deleting records, purging history) are not available, and the commands it suggests stay inside the read-only whitelist. Every write is recorded in the audit log.',
+    placeholder:
+      'e.g. Which health checks are failing? Who deleted posts this week? You can also say: mark feedback #123 as handled / reply to #123: fixed, please upgrade. (Ctrl+Enter to send)',
     ask: 'Ask',
     clear: 'Clear',
     examplesLabel: 'Try:',
