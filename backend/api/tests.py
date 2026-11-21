@@ -19972,6 +19972,60 @@ class OpsAssistantApiTests(APITestCase):
         self.assertEqual(done['token'], '')
 
 
+class OpsAssistantAgentGuardTests(TestCase):
+    """agent 路径的三道"别把页面拖垮"（第 427 批）
+
+    三条都是真机上会发生的：
+
+      · 开关打开、环境却没装 `langgraph` → 原来 `ImportError` 冒到视图层就是 **500**；
+      · gunicorn 只有 2 个 sync worker（每个各带一份 YOLO），两个管理员同时问 agent
+        就能把 worker 全占住 → 现在同一时刻只跑一个，第二个立刻回一句话把 worker 还回去；
+      · 图自己崩了（状态机/序列化 bug）→ 降级答案，不抛给视图层。
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    def _ask(self):
+        return ops_orchestrator.ask_with_agent(user=None, question='系统健康')
+
+    def test_missing_agent_dependency_falls_back_to_ask(self):
+        fallback = {'answer': '退回意图路由', 'intent': 'health', 'tools': [],
+                    'degraded': False, 'degrade_reason': '', 'verified': True,
+                    'evidence': [], 'usage': {}, 'latency_ms': 1}
+        with patch.object(ops_orchestrator, 'ask', return_value=fallback) as old_path, \
+                patch.dict('sys.modules', {'api.assistant.agent': None,
+                                          'api.assistant.agent.runner': None}):
+            data = self._ask()
+        self.assertEqual(data['answer'], '退回意图路由')
+        old_path.assert_called_once()
+
+    def test_second_concurrent_agent_question_is_told_to_wait(self):
+        cache.set(ops_orchestrator.AGENT_LOCK_KEY, 1, 60)
+        try:
+            data = self._ask()
+        finally:
+            cache.delete(ops_orchestrator.AGENT_LOCK_KEY)
+        self.assertEqual(data['degrade_reason'], 'agent_busy')
+        self.assertIn('还在跑', data['answer'])
+
+    def test_agent_slot_is_released_after_a_run(self):
+        outcome = {'answer': 'ok', 'degraded': '', 'results': [], 'pending': None, 'token': ''}
+        with patch('api.assistant.agent.runner.run_agent', return_value=outcome):
+            first = self._ask()
+            second = self._ask()
+        self.assertNotEqual(first.get('degrade_reason'), 'agent_busy')
+        self.assertNotEqual(second.get('degrade_reason'), 'agent_busy')
+
+    def test_agent_crash_degrades_and_releases_the_slot(self):
+        with patch('api.assistant.agent.runner.run_agent', side_effect=RuntimeError('boom')):
+            data = self._ask()
+        self.assertTrue(data['degraded'])
+        self.assertEqual(data['degrade_reason'], 'agent_error')
+        # 锁必须释放：否则后面所有 agent 问答都会被判成"上一次还在跑"
+        self.assertIsNone(cache.get(ops_orchestrator.AGENT_LOCK_KEY))
+
+
 class OpsAssistantStatsTests(APITestCase):
     """系统助手质量看板（E）
 
@@ -20053,6 +20107,28 @@ class OpsAssistantStatsTests(APITestCase):
         self.assertEqual(intents['health']['degraded'], 2)
         self.assertEqual(intents['health']['unverified'], 2)
         self.assertEqual(intents['howto']['count'], 1)
+
+    def test_pending_confirmation_is_not_counted_as_degraded(self):
+        """第 427 批：等管理员点确认**不是"答得差"**，不能推高降级率。
+
+        这条曲线的用途是找模型/提示词的问题。把 `needs_confirmation` 算进去，
+        等于让"AI 问你确认了几次"看起来像"助手最近答得不好"。
+        """
+        self._turn(intent='agent', degraded=True, degrade_reason='needs_confirmation',
+                   latency_ms=9000)
+        self._turn(degraded=True, degrade_reason='llm_disabled', verified=False, latency_ms=0)
+
+        data = self._client(self.admin).get(self.url).data
+        payload = data['totals']
+        self.assertEqual(payload['turns'], 2)
+        self.assertEqual(payload['pending_confirmations'], 1)
+        self.assertEqual(payload['degraded'], 1, '只算真降级的那一条')
+        self.assertEqual([row['reason'] for row in data['by_reason']], ['llm_disabled'])
+        # 待确认那一轮真的跑了模型：它属于有效延迟样本（不能像模板那样被排除）
+        self.assertEqual(payload['avg_latency_ms'], 9000)
+        intents = {row['intent']: row for row in data['by_intent']}
+        self.assertEqual(intents['agent']['degraded'], 0)
+        self.assertEqual(intents['agent']['count'], 1)
 
     def test_tool_failures_are_counted_from_json(self):
         self._turn(tool_calls=[

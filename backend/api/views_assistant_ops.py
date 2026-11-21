@@ -54,6 +54,11 @@ DEFAULT_DAYS = 7
 #: 工具失败榜最多扫多少条问答（`tool_calls` 是 JSON，只能在 Python 里数）
 TOOL_SCAN_LIMIT = 500
 
+#: 这些 `degrade_reason` **不是"答得差"**，而是"等人点确认"（第 426 批）。
+#: 必须从降级统计里排除，否则"降级率"衡量的就成了"AI 问你确认了几次" ——
+#: 而这条曲线的用途是找**模型 / 提示词**的问题，不是数确认弹窗。
+WAITING_REASONS = frozenset({'needs_confirmation'})
+
 #: 请求体上限（字符）。`guard` 自己还有 500 字的上限（那里是"降级回答"，
 #: 这里是"根本不是一次合法请求"，两件事分开）。
 MAX_BODY_CHARS = 2000
@@ -370,12 +375,17 @@ class OpsAssistantStatsView(APIView):
         turns = OpsAssistantTurn.objects.filter(created_at__gte=since)
 
         total = turns.count()
-        degraded = turns.filter(degraded=True).count()
+        # "等人确认"既不是降级、也不是"没调模型的模板"：那一轮真的跑了模型，
+        # 答案也是准确的（只是在等管理员点确认）。所以三个口径分开算：
+        waiting = turns.filter(degrade_reason__in=WAITING_REASONS).count()
+        answered = turns.exclude(degrade_reason__in=WAITING_REASONS)
+        degraded = answered.filter(degraded=True).count()
         unverified = turns.filter(verified=False).count()
-        # 只统计**没降级**的那些：降级答案是模板拼的（毫秒级），混进来会把延迟说低 ——
-        # 而"延迟多少"正是判断要不要继续投入流式的依据。
-        avg_latency = turns.filter(degraded=False).aggregate(
-            value=Avg('latency_ms'))['value'] or 0
+        # 平均延迟：排除降级（模板拼的，毫秒级，混进来会把延迟说低），
+        # 但**包含待确认**（它是一次真实的模型往返，属于有效样本）。
+        avg_latency = turns.filter(
+            Q(degraded=False) | Q(degrade_reason__in=WAITING_REASONS)
+        ).aggregate(value=Avg('latency_ms'))['value'] or 0
 
         # 原因标签按界面语言取：原始码（`llm_disabled`）不该直接露给管理员，
         # 与操作日志"action 必须有中文标签"是同一条约定。
@@ -390,7 +400,7 @@ class OpsAssistantStatsView(APIView):
                 'label': reason_labels.get(row['degrade_reason'] or '', row['degrade_reason'] or '未知'),
                 'count': row['n'],
             }
-            for row in turns.filter(degraded=True)
+            for row in answered.filter(degraded=True)
             .values('degrade_reason').annotate(n=Count('id')).order_by('-n')
         ]
 
@@ -405,7 +415,8 @@ class OpsAssistantStatsView(APIView):
             # 中间夹进新写入的问答导致对不上 —— 这个仓库最贵的 bug 类型就是数字对不上。
             for row in turns.values('intent').annotate(
                 n=Count('id'),
-                degraded_n=Count('id', filter=Q(degraded=True)),
+                # 待确认不算降级（与 totals 同口径），否则 agent 意图的"降级"会虚高
+                degraded_n=Count('id', filter=Q(degraded=True) & ~Q(degrade_reason__in=WAITING_REASONS)),
                 unverified_n=Count('id', filter=Q(verified=False)),
             ).order_by('-n')[:8]
         ]
@@ -431,6 +442,8 @@ class OpsAssistantStatsView(APIView):
                 'degraded_rate': round(degraded / total, 4) if total else None,
                 'unverified': unverified,
                 'unverified_rate': round(unverified / total, 4) if total else None,
+                #: 等管理员点确认的问答（第 426 批）。**不计入 degraded**，见 `WAITING_REASONS`
+                'pending_confirmations': waiting,
                 'avg_latency_ms': int(avg_latency),
                 'tokens': _token_totals(turns),
             },

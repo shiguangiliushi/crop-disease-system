@@ -34,6 +34,7 @@ import time
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 
 from ...models_assistant_ops import OpsAssistantTurn
@@ -310,6 +311,44 @@ def _respond(*, user, question: str, answer: str, intents: list[str],
 #: 统计里能直接看出"这条是图编排答的"，不用靠猜。
 AGENT_INTENT = 'agent'
 
+#: 同一时刻只允许一次 agent 问答（第 427 批）。
+#:
+#: ## 为什么需要它
+#:
+#: gunicorn 是 `sync` worker、默认 2 个（`gunicorn.conf.py` 头部写了为什么不能调大：
+#: 每个 worker 各加载一份 YOLO，常驻约 700MB）。而 agent 一次问答会**占住一个 worker**
+#: 好几秒（最多 4 步模型往返），流式那条也是一样。两个管理员同时问 agent，
+#: 2 个 worker 就全被占满 → 识别与页面请求一起排队。
+#:
+#: 所以不是"加 worker"（那要吃掉 1.4GB 内存），而是**把 agent 的并发限到 1**，
+#: 第二个请求立刻拿到一句"上一次还在跑"，worker 随即释放。
+#:
+#: ⚠️ 锁在 Django cache 里：生产用 Redis 才是**跨进程**的；LocMemCache 是进程内，
+#: 2 个 worker 各有一把锁（等于没限）。这正是 `check_env` / `/health/` 一直在
+#: 警告"生产别用 LocMemCache"的原因之一。
+AGENT_LOCK_KEY = 'ops:agent:running'
+#: 锁的存活时间。**必须比一次 agent 的最长占用长**（gunicorn timeout 120s，
+#: agent 最多 `MAX_STEPS=4` 步往返）；worker 被 kill 时靠它自动释放，
+#: 否则助手会永久显示"上一次还在跑"。
+AGENT_LOCK_TTL = 90
+
+
+def _agent_slot():
+    """试占一次 agent 并发额度。返回 `True` 表示抢到了（调用方负责释放）。"""
+    try:
+        acquired = cache.add(AGENT_LOCK_KEY, 1, AGENT_LOCK_TTL)
+    except Exception:  # noqa: BLE001 —— 缓存挂了不该让问答失败，宁可放行
+        logger.warning('agent 并发锁读写失败，本次放行', exc_info=True)
+        return True
+    return bool(acquired)
+
+
+def _release_agent_slot() -> None:
+    try:
+        cache.delete(AGENT_LOCK_KEY)
+    except Exception:  # noqa: BLE001
+        logger.warning('agent 并发锁释放失败（靠 TTL 自动过期）', exc_info=True)
+
 
 def ask_with_agent(*, user, question: str, history=None, lang: str = 'zh') -> dict:
     """走 agent 层（LangGraph）的问答入口（第 425 批）—— 由开关决定是否启用。
@@ -323,8 +362,14 @@ def ask_with_agent(*, user, question: str, history=None, lang: str = 'zh') -> di
     ## 为什么延迟导入 `run_agent`
 
     `agent/` 依赖 `ops/`（工具注册表、校验、确定性答案）。在模块顶层导入会成环。
-    延迟导入还有一个好处：**没装 langgraph 的环境仍能 import 本模块**，
-    只是这条路径在调用时才报错 —— 这也让"不启用 agent"的部署不需要多一个依赖。
+    延迟导入还有一个好处：**没装 langgraph 的环境仍能 import 本模块**。
+
+    ## 依赖缺失时**退回老路径**（第 427 批）
+
+    原来延迟导入的代价是：开关打开、环境却没装 `langgraph` 时，`ImportError`
+    会一路冒到视图层变成 **500**。那是最糟的一种失败 —— 管理员点一下就看到服务器错误，
+    而且"把开关关掉"这件事在界面上看不出来。现在改成 `logger.error` + 退回 `ask()`：
+    行为退化成 v1（意图路由），至少还能用。
 
     ## 与 `ask()` 的差别
 
@@ -332,7 +377,13 @@ def ask_with_agent(*, user, question: str, history=None, lang: str = 'zh') -> di
     两者共用闸门、限流、落库与返回体结构，所以**前端不需要改**：
     多出来的只有 `pending` / `token` 两个字段（只在不可逆写提议时出现）。
     """
-    from ..agent.runner import run_agent  # 延迟导入，见上面的说明
+    try:
+        from ..agent.runner import run_agent  # 延迟导入，见上面的说明
+    except ImportError:
+        # 依赖没装（或版本不对）：这是配置问题，不是这次提问的问题 ——
+        # 记 error 让运维找得到，同时退回老路径，别让管理员看到 500。
+        logger.error('agent 层不可用（多半是没装 langgraph），本次退回意图路由', exc_info=True)
+        return ask(user=user, question=question, history=history, lang=lang)
 
     started = time.time()
 
@@ -353,7 +404,33 @@ def ask_with_agent(*, user, question: str, history=None, lang: str = 'zh') -> di
             verified=True, started=started, persist=False,
         )
 
-    outcome = run_agent(question=question, user=user, lang=lang)
+    # 第 427 批：同一时刻只跑一次 agent（见 AGENT_LOCK_KEY 的说明）。
+    # 抢不到就**立刻**回一句，不排队 —— 排队等于继续占着这个 worker，
+    # 而这条限制的目的正是"尽快把 worker 还回去"。
+    if not _agent_slot():
+        words = prompts.GUARD_TEXT.get(lang) or prompts.GUARD_TEXT['zh']
+        return _respond(
+            user=user, question=question,
+            answer=words['agent_busy'],
+            intents=[AGENT_INTENT], results=[], degraded=True, reason='agent_busy',
+            verified=True, started=started,
+        )
+
+    try:
+        outcome = run_agent(question=question, user=user, lang=lang)
+    except LLMError as exc:
+        # runner 里已经兜过一次（它把 LLMError 转成 degraded 文案）。这里再兜一次，
+        # 是因为"图在模型调用之外崩了"（状态机、序列化）同样不该变成 500。
+        logger.warning('agent 调用模型失败：%s', exc)
+        return _degrade(user=user, question=question, intents=[AGENT_INTENT], results=[],
+                        reason='llm_error', started=started, lang=lang)
+    except Exception:  # noqa: BLE001 —— 助手是旁路，不能反向拖垮页面
+        logger.exception('agent 执行异常，本次降级')
+        return _degrade(user=user, question=question, intents=[AGENT_INTENT], results=[],
+                        reason='agent_error', started=started, lang=lang)
+    finally:
+        _release_agent_slot()
+
     results = [tools.ToolResult(**item) for item in (outcome.get('results') or [])]
     reason = str(outcome.get('degraded') or '')
 

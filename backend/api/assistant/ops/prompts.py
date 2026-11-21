@@ -243,6 +243,8 @@ REASON_TEXT = {
     'tool_failed': '工具执行失败',
     'action_failed': '写操作没有执行（参数不合法或目标不存在）',
     'needs_confirmation': '这是一条不可逆操作，需要你确认后才执行（还没有改任何数据）',
+    'agent_busy': '上一次 agent 问答还在跑',
+    'agent_error': '智能编排执行失败（已降级）',
     'no_intent': '没有识别出要查什么',
     'empty': '工具没有返回数据',
     'sensitive': '问题命中敏感词',
@@ -258,6 +260,8 @@ REASON_TEXT_EN = {
     'tool_failed': 'tool execution failed',
     'action_failed': 'the write action did not run (invalid arguments or missing target)',
     'needs_confirmation': 'this is an irreversible action and waits for your confirmation (nothing has been changed yet)',
+    'agent_busy': 'the previous agent question is still running',
+    'agent_error': 'the agent run failed (degraded)',
     'no_intent': 'could not tell what you want to look up',
     'empty': 'the tool returned no data',
     'sensitive': 'the question contains blocked words',
@@ -329,6 +333,7 @@ GUARD_TEXT = {
         'other': '这个问题无法处理。',
         'rate_limited': '请求过于频繁（每分钟上限 {limit} 次），请稍后再问。',
         'no_intent': '这个问题不在我能查的范围内。\n\n',
+        'agent_busy': '上一次问答还在跑（同一时刻只跑一个 agent 问答），请等几秒再问一次。',
     },
     'en': {
         'empty': 'Tell me what to look up first.\n\n',
@@ -337,6 +342,7 @@ GUARD_TEXT = {
         'other': 'This question cannot be processed.',
         'rate_limited': 'Too many requests (limit {limit} per minute). Please try again shortly.',
         'no_intent': 'This question is outside what I can look up.\n\n',
+        'agent_busy': 'The previous question is still running (only one agent question at a time). Please try again in a few seconds.',
     },
 }
 
