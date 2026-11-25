@@ -41,6 +41,7 @@ from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .assistant.ops import actions as action_specs
 from .assistant.ops import orchestrator, pending, prompts
 from .assistant.prompts import normalize_lang
 from .capabilities import is_full_admin
@@ -204,6 +205,66 @@ class OpsAssistantAskStreamView(APIView):
 
 #: 确认接口接受的"取消"说法。与 `ops/pending.CONFIRM_WORDS` 同理：只认词表，不解析模型输出。
 CANCEL_WORDS = frozenset({'cancel', 'cancelled', 'no', 'n', '取消', '放弃', '算了'})
+
+
+class OpsAssistantPendingView(APIView):
+    """列出**我自己**还开着的待确认写操作（第 428 批）。
+
+    ## 为什么需要它
+
+    第 426 批把确认按钮做进了"提议它的那条对话"里。但那段对话只在 `store` 里 ——
+    **刷新页面就没了**，token 也跟着没；管理员只能等它过期（10 分钟）再重新问一遍。
+    数据库里那条 `OpsPendingWrite` 一直好好的，只是没有任何界面在读它。
+
+    这个接口就是那个读口子：刷新后还能看见"有一条删反馈卡在待确认"，
+    并就地确认或取消。
+
+    ## 两条口径
+
+    · **只回自己的**（`pending.open_rows(user=...)`）。`consume()` 只认提议人，
+      列出别人的 token 没有意义，反而是不该给的越权信息；
+    · **已过期的不回**（`open_rows()` 内部会先 `mark_expired()`）：
+      列表里放一条点了必然失败的记录，只会让人以为界面坏了。
+
+    响应里的 `token` 是**给本人页面用的凭据**（与对话里拿到的是同一个），
+    不落日志、不出现在的审计文案里。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary='待确认的写操作（管理端）',
+        description='仅全权管理员。只返回当前用户、未过期、状态为 pending 的记录。',
+        responses={200: OpenApiTypes.OBJECT, 403: OpenApiResponse(description='非全权管理员')},
+    )
+    def get(self, request):
+        """按过期时间正序列出（最快过期的排前面 —— 那是最该先处理的）。"""
+        if not is_full_admin(request.user):
+            return Response({'detail': '只有管理员可以查看待确认操作'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        rows = []
+        for row in pending.open_rows(user=request.user).order_by('expires_at', 'id'):
+            spec = action_specs.ACTIONS.get(row.action)
+            seconds_left = int((row.expires_at - now).total_seconds())
+            rows.append({
+                #: 凭据（一次性）。页面拿它去 `/confirm/`，不接受自然语言
+                'token': row.token,
+                'action': row.action,
+                #: 人读动作名：一律以注册表为准（库里存的是名字，改名后列表也得跟着变）
+                'label': spec.label if spec else row.action,
+                #: 不可逆与否由注册表决定；未知动作（注册表里已删）按不可逆显示 —— 宁可更吓人
+                'reversibility': spec.reversibility if spec else 'irreversible',
+                'target': row.target,
+                'changes': list(row.changes or []),
+                'question': (row.question or '')[:120],
+                'created_at': row.created_at.isoformat(),
+                'expires_at': row.expires_at.isoformat(),
+                'seconds_left': max(0, seconds_left),
+            })
+        return Response({'rows': rows, 'count': len(rows)})
+
 
 _CONFIRM_BODY = inline_serializer(
     name='OpsAssistantConfirmRequest',

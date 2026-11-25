@@ -82,7 +82,7 @@ from .assistant import context, guard, llm, prompts, retriever  # prompts：第 
 from .assistant import orchestrator  # 第 212 批：单来源折叠用例要直接调它的纯函数
 from . import views_assistant  # MAX_BODY_CHARS 常量在用例里要用
 # 系统助手（管理端运维侧）：只读工具 + 写工具 + 编排，各自可单独测
-from .models_assistant_ops import OpsAssistantTurn
+from .models_assistant_ops import OpsAssistantTurn, OpsPendingWrite
 from .assistant.ops import actions as ops_actions  # 第 423 批：可逆写工具
 from .assistant.ops import intent as ops_intent
 from .assistant.ops import orchestrator as ops_orchestrator
@@ -19970,6 +19970,96 @@ class OpsAssistantApiTests(APITestCase):
         done = self._events(response)[-1][1]
         self.assertIsNone(done['pending'])
         self.assertEqual(done['token'], '')
+
+
+class OpsAssistantPendingApiTests(APITestCase):
+    """待确认队列（第 428 批）—— 刷新页面后把队列找回来
+
+    第 426 批把确认按钮做进了"提议它的那条对话"，而对话只在 store 里：
+    **刷新就没了**，token 也没了，管理员只能等 10 分钟过期重问。
+    `OpsPendingWrite` 一直好好的，缺的是一个读它的口子。
+
+    四条口径各一条用例：只回自己的 / 过期的不回（并且真的落 expired）/
+    字段以**注册表**为准 / 最快过期的排前面。
+    """
+
+    url = '/api/admin/assistant/ops/pending/'
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            username='zz_ops_pending_admin', password='pw12345678', is_staff=True)
+        self.other = User.objects.create_user(
+            username='zz_ops_pending_other', password='pw12345678', is_staff=True)
+        self.editor = User.objects.create_user(
+            username='zz_ops_pending_editor', password='pw12345678', role='EDITOR')
+        self.plain = User.objects.create_user(
+            username='zz_ops_pending_plain', password='pw12345678')
+
+    def _client(self, user):
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        return client
+
+    def _row(self, user=None, *, action='delete_feedback', expires_in=600, **kwargs):
+        from django.utils import timezone as dj_timezone
+
+        return OpsPendingWrite.objects.create(
+            token=uuid.uuid4().hex, action=action, args={'feedback_id': 12},
+            target=kwargs.pop('target', '反馈 #12 番茄晚疫病'),
+            changes=kwargs.pop('changes', ['deleted']),
+            user=user or self.admin, question='删掉反馈 #12',
+            expires_at=dj_timezone.now() + timedelta(seconds=expires_in),
+            **kwargs,
+        )
+
+    def test_only_full_admin_may_list(self):
+        self.assertEqual(self._client(self.editor).get(self.url).status_code, 403)
+        self.assertEqual(self._client(self.plain).get(self.url).status_code, 403)
+        self.assertIn(APIClient().get(self.url).status_code, (401, 403))
+        self.assertEqual(self._client(self.admin).get(self.url).status_code, 200)
+
+    def test_only_my_own_open_rows_are_returned(self):
+        mine = self._row()
+        self._row(user=self.other, target='别人的反馈 #9')
+
+        data = self._client(self.admin).get(self.url).data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual([row['token'] for row in data['rows']], [mine.token])
+
+    def test_expired_rows_are_hidden_and_marked_expired(self):
+        self._row(expires_in=-5)          # 已经过期
+        fresh = self._row(expires_in=300)
+
+        data = self._client(self.admin).get(self.url).data
+        self.assertEqual([row['token'] for row in data['rows']], [fresh.token])
+        self.assertEqual(
+            OpsPendingWrite.objects.filter(status='expired').count(), 1,
+            '过期的不但要隐藏，状态也要落下来 —— 否则确认接口会把它当成 pending')
+
+    def test_fields_come_from_the_registry_and_time_counts_down(self):
+        self._row()
+
+        row = self._client(self.admin).get(self.url).data['rows'][0]
+        # 标签以注册表为准（库里存的是名字），改名后列表跟着变
+        self.assertEqual(row['action'], 'delete_feedback')
+        self.assertEqual(row['label'], ops_actions.ACTIONS['delete_feedback'].label)
+        self.assertEqual(row['reversibility'], 'irreversible')
+        self.assertEqual(row['target'], '反馈 #12 番茄晚疫病')
+        self.assertEqual(row['changes'], ['deleted'])
+        self.assertGreater(row['seconds_left'], 0)
+        self.assertLessEqual(row['seconds_left'], 600)
+        # 凭据必须在（刷新后的页面就靠它确认）
+        self.assertEqual(len(row['token']), 32)
+
+    def test_soonest_expiry_comes_first(self):
+        later = self._row(expires_in=500)
+        sooner = self._row(expires_in=100)
+
+        tokens = [row['token'] for row in self._client(self.admin).get(self.url).data['rows']]
+        self.assertEqual(tokens, [sooner.token, later.token])
 
 
 class OpsAssistantAgentGuardTests(TestCase):
