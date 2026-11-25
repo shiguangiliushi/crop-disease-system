@@ -71,12 +71,37 @@ describe('不可逆写的二次确认（第 426 批）', () => {
   it('发给后端的只有 confirm / cancel，不是自然语言', () => {
     // 让模型判断"这句话算不算确认"= 模型可以确认自己刚提的议，是二次确认要防的那件事
     expect(SOURCE).not.toMatch(/confirmOpsAction\(/);      // 组件不直接发请求，统一走 store
-    expect(STORE).toMatch(/confirmOpsAction\(\{ token: turn\.token, decision \}\)/);
+    // 第 428 批起对话卡与待确认队列共用 `confirmToken`，只发 token + 两个词之一
+    expect(STORE).toMatch(/confirmOpsAction\(\{ token, decision \}\)/);
+    expect(STORE).not.toMatch(/confirmOpsAction\(\{ token: .*decision: .*words/);
   });
 
   it('决定之后按钮消失（凭据一次性）', () => {
     // `!turn.pendingResult` 才渲染按钮 —— 留着它只会让人重复点、再看到"已经处理过了"
     expect(SOURCE).toContain('v-if="!turn.pendingResult"');
     expect(STORE).toMatch(/turn\.token = ''/);
+  });
+});
+
+describe('待确认队列（第 428 批）', () => {
+  // 第 426 批的按钮只长在"提议它的那条对话"里，刷新页面就没了 ——
+  // 这一块读服务端的 `OpsPendingWrite`，是那个缺口的补丁。
+  it('页面上有队列区块，且确认/取消都走 store', () => {
+    expect(SOURCE).toContain('opsStore.openPending');
+    expect(SOURCE).toContain("t('opsAssistant.pendingTitle'");
+    expect(SOURCE).toMatch(/@click="decideRow\(row, 'confirm'\)"/);
+    expect(SOURCE).toMatch(/@click="decideRow\(row, 'cancel'\)"/);
+    expect(SOURCE).toContain('opsStore.confirmToken(row.token, decision)');
+  });
+
+  it('进页面就取队列（刷新后靠它找回凭据）', () => {
+    expect(SOURCE).toContain('opsStore.loadPending()');
+    expect(STORE).toContain('fetchOpsPending');
+    expect(STORE).toContain('openPending');
+  });
+
+  it('观测卡片显示待确认数（接口第 427 批就有，界面第 428 批才有）', () => {
+    expect(SOURCE).toContain('stats.totals.pending_confirmations');
+    expect(SOURCE).toContain("t('opsAssistant.statsPending')");
   });
 });

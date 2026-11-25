@@ -68,6 +68,11 @@
               <strong>{{ stats.totals.avg_latency_ms ?? 0 }} ms</strong>
               <span>{{ t('opsAssistant.statsLatency') }}</span>
             </div>
+            <!-- 第 427 批起接口就有这个数（待确认不算降级），第 428 批才显示出来 -->
+            <div class="ops-stat">
+              <strong>{{ stats.totals.pending_confirmations ?? 0 }}</strong>
+              <span>{{ t('opsAssistant.statsPending') }}</span>
+            </div>
           </div>
 
           <div class="ops-stats-cols">
@@ -102,6 +107,56 @@
             </ul>
           </div>
         </template>
+      </el-collapse-item>
+    </el-collapse>
+
+    <!--
+      待确认队列（第 428 批）
+      ------------------------------------------------------------------
+      第 426 批的确认按钮只长在"提议它的那条对话"里，而对话在 store 里 —— **刷新就没了**。
+      这一块读的是服务端的 `OpsPendingWrite`：刷新后仍能看见"有一条删反馈卡在待确认"，
+      并就地确认或取消。只显示自己、未过期的记录（后端负责这两条口径）。
+    -->
+    <el-collapse v-if="opsStore.openPending.length" v-model="pendingOpen" class="ops-pending">
+      <el-collapse-item name="pending">
+        <template #title>
+          <span class="ops-pending-title">
+            <i class="fas fa-hourglass-half"></i>
+            {{ t('opsAssistant.pendingTitle') }}（{{ opsStore.openPending.length }}）
+          </span>
+        </template>
+
+        <ul class="ops-pending-list">
+          <li v-for="row in opsStore.openPending" :key="row.token" class="ops-pending-row">
+            <div class="ops-pending-facts">
+              <strong>{{ row.label || row.action }}</strong>
+              <span v-if="row.target">{{ row.target }}</span>
+              <span class="ops-dim">{{ t('opsAssistant.pendingLeft', { n: leftMinutes(row) }) }}</span>
+            </div>
+            <div class="ops-pending-actions">
+              <el-button
+                type="danger"
+                size="small"
+                :loading="busyToken === row.token"
+                :disabled="Boolean(busyToken)"
+                @click="decideRow(row, 'confirm')"
+              >
+                {{ t('opsAssistant.confirmRun') }}
+              </el-button>
+              <el-button
+                size="small"
+                :disabled="Boolean(busyToken)"
+                @click="decideRow(row, 'cancel')"
+              >
+                {{ t('opsAssistant.confirmCancel') }}
+              </el-button>
+            </div>
+            <p v-if="rowResults[row.token]" class="ops-pending-result">
+              {{ rowResults[row.token] }}
+            </p>
+          </li>
+        </ul>
+        <p class="ops-dim">{{ t('opsAssistant.pendingHint') }}</p>
       </el-collapse-item>
     </el-collapse>
 
@@ -309,8 +364,11 @@ function pct(value) {
   return typeof value === 'number' ? `${Math.round(value * 1000) / 10}%` : '—';
 }
 
-// 进这一页就把看板数据取好：一次只读聚合，比"点开再等"顺手
-onMounted(loadStats);
+// 进这一页就取好两样东西：看板（一次只读聚合）与待确认队列（刷新后靠它找回凭据）
+onMounted(() => {
+  loadStats();
+  opsStore.loadPending();
+});
 
 const examples = computed(() => [
   t('opsAssistant.example1'),
@@ -333,6 +391,8 @@ async function submit() {
   } finally {
     // 刚问完，看板数字该动了；面板没展开就不去打扰后端
     if (statsOpen.value.length) loadStats();
+    // 第 428 批：这一轮可能刚提出一条待确认 —— 让它同时出现在上面的队列里
+    opsStore.loadPending();
   }
 }
 
@@ -392,6 +452,42 @@ function confirmResultText(result) {
 function changeText(changes) {
   const labels = { deleted: t('opsAssistant.confirmChangeDeleted') };
   return (changes || []).map((key) => labels[key] || key).join('、');
+}
+
+/* ── 待确认队列（第 428 批） ───────────────────────────────────────── */
+const pendingOpen = ref(['pending']);
+/** 正在处理的那一行（凭据）；同一时刻只让点一个，避免同一 token 连点两次 */
+const busyToken = ref('');
+/** token → 结果文本。用整体替换的方式更新，Vue 才能追踪到新键 */
+const rowResults = ref({});
+
+/** 剩余时间（分钟，向上取整）：过期与否以后端为准，这里只负责好看 */
+function leftMinutes(row) {
+  const seconds = Number(row?.seconds_left ?? 0);
+  return Math.max(0, Math.ceil(seconds / 60));
+}
+
+/**
+ * 在"待确认"列表里确认或取消一行。
+ *
+ * 与对话里那张卡走同一个接口、同一套说法（只发 `confirm` / `cancel`）；
+ * 结果写回**这一行**（不是整页），因为失败原因可能只是这一条过期了。
+ */
+async function decideRow(row, decision) {
+  if (busyToken.value) return;
+  busyToken.value = row.token;
+  try {
+    const result = await opsStore.confirmToken(row.token, decision);
+    rowResults.value = { ...rowResults.value, [row.token]: confirmResultText(result) };
+    if (statsOpen.value.length) loadStats();
+  } catch (error) {
+    rowResults.value = {
+      ...rowResults.value,
+      [row.token]: formatApiError(error, t('opsAssistant.confirmFailed')),
+    };
+  } finally {
+    busyToken.value = '';
+  }
 }
 
 function reset() {
@@ -524,6 +620,56 @@ function reset() {
   .ops-stats-cols {
     grid-template-columns: 1fr;
   }
+}
+
+/* 待确认队列（第 428 批）：比对话更"待办"，所以用 warning 色系且不折叠进对话里 */
+.ops-pending {
+  margin-top: 12px;
+}
+
+.ops-pending-title {
+  font-weight: 600;
+  color: var(--el-color-warning);
+}
+
+.ops-pending-title i {
+  margin-right: 6px;
+}
+
+.ops-pending-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.ops-pending-row {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: var(--el-bg-color);
+}
+
+.ops-pending-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.ops-pending-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ops-pending-result {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  white-space: pre-wrap;
 }
 
 .ops-thread {

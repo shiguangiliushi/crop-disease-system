@@ -20,11 +20,20 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
-import { askOpsAssistantStream, confirmOpsAction } from '@/api/opsAssistant';
+import { askOpsAssistantStream, confirmOpsAction, fetchOpsPending } from '@/api/opsAssistant';
 
 export const useOpsAssistantStore = defineStore('opsAssistant', () => {
   const turns = ref([]);
   const loading = ref(false);
+
+  /**
+   * 我自己还开着的待确认写操作（第 428 批）
+   *
+   * 与 `turns[].pending` 的区别：那个只在**这次对话**里活着（刷新即失），
+   * 这个来自服务端（`OpsPendingWrite`），刷新页面后还能把它找回来。
+   */
+  const openPending = ref([]);
+  const pendingLoading = ref(false);
 
   /** 带进下一轮的上下文：只留最近 8 条（后端也只取最近几轮，多了白花 token） */
   function historyPayload() {
@@ -101,7 +110,7 @@ export const useOpsAssistantStore = defineStore('opsAssistant', () => {
     turn.confirming = true;
     turn.pendingError = '';
     try {
-      const result = await confirmOpsAction({ token: turn.token, decision });
+      const result = await confirmToken(turn.token, decision);
       turn.pendingResult = result;
       //: 凭据一次性：不管执行成功、失败、取消、过期，都不再重试
       turn.token = '';
@@ -114,9 +123,51 @@ export const useOpsAssistantStore = defineStore('opsAssistant', () => {
     }
   }
 
+  /**
+   * 发一次确认请求并**把该 token 从队列里摘掉**（第 428 批）。
+   *
+   * 列表与对话那张卡走的是同一个出口：谁先确认，另一处就不该再显示这个 token
+   * （凭据一次性，留着只会让人点一次"已经处理过了"）。
+   *
+   * 与 `confirm(turn, …)` 的分工：这里只认 token（列表里的行没有 turn），
+   * 也不吞异常 —— 列表那一层要把传输错误显示在对应那一行上。
+   */
+  async function confirmToken(token, decision = 'confirm') {
+    const result = await confirmOpsAction({ token, decision });
+    openPending.value = openPending.value.filter((row) => row.token !== token);
+    // 同一个 token 若还挂在某条对话上，也把它的按钮收掉
+    const turn = turns.value.find((item) => item.token === token);
+    if (turn) {
+      turn.pendingResult = result;
+      turn.token = '';
+    }
+    return result;
+  }
+
+  /**
+   * 取回"我自己还开着的待确认"（第 428 批）
+   *
+   * 失败时**静默置空**：这是旁路信息（对话照样能用），弹一个错误框只会挡住人。
+   */
+  async function loadPending() {
+    pendingLoading.value = true;
+    try {
+      const data = await fetchOpsPending();
+      openPending.value = Array.isArray(data?.rows) ? data.rows : [];
+    } catch {
+      openPending.value = [];
+    } finally {
+      pendingLoading.value = false;
+    }
+  }
+
   function reset() {
     turns.value = [];
   }
 
-  return { turns, loading, ask, confirm, reset, historyPayload };
+  return {
+    turns, loading, ask, confirm, reset, historyPayload,
+    //: 第 428 批：待确认队列（服务端持久，刷新不丢）
+    openPending, pendingLoading, loadPending, confirmToken,
+  };
 });

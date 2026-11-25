@@ -13,7 +13,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 
-import { confirmOpsAction } from '@/api/opsAssistant';
+import { confirmOpsAction, fetchOpsPending } from '@/api/opsAssistant';
 
 /** 200 的假响应（确认接口的失败也是 200，见模块说明第 2 条） */
 function jsonResponse(data) {
@@ -73,5 +73,37 @@ describe('confirmOpsAction（不可逆写的确认 / 取消）', () => {
     await expect(confirmOpsAction({ token: 'tok-4' })).rejects.toMatchObject({
       response: { status: 403, data: { detail: '只有管理员可以确认写操作' } },
     });
+  });
+});
+
+describe('fetchOpsPending（待确认队列，第 428 批）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.unstubAllGlobals();
+  });
+
+  it('GET 自己的待确认队列，原样带回 rows', async () => {
+    const rows = [
+      { token: 'tok-a', action: 'delete_feedback', label: '删除反馈', target: '反馈 #12', seconds_left: 420 },
+    ];
+    const fetchMock = vi.fn(async () => jsonResponse({ rows, count: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const data = await fetchOpsPending();
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/admin/assistant/ops/pending/');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(data).toEqual({ rows, count: 1 });
+  });
+
+  it('非 2xx 抛错（403 时不该被当成"没有待确认"）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ detail: '只有管理员可以查看待确认操作' }),
+    })));
+
+    await expect(fetchOpsPending()).rejects.toMatchObject({ response: { status: 403 } });
   });
 });

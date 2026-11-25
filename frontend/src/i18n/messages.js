@@ -71,6 +71,11 @@ export const zhCN = {
     statsIntents: '意图分布',
     statsToolFailures: '工具失败',
     statsRecentUnverified: '最近未通过校验的问题',
+    // 第 428 批：待确认队列（刷新页面后靠它把凭据找回来）
+    statsPending: '待确认',
+    pendingTitle: '待你确认的不可逆操作',
+    pendingLeft: '剩余 {n} 分钟',
+    pendingHint: '过期后就点不动了（10 分钟），需要重新说一次要做什么。',
     statsEmpty: '这段时间没有记录',
   },
   // 第 184 批：用户管理合并页的页签
@@ -3584,6 +3589,11 @@ export const en = {
     statsIntents: 'Intents',
     statsToolFailures: 'Tool failures',
     statsRecentUnverified: 'Recently unverified answers',
+    // Batch 428: the pending queue (survives a page refresh)
+    statsPending: 'Pending',
+    pendingTitle: 'Irreversible actions waiting for you',
+    pendingLeft: '{n} min left',
+    pendingHint: 'After it expires (10 minutes) the buttons stop working — ask again to re-propose it.',
     statsEmpty: 'No records in this window',
   },
   // Batch 184: tabs of the merged user-management page

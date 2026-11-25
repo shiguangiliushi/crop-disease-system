@@ -14,32 +14,33 @@ import { createPinia, setActivePinia } from 'pinia';
 vi.mock('@/api/opsAssistant', () => ({
   askOpsAssistantStream: vi.fn(),
   confirmOpsAction: vi.fn(),
+  fetchOpsPending: vi.fn(),
 }));
 
-import { confirmOpsAction } from '@/api/opsAssistant';
+import { confirmOpsAction, fetchOpsPending } from '@/api/opsAssistant';
 import { useOpsAssistantStore } from '@/stores/opsAssistant';
+
+/** 造一条"后端提议了不可逆写"的对话（字段与 `ask()` 回来的一致） */
+function proposalTurn(overrides = {}) {
+  const store = useOpsAssistantStore();
+  store.turns.push({
+    question: '删掉反馈 #12',
+    answer: '准备执行：**删除反馈**',
+    pending: { action: 'delete_feedback', label: '删除反馈', target: '反馈 #12 番茄晚疫病' },
+    token: 'tok-1',
+    pendingResult: null,
+    confirming: false,
+    pendingError: '',
+    ...overrides,
+  });
+  return store.turns[0];
+}
 
 describe('系统助手 store：不可逆写的确认', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
   });
-
-  /** 造一条"后端提议了不可逆写"的对话（字段与 `ask()` 回来的一致） */
-  function proposalTurn(overrides = {}) {
-    const store = useOpsAssistantStore();
-    store.turns.push({
-      question: '删掉反馈 #12',
-      answer: '准备执行：**删除反馈**',
-      pending: { action: 'delete_feedback', label: '删除反馈', target: '反馈 #12 番茄晚疫病' },
-      token: 'tok-1',
-      pendingResult: null,
-      confirming: false,
-      pendingError: '',
-      ...overrides,
-    });
-    return store.turns[0];
-  }
 
   it('确认成功后记住结果，并清掉一次性 token', async () => {
     confirmOpsAction.mockResolvedValue({ ok: true, status: 'confirmed', answer: '已执行' });
@@ -89,5 +90,56 @@ describe('系统助手 store：不可逆写的确认', () => {
     expect(turn.token).toBe('tok-1');
     expect(turn.confirming).toBe(false);
     expect(turn.pendingResult).toBeNull();
+  });
+});
+
+describe('待确认队列（第 428 批）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it('loadPending 把服务端的队列放进 openPending', async () => {
+    const rows = [
+      { token: 't1', action: 'delete_feedback', label: '删除反馈', target: '反馈 #12', seconds_left: 420 },
+      { token: 't2', action: 'delete_feedback', label: '删除反馈', target: '反馈 #9', seconds_left: 60 },
+    ];
+    fetchOpsPending.mockResolvedValue({ rows, count: 2 });
+    const store = useOpsAssistantStore();
+
+    await store.loadPending();
+
+    expect(store.openPending).toHaveLength(2);
+    expect(store.openPending[1].target).toBe('反馈 #9');
+    expect(store.pendingLoading).toBe(false);
+  });
+
+  it('loadPending 失败时静默置空（旁路信息不弹错误框）', async () => {
+    fetchOpsPending.mockRejectedValue(new Error('HTTP 500'));
+    const store = useOpsAssistantStore();
+
+    await store.loadPending();
+
+    expect(store.openPending).toEqual([]);
+    expect(store.pendingLoading).toBe(false);
+  });
+
+  it('confirmToken 摘掉那一行，并把同 token 的对话卡片一起收掉', async () => {
+    confirmOpsAction.mockResolvedValue({ ok: true, status: 'confirmed', answer: '已执行' });
+    fetchOpsPending.mockResolvedValue({ rows: [], count: 0 });
+    const store = useOpsAssistantStore();
+    const turn = proposalTurn();                       // token: tok-1
+    store.openPending = [
+      { token: 'tok-1', action: 'delete_feedback' },
+      { token: 'tok-2', action: 'delete_feedback' },
+    ];
+
+    await store.confirmToken('tok-1', 'confirm');
+
+    expect(confirmOpsAction).toHaveBeenCalledWith({ token: 'tok-1', decision: 'confirm' });
+    expect(store.openPending.map((row) => row.token)).toEqual(['tok-2']);
+    // 同一个凭据不能既在队列里、又在那条对话上留一个按钮
+    expect(turn.pendingResult.ok).toBe(true);
+    expect(turn.token).toBe('');
   });
 });

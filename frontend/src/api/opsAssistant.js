@@ -171,6 +171,29 @@ export async function confirmOpsAction({ token, decision = 'confirm' } = {}) {
 }
 
 /**
+ * 列出**我自己**还开着的待确认写操作（第 428 批）
+ *
+ * 第 426 批的确认按钮只长在"提议它的那条对话"里，而对话在 store 里 ——
+ * **刷新就没了**。这个接口是那个缺口的补丁：页面一进来就把队列取回来，
+ * 刷新后仍能看见"有一条删反馈卡在待确认"。
+ *
+ * @returns {Promise<{rows: Array<{token, action, label, reversibility, target,
+ *   changes, question, created_at, expires_at, seconds_left}>, count: number}>}
+ *   只含当前用户、未过期、`pending` 状态的记录；按 `expires_at` 正序。
+ */
+export async function fetchOpsPending() {
+  const authStore = useAuthStore();
+  const response = await fetch(`${baseURL}/admin/assistant/ops/pending/`, {
+    headers: {
+      Accept: 'application/json',
+      ...(authStore.authToken ? { Authorization: `Token ${authStore.authToken}` } : {}),
+    },
+  });
+  if (!response.ok) throw await httpError(response);
+  return response.json();
+}
+
+/**
  * 系统助手的质量看板（E）
  *
  * 与农户侧的 `/admin/assistant/stats/` 是两份数据：那边看 RAG 问答，
