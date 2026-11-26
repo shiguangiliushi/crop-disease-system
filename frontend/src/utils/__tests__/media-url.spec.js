@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { normalizeMediaUrl, sameOriginMediaPath } from '../mediaUrl';
+import { normalizeMediaUrl, normalizeMediaUrlsIn, sameOriginMediaPath } from '../mediaUrl';
 import { getImageUrl } from '../image';
 
 describe('sameOriginMediaPath', () => {
@@ -70,5 +70,48 @@ describe('getImageUrl', () => {
   it('data: 与空值原样返回', () => {
     expect(getImageUrl('data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA');
     expect(getImageUrl('')).toBe('');
+  });
+});
+
+describe('normalizeMediaUrlsIn（响应体归一，第 431 批）', () => {
+  // 页面里大量 `<img :src="news.image">` 是直接绑数据的 —— 在数据进内存那一刻收口，
+  // 免得"这个组件改了、那个页面又漏"。
+  it('深层对象/数组里的 http 媒体地址被改写，其它字段原样', () => {
+    const payload = {
+      count: 1,
+      results: [{
+        id: 7,
+        title: '新闻',
+        image: 'http://10.0.0.5/media/news/a.jpg',
+        body: '<p>x</p><img src="http://10.0.0.5/media/news/b.jpg">',
+        url: 'https://example.com/read?id=1',
+      }],
+    };
+
+    const fixed = normalizeMediaUrlsIn(payload);
+
+    expect(fixed.results[0].image).toBe('/media/news/a.jpg');
+    expect(fixed.results[0].body).toContain('src="/media/news/b.jpg"');
+    expect(fixed.results[0].url).toBe('https://example.com/read?id=1');
+    expect(fixed.count).toBe(1);
+    expect(fixed.results[0].title).toBe('新闻');
+  });
+
+  it('没有需要改的字符串时返回**原对象**（别为每次响应都重建一棵树）', () => {
+    const payload = { results: [{ image: '/media/a.jpg', title: 'x' }] };
+    expect(normalizeMediaUrlsIn(payload)).toBe(payload);
+  });
+
+  it('非普通对象（Blob/Date/File）原样返回', () => {
+    const blob = new Blob(['x']);
+    const date = new Date();
+    expect(normalizeMediaUrlsIn(blob)).toBe(blob);
+    expect(normalizeMediaUrlsIn(date)).toBe(date);
+  });
+
+  it('数字/null/布尔值不炸', () => {
+    expect(normalizeMediaUrlsIn(0)).toBe(0);
+    expect(normalizeMediaUrlsIn(null)).toBeNull();
+    expect(normalizeMediaUrlsIn(false)).toBe(false);
   });
 });

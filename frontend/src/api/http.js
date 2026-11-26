@@ -11,6 +11,7 @@
  */
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
+import { normalizeMediaUrlsIn } from '@/utils/mediaUrl';  // 第 431 批：响应里的 http 媒体地址归一
 import { t, locale } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言；第 197 批：请求带语言头
 import { pickReadableMessage } from '@/utils/readableError';  // 第 213 批：英文技术文案不进用户界面
 
@@ -78,7 +79,18 @@ let authRedirecting = false;
 const AUTH_PAGE_PREFIXES = ['/login', '/admin/login', '/register', '/forgot-password', '/reset-password'];
 
 http.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // 第 431 批：把响应里 `http://<服务器IP>/media/…` 这类**绝对不安全地址**
+    // 统一归一成相对路径（`/media/…`）。页面里大量 `<img :src="news.image">`
+    // 是直接绑数据的，逐组件改既漏又不持久 —— 在数据进内存这一刻收口最省事。
+    // 文件下载（`responseType: 'blob'`）跳过：那里必须是原始字节。
+    const config = response?.config || {};
+    const isBinary = config.responseType === 'blob' || config.responseType === 'arraybuffer';
+    if (!isBinary) {
+      response.data = normalizeMediaUrlsIn(response.data);
+    }
+    return response;
+  },
   (error) => {
     const status = error?.response?.status;
     if (status === 401 && !error.config?.skipAuthRedirect) {

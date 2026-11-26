@@ -67,3 +67,75 @@ export function sameOriginMediaPath(value) {
 export function normalizeMediaUrl(value) {
   return sameOriginMediaPath(value) || value;
 }
+
+/** 递归深度上限：正常响应不会超过这个嵌套，超了就当数据有问题、不再下钻 */
+const MAX_DEPTH = 12;
+
+/**
+ * 字符串里**内嵌**的 `http://…/media/…`（HTML 的 `<img src>`、Markdown 图片、纯文本链接）
+ *
+ * 与 `sameOriginMediaPath` 的分工：那个处理"整串就是一个 URL"，这个处理"URL 藏在一段
+ * HTML/文本里"。两者都只认 `http://` + `/media/`，https 外链一律不动。
+ */
+const EMBEDDED_HTTP_MEDIA = /http:\/\/[^/\s"'<>()]+(\/media\/[^"\s'<>()]+)/gi;
+
+/** 把一段文本里内嵌的 http 媒体地址换成相对路径（没有就原样返回） */
+export function normalizeMediaUrlsInText(text) {
+  if (typeof text !== 'string' || !text.includes('http') || !text.includes('/media/')) {
+    return text;
+  }
+  const whole = sameOriginMediaPath(text);
+  if (whole) return whole;
+  return text.replace(EMBEDDED_HTTP_MEDIA, '$1');
+}
+
+/**
+ * 把**整个响应体**里出现的 `http://…/media/…` 归一成相对路径（第 431 批）。
+ *
+ * ## 为什么要在响应层再做一次
+ *
+ * 第 430 批修了两处渲染出口（富文本的 DOMPurify 钩子、`getImageUrl`），
+ * 但页面里大量图片是**直接绑数据**的：`<img :src="news.image">`、`<el-image :src="pest.image">`。
+ * 它们拿到什么就发什么 —— 数据里是 `http://<服务器IP>/media/…`，浏览器就按 Mixed Content 拦。
+ * 一个个组件去包 `normalizeMediaUrl()` 既漏又不持久（新增页面没人记得），
+ * 所以在**数据进内存的那一刻**统一归一：一处收口，所有页面自动受益。
+ *
+ * ## 三条边界
+ *
+ * 1. **只动字符串**，且只动匹配 `http://…/media/…` 的（见 `sameOriginMediaPath`）；
+ * 2. **不碰非 JSON**：`Blob` / `ArrayBuffer` / 文件下载必须是原始字节
+ *    （调用方用 `responseType: 'blob'` 时要跳过，见 `api/http.js`）；
+ * 3. 深度上限 `MAX_DEPTH`：异常嵌套的数据不再下钻，避免递归过深。
+ *
+ * @param {*} data 任意 JSON 值（字符串 / 数组 / 对象 / 数字 …）
+ * @returns {*} 归一后的新值（不改原对象，避免影响 axios 之外的引用）
+ */
+export function normalizeMediaUrlsIn(data, depth = 0) {
+  if (depth > MAX_DEPTH) return data;
+  if (typeof data === 'string') {
+    // 先做一次廉价判断：绝大多数字符串不含 'http'，不必进正则
+    return data.includes('http') ? normalizeMediaUrlsInText(data) : data;
+  }
+  if (Array.isArray(data)) {
+    let changed = false;
+    const next = data.map((item) => {
+      const value = normalizeMediaUrlsIn(item, depth + 1);
+      if (value !== item) changed = true;
+      return value;
+    });
+    return changed ? next : data;
+  }
+  if (data && typeof data === 'object') {
+    // 只处理普通对象；Date / Blob / File 之类原样返回
+    if (Object.getPrototypeOf(data) !== Object.prototype) return data;
+    let changed = false;
+    const next = {};
+    for (const [key, value] of Object.entries(data)) {
+      const normalized = normalizeMediaUrlsIn(value, depth + 1);
+      next[key] = normalized;
+      if (normalized !== value) changed = true;
+    }
+    return changed ? next : data;
+  }
+  return data;
+}
