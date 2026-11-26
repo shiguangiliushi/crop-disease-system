@@ -8,6 +8,38 @@
 from django.apps import AppConfig
 
 
+def _should_warm_up() -> bool:
+    """只有"对外服务"的进程才预热模型（第 436 批）。
+
+    ## 为什么要有这个开关
+
+    预热是个**守护线程**，里面会加载 YOLO/torch。而 `manage.py migrate`、
+    `collectstatic`、`check` 这类命令是**短命进程**：跑完就退出，退出时解释器
+    会连带杀掉还在跑 torch 的守护线程 —— 表现为
+
+        terminate called without an active exception
+        Aborted (core dumped)          # 退出码 134
+
+    `docker-compose` 的启动命令是 `python manage.py migrate && gunicorn …`，
+    `&&` 一断，gunicorn 根本没机会启动 → 容器 `Restarting (134)` 死循环，
+    站点整站 502。
+
+    ## 判定口径
+
+    `sys.argv[0]` 是 `manage.py` / `django-admin` → 不预热（这些进程不需要模型）；
+    其余（gunicorn 的 worker、runserver）→ 预热。
+    环境变量 `AI_WARMUP_DISABLED=1` 可强制关掉。
+    """
+    import os
+    import sys
+
+    if os.environ.get('AI_WARMUP_DISABLED') == '1':
+        return False
+
+    argv0 = os.path.basename(sys.argv[0] or '')
+    return argv0 not in ('manage.py', 'django-admin', 'django-admin.py')
+
+
 class ApiConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'  # 设置默认主键字段类型
     name = 'api'
@@ -85,7 +117,7 @@ class ApiConfig(AppConfig):
 
             from django.conf import settings
 
-            if getattr(settings, 'AI_WARMUP_ON_STARTUP', True):
+            if getattr(settings, 'AI_WARMUP_ON_STARTUP', True) and _should_warm_up():
                 from .ai_service import warm_up
 
                 threading.Thread(

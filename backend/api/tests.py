@@ -451,6 +451,59 @@ class ApiIdentitySourceTests(TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class ModelWarmupGuardTests(SimpleTestCase):
+    """模型预热的开关：`manage.py` 命令不能触发预热（第 436 批）
+
+    线上事故：`docker-compose` 的启动命令是
+
+        python manage.py migrate && gunicorn -c gunicorn.conf.py ...
+
+    而 `ready()` 里会起一个**守护线程**预热 YOLO/torch。`migrate` 是短命进程，
+    跑完退出时解释器强杀那个还在跑 torch 的线程 →
+
+        terminate called without an active exception
+        Aborted (core dumped)        # 退出码 134
+
+    `&&` 一断，gunicorn 根本没启动 → 容器 `Restarting (134)` 死循环 → 整站 502。
+    所以预热只允许发生在"对外服务"的进程里（gunicorn worker）。
+    """
+
+    def test_manage_py_commands_do_not_warm_up(self):
+        import sys
+
+        from api.apps import _should_warm_up
+
+        original = sys.argv
+        try:
+            for argv0 in ('manage.py', 'django-admin', 'django-admin.py'):
+                sys.argv = [argv0, 'migrate']
+                with self.subTest(argv0=argv0):
+                    self.assertFalse(_should_warm_up())
+        finally:
+            sys.argv = original
+
+    def test_server_processes_do_warm_up(self):
+        import sys
+
+        from api.apps import _should_warm_up
+
+        original = sys.argv
+        try:
+            for argv0 in ('/usr/local/bin/gunicorn', 'daphne'):
+                sys.argv = [argv0]
+                with self.subTest(argv0=argv0):
+                    self.assertTrue(_should_warm_up())
+        finally:
+            sys.argv = original
+
+    def test_env_switch_can_disable(self):
+        from unittest.mock import patch
+
+        from api.apps import _should_warm_up
+
+        with patch.dict('os.environ', {'AI_WARMUP_DISABLED': '1'}):
+            self.assertFalse(_should_warm_up())
+
 class DetectionHistoryScopeTests(TestCase):
     """
     管理端「识别记录管理」的数据范围与搜索（第 21 批）
