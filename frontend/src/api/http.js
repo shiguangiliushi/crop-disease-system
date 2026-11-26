@@ -11,7 +11,7 @@
  */
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
-import { normalizeMediaUrlsIn } from '@/utils/mediaUrl';  // 第 431 批：响应里的 http 媒体地址归一
+import { normalizeMediaUrlsIn, sameOriginMediaPath } from '@/utils/mediaUrl';  // 第 431 批：响应里的 http 媒体地址归一
 import { t, locale } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言；第 197 批：请求带语言头
 import { pickReadableMessage } from '@/utils/readableError';  // 第 213 批：英文技术文案不进用户界面
 
@@ -126,6 +126,13 @@ http.interceptors.response.use(
 /** 把后端返回的相对图片地址转成可直接访问的绝对地址 */
 export function toAbsoluteMediaUrl(path) {
   if (!path) return '';
+
+  // 第 434 批：历史数据里可能存着 `http://<主机>/media/x.jpg?sig=…`（早期本机调试时写进去的）。
+  // 直接原样返回 → HTTPS 页面下会被浏览器拦/改成 https 后连不上（ERR_CONNECTION_REFUSED）。
+  // 先归一成同源相对路径（`?sig=` 原样保留），这样"库里有脏数据"也不会裂图。
+  const mediaPath = sameOriginMediaPath(path);
+  if (mediaPath) return mediaPath;
+
   if (path.startsWith('http') || path.startsWith('data:')) {
     return path.replace('127.0.0.1', 'localhost');
   }

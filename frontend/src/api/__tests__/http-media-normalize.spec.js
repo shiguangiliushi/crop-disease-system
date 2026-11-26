@@ -15,7 +15,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 
-import http from '@/api/http';
+import http, { toAbsoluteMediaUrl } from '@/api/http';
 
 describe('http 响应拦截器：混合内容归一', () => {
   beforeEach(() => {
@@ -51,5 +51,24 @@ describe('http 响应拦截器：混合内容归一', () => {
     const response = await http.get('/export/', { responseType: 'blob' });
 
     expect(response.data).toBe(blob);
+  });
+});
+
+describe('toAbsoluteMediaUrl（识别记录页在用，第 434 批）', () => {
+  it('库里存了绝对 http 的媒体地址也归一（含 ?sig= 签名）', () => {
+    expect(toAbsoluteMediaUrl('http://127.0.0.1:8000/media/detection_history/a.jpg'))
+      .toBe('/media/detection_history/a.jpg');
+    expect(toAbsoluteMediaUrl('http://10.0.0.5/media/detection_history/a.jpg?sig=x&exp=1'))
+      .toBe('/media/detection_history/a.jpg?sig=x&exp=1');
+  });
+
+  it('相对的 /media/ 原样返回（生产：同源）', () => {
+    expect(toAbsoluteMediaUrl('/media/detection_history/a.jpg?sig=x&exp=1'))
+      .toBe('/media/detection_history/a.jpg?sig=x&exp=1');
+  });
+
+  it('https 外链与 data: 不动', () => {
+    expect(toAbsoluteMediaUrl('https://cdn.example.com/x.jpg')).toBe('https://cdn.example.com/x.jpg');
+    expect(toAbsoluteMediaUrl('data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA');
   });
 });
