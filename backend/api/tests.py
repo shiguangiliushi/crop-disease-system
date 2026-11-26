@@ -19972,6 +19972,71 @@ class OpsAssistantApiTests(APITestCase):
         self.assertEqual(done['token'], '')
 
 
+class MediaUrlNormalizeTests(TestCase):
+    """媒体地址归一化命令（第 430 批）—— Mixed Content 的根因在**数据**里
+
+    HTTPS 页面里出现 `http://<服务器IP>/media/…` 的图片会被浏览器拦掉（用户看到"裂图"）。
+    根因不是模板写死了地址，而是：
+      · `ImageField` 里存了完整地址（早期用 IP 调试时写进去的）；
+      · 富文本正文里的 `<img src="http://…">` 绕过所有 `:src` 绑定。
+    所以修复必须发生在数据上（前端另有一层渲染期兜底，见 utils/mediaUrl.js）。
+    """
+
+    def _run(self, **kwargs):
+        output = StringIO()
+        call_command('check_media_urls', stdout=output, **kwargs)
+        return output.getvalue()
+
+    def _pest(self, image):
+        return PestInfo.objects.create(
+            name='番茄早疫病', crop_type='番茄', image=image,
+            english_identifier=f'media_url_{uuid.uuid4().hex[:8]}',
+        )
+
+    def test_dry_run_reports_but_changes_nothing(self):
+        pest = self._pest('http://10.0.0.5/media/pest_images/x.jpg')
+
+        output = self._run(samples=3)
+
+        self.assertIn('pest_images/x.jpg', output)
+        pest.refresh_from_db()
+        self.assertTrue(pest.image.name.startswith('http://'), '默认只报告，不动数据')
+
+    def test_fix_rewrites_file_field_to_media_relative_path(self):
+        pest = self._pest('http://10.0.0.5:8000/media/pest_images/x.jpg')
+
+        self._run(fix=True)
+
+        pest.refresh_from_db()
+        # FileField 存的是相对 MEDIA_ROOT 的路径 —— 不是 `/media/…`
+        self.assertEqual(pest.image.name, 'pest_images/x.jpg')
+
+    def test_fix_only_touches_media_paths_in_rich_text(self):
+        news = News.objects.create(
+            title='混合内容测试',
+            content=('<p>病害图</p>'
+                     '<img src="http://1.2.3.4/media/news/a.jpg">'
+                     '<img src="https://cdn.example.com/x.png">'
+                     '<a href="http://1.2.3.4/media/news/a.jpg">原图</a>'),
+        )
+
+        self._run(fix=True)
+
+        news.refresh_from_db()
+        self.assertIn('src="/media/news/a.jpg"', news.content)
+        self.assertIn('src="https://cdn.example.com/x.png"', news.content, '外链图床不动')
+        # 文本里的 href 也一并归一（它不是图片，但同样是 Mixed Content 的来源）
+        self.assertIn('href="/media/news/a.jpg"', news.content)
+
+    def test_second_run_is_a_no_op(self):
+        self._pest('http://10.0.0.5/media/pest_images/y.jpg')
+
+        self._run(fix=True)
+        output = self._run()
+
+        self.assertIn('没有发现', output)
+
+
 class OpsAssistantPendingApiTests(APITestCase):
     """待确认队列（第 428 批）—— 刷新页面后把队列找回来
 
