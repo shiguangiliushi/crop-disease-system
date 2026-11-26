@@ -635,8 +635,13 @@ def ask(*, user, question: str, session: AssistantSession | None = None,
                 logger.warning('助手生成失败，降级：%s', exc)
                 from .retriever import search as _search
                 hits = _search(prepared.question, pest_identifier=pest_identifier)
-                answer = prompts.degrade_text('error', prepared.lang, reason=exc,
-                                             body=_fallback_body(hits, prepared.lang))
+                # 第 433 批：给用户看的是**一句人话**（按错误类别），不是厂商的英文 JSON ——
+                # 原文里带着 request_id 与密钥尾部，且农户看不懂。完整异常已进上面的日志。
+                answer = prompts.degrade_text(
+                    'error', prepared.lang,
+                    reason=prompts.error_hint(llm.error_kind(exc), prepared.lang),
+                    body=_fallback_body(hits, prepared.lang),
+                )
                 reason = 'llm_error'
                 # 同上：这段是档案原文，出处必须带上（原来这里是空的）
                 citations = _citations_from_hits(hits, prepared.lang)

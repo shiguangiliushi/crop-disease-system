@@ -15786,7 +15786,10 @@ class AssistantTests(TestCase):
                                          {'question': '番茄晚疫病怎么打药'}, format='json')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['degrade_reason'], 'llm_error')
-        self.assertIn('模拟超时', resp.data['answer'])
+        # ⚠️ 第 433 批起这里是**人话**而不是原始异常文本（原文里可能带厂商 JSON、
+        #    request_id 与密钥尾部，农户看不懂也不该看到）。原文只进日志。
+        self.assertIn('模型响应超时', resp.data['answer'])
+        self.assertNotIn('模拟超时', resp.data['answer'])
         message = AssistantMessage.objects.get(pk=resp.data['message_id'])
         self.assertTrue(message.degraded)
         self.assertEqual(message.degrade_reason, 'llm_error')
@@ -16160,6 +16163,89 @@ class AssistantHistoryTests(TestCase):
         with patch('api.assistant.orchestrator.search', return_value=[]):
             resp = self._ask('番茄晚疫病怎么治', session)
         self.assertNotEqual(resp.data['degrade_reason'], 'session_full')
+
+
+class AssistantErrorTextTests(TestCase):
+    """模型调用失败时，给农户的是**一句人话**，不是厂商的英文 JSON（第 433 批）
+
+    线上真实截图（农户侧「智能问答」）：
+
+        （AI 助手暂时不可用：HTTP 401: {"error":{"message":"Authentication Fails,
+        Your api key: ****xxxx is invalid (request_id: 020d42ef-…)"}}。以下为该病害的档案原文…）
+
+    三个问题：① 农户看不懂；② 与"英文技术文案不进用户界面"（第 213 批）自相矛盾；
+    ③ 原文带着厂商 request_id 与密钥尾部，不该出现在任何用户能截图的地方。
+    原始文本仍然进日志（`logger.warning`），排查不受影响。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        PestInfo.objects.create(
+            name='番茄晚疫病', crop_type='番茄', english_identifier='assistant_err_text',
+            symptoms='叶片多从叶尖或叶缘开始发病，初为暗绿色水渍状病斑。',
+        )
+
+    def setUp(self):
+        cache.delete('sensitive_words:active')
+        self.user = User.objects.create_user(username='asst_err_text', password='pw12345678')
+        self.client_auth = APIClient()
+        self.client_auth.force_authenticate(user=self.user)
+
+    def test_error_kind_mapping(self):
+        cases = {
+            'HTTP 401：{"error": {"message": "Authentication Fails"}}': 'auth',
+            'HTTP 403：{"error": {"message": "forbidden"}}': 'auth',
+            'HTTP 402：{"error": {"message": "Insufficient Balance"}}': 'quota',
+            'HTTP 429：{"error": {"message": "Rate limit"}}': 'rate_limit',
+            '调用超时（20.0s）': 'timeout',
+            '网络错误：Connection reset': 'network',
+            '响应结构不符合预期：{"x": 1}': 'shape',
+            '别的什么': 'other',
+        }
+        for message, kind in cases.items():
+            with self.subTest(message=message):
+                self.assertEqual(llm.error_kind(llm.LLMError(message)), kind)
+
+    def test_hint_covers_every_kind_in_both_languages(self):
+        from .assistant import prompts as assistant_prompts
+
+        for lang, table in assistant_prompts.ERROR_HINT.items():
+            self.assertEqual(set(table), set(llm.ERROR_KINDS), lang)
+            for kind, text in table.items():
+                self.assertTrue(text.strip(), f'{lang}.{kind} 是空的')
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_401_raw_provider_text_never_reaches_the_answer(self):
+        raw = ('HTTP 401：{"error":{"message":"Authentication Fails, Your api key: '
+               '****xxxx is invalid (request_id: 020d42ef-20b7-40aa)"}}')
+        with patch('api.assistant.llm.chat', side_effect=llm.LLMError(raw)):
+            data = self.client_auth.post(
+                '/api/assistant/ask/', {'question': '番茄晚疫病怎么打药'},
+                format='json').data
+
+        self.assertEqual(data['degrade_reason'], 'llm_error')
+        answer = data['answer']
+        self.assertNotIn('request_id', answer)
+        self.assertNotIn('****xxxx', answer)
+        self.assertNotIn('Authentication Fails', answer)
+        # 中文界面：给的是"密钥配置有误"这种人话（且照旧带上档案原文与出处）
+        self.assertIn('服务密钥配置有误', answer)
+        self.assertIn('档案原文', answer)
+        self.assertTrue(data['citations'])
+
+    @override_settings(LLM_ENABLED=True, LLM_API_URL='https://example.invalid/v1',
+                       LLM_API_KEY='sk-test', LLM_MODEL='deepseek-chat')
+    def test_english_interface_gets_the_english_hint(self):
+        raw = 'HTTP 402：{"error":{"message":"Insufficient Balance"}}'
+        with patch('api.assistant.llm.chat', side_effect=llm.LLMError(raw)):
+            data = self.client_auth.post(
+                '/api/assistant/ask/',
+                {'question': '番茄晚疫病怎么打药'},
+                format='json', HTTP_ACCEPT_LANGUAGE='en').data
+
+        self.assertIn('service quota is exhausted', data['answer'])
+        self.assertNotIn('Insufficient Balance', data['answer'])
 
 
 class AssistantVisionModuleTests(TestCase):

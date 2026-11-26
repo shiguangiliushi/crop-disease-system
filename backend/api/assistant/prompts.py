@@ -320,6 +320,40 @@ def degrade_text(key: str, lang: str = DEFAULT_LANG, **params) -> str:
     return template.format(**params) if params else template
 
 
+#: 模型调用失败时**给用户看**的一句话（第 433 批）。
+#:
+#: 为什么不直接插 `str(exc)`：那是模型厂商的英文 JSON，农户看不懂，
+#: 里面还带厂商的 request_id 与密钥尾部（线上实测截图里就有
+#: `"Your api key: ****xxxx is invalid"`）。原始文本只进日志。
+#: 键与 `llm.ERROR_KINDS` 一一对应（单测比对）。
+ERROR_HINT = {
+    'zh': {
+        'auth': '服务密钥配置有误，请联系管理员',
+        'quota': '服务额度已用尽，请联系管理员',
+        'rate_limit': '请求过于频繁，请稍后再试',
+        'timeout': '模型响应超时，请稍后再试',
+        'network': '网络异常，请稍后再试',
+        'shape': '模型返回异常，请稍后再试',
+        'other': '服务暂时不可用，请稍后再试',
+    },
+    'en': {
+        'auth': 'the service credentials are misconfigured; please contact the administrator',
+        'quota': 'the service quota is exhausted; please contact the administrator',
+        'rate_limit': 'too many requests; please try again shortly',
+        'timeout': 'the model timed out; please try again shortly',
+        'network': 'a network error occurred; please try again shortly',
+        'shape': 'the model returned an unexpected response; please try again shortly',
+        'other': 'the service is temporarily unavailable; please try again shortly',
+    },
+}
+
+
+def error_hint(kind: str, lang: str = DEFAULT_LANG) -> str:
+    """`llm.error_kind()` 的结果 → 一句给用户看的话（未知类别回落 `other`）。"""
+    table = ERROR_HINT.get(normalize_lang(lang)) or ERROR_HINT[DEFAULT_LANG]
+    return table.get(kind) or table['other']
+
+
 #: 提示词版本：改了措辞就改它，便于事后区分"哪版提示词产出的答案"。
 #: v2（第 197 批）加英文；v3（第 204 批）"控制篇幅 + 多作物只展开一个"；
 #: v4（第 207 批）改成"每条都答但都简短" + "必须内联标 `【序号】`"；

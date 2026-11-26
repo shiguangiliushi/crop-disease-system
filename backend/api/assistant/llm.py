@@ -168,6 +168,42 @@ def timeout_seconds() -> float:
         return 20.0
 
 
+#: 一次失败归成的稳定类别 → 给**用户**看的话术由上层决定（见 `assistant/prompts.py`）。
+#: `auth` 与 `quota` 是配置问题（要管理员处理），其余是暂时性的（等一会儿再问）。
+ERROR_KINDS = ('auth', 'quota', 'rate_limit', 'timeout', 'network', 'shape', 'other')
+
+
+def error_kind(exc) -> str:
+    """把 `LLMError` 归成稳定的类别（第 433 批）。
+
+    ## 为什么要把原始错误文本挡住
+
+    以前降级话术直接插 `str(exc)`，于是农户在页面上看到的是模型厂商的英文原文：
+
+        （AI 助手暂时不可用：HTTP 401: {"error":{"message":"Authentication Fails,
+        Your api key: ****xxxx is invalid (request_id: …)"}}。以下为该病害的档案原文…）
+
+    三个问题：① 农户看不懂；② 与"英文技术文案不进用户界面"（第 213 批）自相矛盾；
+    ③ 原文里带着厂商的 request_id 与密钥尾部 —— 不该出现在任何用户能截图的地方。
+
+    原始文本仍然进日志（`logger.warning`），排查不受影响。
+    """
+    text = str(exc or '')
+    if text.startswith('HTTP 401') or text.startswith('HTTP 403'):
+        return 'auth'
+    if text.startswith('HTTP 402'):
+        return 'quota'
+    if text.startswith('HTTP 429'):
+        return 'rate_limit'
+    if '超时' in text:
+        return 'timeout'
+    if text.startswith('网络错误'):
+        return 'network'
+    if text.startswith('响应结构'):
+        return 'shape'
+    return 'other'
+
+
 def _endpoint() -> str:
     base = str(_cfg('LLM_API_URL', '')).rstrip('/')
     # 兼容两种写法：给了 `/v1` 或直接给了完整的 `/chat/completions`
