@@ -15,8 +15,13 @@ import { normalizeMediaUrlsIn } from '@/utils/mediaUrl';  // 第 431 批：响�
 import { t, locale } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言；第 197 批：请求带语言头
 import { pickReadableMessage } from '@/utils/readableError';  // 第 213 批：英文技术文案不进用户界面
 
-// VITE_API_BASE_URL 形如 http://127.0.0.1:8000/api，已包含 /api 前缀
-export const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
+// VITE_API_BASE_URL 形如 http://127.0.0.1:8000/api（开发）或 /api（生产，同源）
+//
+// ⚠️ 第 432 批：兜底值从 `http://127.0.0.1:8000/api` 改成 **`/api`**。
+// 仓库里只有 `.env.development`（当时缺 `.env.production`），于是**生产构建**取不到变量、
+// 用上兜底值 → 产物里写死 127.0.0.1:8000，线上所有请求与图片都指向访客自己的机器。
+// 兜底必须是"最安全的那种"：同源相对路径（由 nginx 反代到后端）。
+export const baseURL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 // 媒体文件地址（去掉 /api 前缀）
 export const mediaBase = baseURL.replace(/\/api\/?$/, '');

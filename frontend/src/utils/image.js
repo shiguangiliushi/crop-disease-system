@@ -1,4 +1,4 @@
-import { sameOriginMediaPath } from './mediaUrl';
+import { mediaOrigin, sameOriginMediaPath } from './mediaUrl';
 
 /**
  * 获取图片的完整URL
@@ -13,10 +13,9 @@ import { sameOriginMediaPath } from './mediaUrl';
 export const getImageUrl = (path) => {
   if (!path) return '';
 
-  // /media/ 走同源相对路径：既不拼 API 前缀，也不再受历史数据里的 host 影响
+  // /media/ 走媒体 origin：生产为空（同源相对），开发是 http://127.0.0.1:8000
   const mediaPath = sameOriginMediaPath(path);
   if (mediaPath) return mediaPath;
-  if (path.startsWith('/media/')) return path;
 
   // 如果已经是完整的URL，直接返回
   if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
@@ -25,9 +24,9 @@ export const getImageUrl = (path) => {
   
   // 处理相对路径
   if (path.startsWith('/')) {
-    // 如果路径以/开头，说明是绝对路径，直接拼接API基础URL
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-    return `${baseUrl}${path}`;
+    // 只拼**媒体 origin**（去掉 /api）：接口前缀和媒体前缀不是一回事，
+    // 拼成 `…/api/media/…` 只会 404；生产下 origin 为空 → 直接同源相对路径。
+    return `${mediaOrigin()}${path}`;
   }
   
   // 处理相对路径（不以/开头）
@@ -50,14 +49,13 @@ export const getThumbnailUrl = (path, width = 300, height) => {
   }
   
   // 处理相对路径
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
-  const url = new URL(path, baseUrl);
-  
-  // 添加缩略图参数（这里假设你的后端支持这些参数）
-  url.searchParams.set('width', width);
-  if (height) {
-    url.searchParams.set('height', height);
-  }
-  
-  return url.toString();
+  // ⚠️ 不能用 `new URL(path, baseUrl)`：生产下 origin 是空串（同源相对），
+  //    空 base 会直接抛 `Invalid URL`。手工拼 query 更稳，也更好测。
+  const base = mediaOrigin();
+  const relative = path.startsWith('/') ? path : `/${path}`;
+  const params = new URLSearchParams({ width: String(width) });
+  if (height) params.set('height', String(height));
+  const separator = relative.includes('?') ? '&' : '?';
+
+  return `${base}${relative}${separator}${params.toString()}`;
 };

@@ -68,7 +68,7 @@ axios.defaults.withCredentials = true;
 // 注意：原来这里写的是 VITE_APP_API_BASE_URL（多了一个 APP），该变量在任何 .env 里
 // 都不存在，于是全局 axios 一直悄悄回退到 http://localhost:8000/api；
 // 而其余客户端（api/http.js 等）用的是 127.0.0.1，等于同一个后端被当成两个源。
-axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 // 请求拦截器
 axios.interceptors.request.use(

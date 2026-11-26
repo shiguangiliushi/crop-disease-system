@@ -55,7 +55,7 @@ export async function askAssistant({ question, session_id, pest_identifier, imag
 }
 
 /** 与 `http.js` 保持一致的 baseURL（流式只能用 fetch，见下面注释） */
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '');
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 /** 从 `utils/authStorage` 的约定里取 token（登录态在 sessionStorage） */
 function authToken() {

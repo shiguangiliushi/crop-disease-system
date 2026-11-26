@@ -16,7 +16,7 @@ import { getToken, clearIdentity } from '@/utils/authStorage';
 // 注意：兜底值必须带 /api 前缀，与 http.js / utils/axios.js / main.js 保持一致。
 // 原来兜底是 'http://127.0.0.1:8000'（少 /api），而仓库只有 .env.development；
 // production 构建不会加载它，于是所有请求会打到 .../news/ 这类缺 /api 的地址 → 404。
-const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, '') + '/';
+const baseURL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '') + '/';
 
 const apiClient = axios.create({
   baseURL: baseURL,

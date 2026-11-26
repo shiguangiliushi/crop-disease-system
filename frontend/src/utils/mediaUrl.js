@@ -33,6 +33,32 @@
 const MEDIA_PREFIX = '/media/';
 
 /**
+ * 媒体服务的 **origin**（把 `VITE_API_BASE_URL` 里的 `/api` 去掉）。
+ *
+ * ## 为什么要单独一个函数
+ *
+ * `VITE_API_BASE_URL` 是**接口**基地址，带 `/api` 前缀；而 `/media/`、`/static/`
+ * 由 nginx 在**根路径**上发。直接用接口基地址拼图片会得到
+ * `…/api/media/x.jpg`（404）或 `http://127.0.0.1:8000/api/media/x.jpg`（线上 Mixed Content）。
+ *
+ * 三种环境下的取值：
+ *
+ * | 环境 | `VITE_API_BASE_URL` | 本函数返回 | 拼出来的图片地址 |
+ * |---|---|---|---|
+ * | 开发 | `http://127.0.0.1:8000/api` | `http://127.0.0.1:8000` | 绝对地址（Vite 里也配了 `/media` 代理） |
+ * | 生产 | `/api` | `''` | `/media/x.jpg`（同源，页面是 https 就是 https） |
+ * | 没配 | `''` | `''` | 同上 |
+ *
+ * 第 432 批：生产构建缺 `.env.production` 时，兜底值是 `http://127.0.0.1:8000/api`，
+ * 拼出来的图片就是 `http://127.0.0.1:8000/api/media/…` —— 既 404 又是 Mixed Content。
+ * 现在基地址兜底是 `/api`，这里再保证"图片不吃 /api 前缀"。
+ */
+export function mediaOrigin() {
+  const base = import.meta.env.VITE_API_BASE_URL || '';
+  return base.replace(/\/+$/, '').replace(/\/api$/, '');
+}
+
+/**
  * 把一个"不安全的媒体地址"换成同源相对路径。
  *
  * @param {string} value 可能是 `http://host/media/x.jpg`、`/media/x.jpg`、完整外链

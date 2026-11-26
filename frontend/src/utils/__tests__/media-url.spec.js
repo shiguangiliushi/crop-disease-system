@@ -11,10 +11,10 @@
  *   3. **`/media/` 不再拼 API 前缀**（`VITE_API_BASE_URL` 带 `/api` 时会拼成
  *      `/api/media/…`，那是 404，不是图片）。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { normalizeMediaUrl, normalizeMediaUrlsIn, sameOriginMediaPath } from '../mediaUrl';
-import { getImageUrl } from '../image';
+import { mediaOrigin, normalizeMediaUrl, normalizeMediaUrlsIn, sameOriginMediaPath } from '../mediaUrl';
+import { getImageUrl, getThumbnailUrl } from '../image';
 
 describe('sameOriginMediaPath', () => {
   it('http 的 /media/ 地址 → 同源相对路径（含 query）', () => {
@@ -70,6 +70,35 @@ describe('getImageUrl', () => {
   it('data: 与空值原样返回', () => {
     expect(getImageUrl('data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA');
     expect(getImageUrl('')).toBe('');
+  });
+});
+
+describe('mediaOrigin（接口前缀 vs 媒体前缀，第 432 批）', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('生产（/api）→ 空串，图片走同源相对路径', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/api');
+    expect(mediaOrigin()).toBe('');
+    expect(getImageUrl('/media/a.jpg')).toBe('/media/a.jpg');
+  });
+
+  it('开发（绝对地址）→ 去掉 /api，只留 origin', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8000/api');
+    expect(mediaOrigin()).toBe('http://127.0.0.1:8000');
+    // 关键：不能拼成 http://127.0.0.1:8000/api/media/a.jpg（那是 404）
+    expect(getImageUrl('/media/a.jpg')).toBe('http://127.0.0.1:8000/media/a.jpg');
+    expect(getImageUrl('/static/a.png')).toBe('http://127.0.0.1:8000/static/a.png');
+  });
+
+  it('没配 → 空串（同源）', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '');
+    expect(mediaOrigin()).toBe('');
+  });
+
+  it('缩略图在生产下不炸（空 base 不能进 new URL）且带宽度参数', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/api');
+    expect(getThumbnailUrl('/media/a.jpg', 300)).toBe('/media/a.jpg?width=300');
+    expect(getThumbnailUrl('/media/a.jpg', 300, 200)).toBe('/media/a.jpg?width=300&height=200');
   });
 });
 

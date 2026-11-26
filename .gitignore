@@ -32,9 +32,16 @@ logs/
 # 写进密钥就会被直接提交。
 .env
 .env.*
-!.env.example          # 模板要入库（只有占位符）
-!.env.development      # 已入库：只许放地址；VITE_ 变量会被打进前端包、公开可见
-!.env.production       # 同上
+# ⚠️ 第 432 批：白名单三行原来把注释写在**同一行**（`!.env.example   # 模板…`），
+#   gitignore 会把行尾的 `# …` 当成模式的一部分 —— 三条否定规则从来没生效过。
+#   （`.env.development` 之所以在库里，是它更早就被 add 过；新造 `.env.production` 加不进来。）
+#   注释必须单独成行。
+# 模板要入库（只有占位符）
+!.env.example
+# 已入库：只许放地址；VITE_ 变量会被打进前端包、公开可见
+!.env.development
+# 同上
+!.env.production
 *.pem
 *.key
 

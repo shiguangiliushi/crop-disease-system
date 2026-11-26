@@ -452,6 +452,7 @@ import { useAuthStore } from '@/stores/auth';
 import PageExtras from '@/components/PageExtras.vue';
 // 第 50 批：离线识别（断网时图片入本地队列，联网后自动补传）
 import { compressImage } from '@/utils/imageCompress';  // 第 165 批：与论坛/新闻共用同一份压缩
+import { mediaOrigin } from '@/utils/mediaUrl';        // 第 432 批：图片只拼媒体 origin（不吃 /api）
 import { enqueueOfflineImage, isBrowserOnline } from '@/utils/offlineSync';
 import { getOfflineQueue } from '@/utils/offlineStorage';
 import { locale, useI18n } from '@/i18n';  // 第 58 批：多语言
@@ -1041,10 +1042,9 @@ const detectDisease = async () => {
       const normalizedUrl = url.replace(/\\/g, '/');
 
       // 添加基础URL
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}:8000`;
-
-      // 确保URL格式正确
-      const base = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+      // ⚠️ 第 432 批：只拼**媒体 origin**（去掉 `/api`）。接口基地址与媒体前缀不是一回事，
+      //    拼成 `…/api/media/…` 只会 404；生产下 origin 为空 → 同源相对路径。
+      const base = mediaOrigin();
       const path = normalizedUrl.startsWith('/') ? normalizedUrl : `/${normalizedUrl}`;
 
       return `${base}${path}`;

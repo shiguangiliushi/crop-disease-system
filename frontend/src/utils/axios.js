@@ -13,7 +13,7 @@ import { t } from '@/i18n';  // 第 83 批：错误兜底文案跟随语言
 // baseURL 与统一客户端 src/api/http.js 保持一致，避免出现
 // “一部分请求打到 127.0.0.1:8000、另一部分打到 localhost:8000” 的双源问题。
 const service = axios.create({
-  baseURL: (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/+$/, ''),
+  baseURL: (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, ''),
   timeout: 30000,   // 请求超时时间
   withCredentials: true, // 跨域时携带 Cookie（会话认证 / CSRF 需要）
   // 移除了默认的 Content-Type，让 axios 自动设置
