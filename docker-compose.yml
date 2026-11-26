@@ -42,6 +42,16 @@ services:
       # 上传的图片必须落在宿主机上，否则重建容器就丢
       - ./backend/media:/app/media
       - ./backend/logs:/app/logs
+      # ⚠️ 第 438 批：**数据库也必须在宿主机上**。
+      # 之前只有 media/logs 两个挂载，而 Django 的默认 DB 是 /app/db.sqlite3
+      # （容器内）—— 于是每次 `up -d --build backend` 都会回退到镜像里那份快照。
+      # 实测：线上 141 条识别记录，宿主机文件里只有 140 条（重建吞了一条）。
+      # 注意：Dockerfile 的 `COPY . .` 会把 db.sqlite3 烤进镜像，所以
+      # backend/.dockerignore 必须排除它（否则镜像是"生产数据快照"）。
+      - ./backend/db.sqlite3:/app/db.sqlite3
+      # 备份产物也落宿主机：backend_backup 默认写 /backups（DJANGO_BACKUP_DIR），
+      # 不挂载的话备份跟着容器一起销毁（第 438 批之前就是这样丢的）。
+      - ./backups:/backups
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health/"]
       interval: 30s

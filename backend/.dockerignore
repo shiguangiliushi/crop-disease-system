@@ -1,0 +1,28 @@
+# 构建上下文排除项（第 438 批）
+#
+# 为什么必须有这个文件：
+#   Dockerfile 里是 `COPY . .` —— 没有 .dockerignore 时，`backend/` 下**所有东西**
+#   都会被打进镜像，包括：
+#     · db.sqlite3 —— 一旦被烤进镜像，`up -d --build` 就会把线上数据**回退**到
+#       构建那一刻的快照（实测丢过 1 条识别记录）；
+#     · media/（用户上传的图片）与 logs/ —— 镜像体积暴涨（实测构建上下文 100MB → 6MB）；
+#     · backups/ —— 备份产物没必要进镜像。
+#
+# 这些目录在 docker-compose.yml 里都是**挂载**进去的，运行时本来就有。
+
+db.sqlite3
+db.sqlite3.*
+db.*.sqlite3
+db.host.bak*
+db.*.bak
+
+media/
+logs/
+backups/
+
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
