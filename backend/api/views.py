@@ -2083,6 +2083,28 @@ class DetectionHistoryView(APIView):
         return queryset.order_by('-timestamp').distinct()
 
     def get_serializer(self, *args, **kwargs):
+        """第 435 批：**必须带上 context**，否则图片地址会变成 `http://localhost:8000`。
+
+        原来这里写成 `return self.serializer_class(*args, **kwargs)`，把 DRF
+        传进来的 context（含 `request`）整个丢掉了 —— DRF 默认实现里有
+        `kwargs.setdefault('context', self.get_serializer_context())`。
+
+        后果链（线上实测）：
+          1. 序列化器里 `self.context.get('request')` 拿到 None；
+          2. `DetectionHistorySerializer.get_image()` 走 no-request 分支，
+             用 `settings.BASE_URL` 兜底 —— 这个项目根本没定义 BASE_URL，
+             于是用了硬编码的 `http://localhost:8000`；
+          3. 前端拿到 `http://localhost:8000/media/detection_uploads/xxx.JPG`，
+             在 HTTPS 页面里被升级成 `https://localhost:8000/...` →
+             访客自己电脑的 8000 端口 → `ERR_CONNECTION_REFUSED`（裂图）。
+
+        注意：数据库是**干净**的（相对路径），所以 `check_media_urls` 查不出问题 ——
+        这个 bug 只在"序列化时"发生，不落地。
+        """
+        # ⚠️ 这个视图继承的是 APIView（不是 GenericAPIView），所以没有
+        # `get_serializer_context()`；直接给最小可用 context 即可 ——
+        # 序列化器只需要 `request`（用来把 `/media/…` 拼成绝对地址）。
+        kwargs.setdefault('context', {'request': getattr(self, 'request', None)})
         return self.serializer_class(*args, **kwargs)
 
     def _get_pagination_params(self, query_params):

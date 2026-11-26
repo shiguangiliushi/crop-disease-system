@@ -521,6 +521,47 @@ class DetectionHistoryScopeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row['id'] for row in self._items(response)], [self.bob_record.id])
 
+    def test_image_url_is_not_hardcoded_host(self):
+        """图片地址不能用"硬编码 host"兜底（第 435 批）
+
+        线上实测：HTTPS 页面请求 `http://localhost:8000/media/detection_uploads/…JPG`
+        → 升级成 `https://localhost:8000/...` → 访客本机 → `ERR_CONNECTION_REFUSED`（裂图）。
+
+        根因**不是库里存了绝对地址**（数据是相对路径，`check_media_urls` 查不出），
+        而是本视图的 `get_serializer()` 覆写把 DRF 的 `context`（含 `request`）丢了，
+        于是 `DetectionHistorySerializer.get_image()` 走 no-request 分支、
+        用 `settings.BASE_URL` 兜底 —— 项目没定义 BASE_URL，默认值就是
+        `http://localhost:8000`。
+
+        修复后：context 里有 request → 地址是**当前请求的域名**（测试里是 testserver），
+        永远不可能是 localhost/127.0.0.1。
+        """
+        response = self.admin_client.get(
+            '/api/detection-history/', {'all_users': 'true', 'page_size': 50},
+        )
+        self.assertEqual(response.status_code, 200)
+        images = [row['image'] for row in self._items(response) if row.get('image')]
+        self.assertTrue(images, '用例前提：记录必须带图')
+        for url in images:
+            self.assertIn('/media/', url)
+            self.assertNotIn('localhost', url)
+            self.assertNotIn('127.0.0.1', url)
+            # 必须跟着请求走（DRF 测试客户端是 testserver），而不是某个写死的地址
+            self.assertIn('testserver', url)
+
+    def test_serializer_without_request_returns_relative_url(self):
+        """没有 request 时返回相对地址（第 435 批）—— 不拼任何 host
+
+        注意 `detection_history/` 是私有目录，`SignedMediaStorage.url()` 会追加
+        `?sig=…&exp=…`，所以断言用 startswith 而不是等值。
+        """
+        from .serializers import DetectionHistorySerializer
+
+        data = DetectionHistorySerializer(self.alice_record).data
+        self.assertTrue(data['image'].startswith('/media/detection_history/test-alice.png'))
+        self.assertNotIn('localhost', data['image'])
+        self.assertNotIn('127.0.0.1', data['image'])
+
     def test_search_matches_disease_name(self):
         response = self.admin_client.get(
             '/api/detection-history/',

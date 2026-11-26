@@ -799,11 +799,13 @@ class DetectionHistorySerializer(serializers.ModelSerializer):
             # 构建完整的URL
             if request is not None:  # 检查请求对象是否存在
                 return request.build_absolute_uri(url)
-            else:  # 如果请求对象不存在
-                # 如果没有request对象，返回完整URL（使用settings中的配置）
-                from django.conf import settings
-                base_url = getattr(settings, 'BASE_URL', 'http://localhost:8000')
-                return f"{base_url.rstrip('/')}{url}"
+            else:
+                # 第 435 批：**没有 request 时返回相对地址**，绝不拼 host。
+                # 原来这里用 `settings.BASE_URL` 兜底、默认值是 `http://localhost:8000` ——
+                # 而本项目根本没有 BASE_URL，于是线上图片地址变成
+                # `http://localhost:8000/media/...`，HTTPS 页面下必裂（访客本机的 8000）。
+                # 相对地址交给前端/浏览器按当前域名解析，任何环境下都不会错。
+                return url
 
         except Exception as e:  # 捕获异常
             logger = logging.getLogger(__name__)
