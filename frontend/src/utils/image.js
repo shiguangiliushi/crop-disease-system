@@ -1,11 +1,23 @@
+import { sameOriginMediaPath } from './mediaUrl';
+
 /**
  * 获取图片的完整URL
+ *
+ * 第 430 批：历史数据里存过 `http://<服务器IP>/media/x.jpg` 这种**完整地址**，
+ * HTTPS 页面下会被浏览器按 Mixed Content 拦掉（图片裂开）。所以第一件事是
+ * 把"http 的 /media/ 地址"归一成同源相对路径。理由见 `utils/mediaUrl.js`。
+ *
  * @param {string} path - 图片路径
  * @returns {string} 完整的图片URL
  */
 export const getImageUrl = (path) => {
   if (!path) return '';
-  
+
+  // /media/ 走同源相对路径：既不拼 API 前缀，也不再受历史数据里的 host 影响
+  const mediaPath = sameOriginMediaPath(path);
+  if (mediaPath) return mediaPath;
+  if (path.startsWith('/media/')) return path;
+
   // 如果已经是完整的URL，直接返回
   if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
     return path;

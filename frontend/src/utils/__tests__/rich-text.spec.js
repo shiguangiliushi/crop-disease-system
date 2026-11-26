@@ -82,3 +82,24 @@ describe('sanitizeRichText 与兼容层的配合', () => {
     expect(result).not.toContain('href="javascript:');
   });
 });
+
+describe('混合内容：正文里的 http 图片被归一（第 430 批）', () => {
+  // 生产站 HTTPS 页面里，历史正文存着 `http://<服务器IP>/media/x.jpg` ——
+  // 浏览器按 Mixed Content 直接拦掉，用户看到的是"图片裂了"。
+  it('http 的 /media/ 图片改成同源相对路径', () => {
+    const html = '<p>症状：</p><img src="http://10.0.0.5/media/pest_images/a.jpg" alt="病斑">';
+    const result = sanitizeRichText(html);
+    expect(result).toContain('src="/media/pest_images/a.jpg"');
+    expect(result).not.toContain('10.0.0.5');
+  });
+
+  it('https 外链图片不动（图床域名不归我们管）', () => {
+    const html = '<img src="https://cdn.example.com/x.png">';
+    expect(sanitizeRichText(html)).toContain('src="https://cdn.example.com/x.png"');
+  });
+
+  it('http 但不是 /media/ 的图片不动（不在我们的媒体目录里）', () => {
+    const html = '<img src="http://example.com/x.png">';
+    expect(sanitizeRichText(html)).toContain('src="http://example.com/x.png"');
+  });
+});

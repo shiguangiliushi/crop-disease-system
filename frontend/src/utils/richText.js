@@ -1,5 +1,7 @@
 import DOMPurify from 'dompurify';
 
+import { sameOriginMediaPath } from './mediaUrl';
+
 /**
  * 富文本净化（第 91 批）
  * ------------------------------------------------------------------
@@ -51,6 +53,16 @@ if (DOMPurify.isSupported && typeof DOMPurify.addHook === 'function') {
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     if (node.tagName === 'A' && node.getAttribute('target')) {
       node.setAttribute('rel', 'noopener noreferrer');
+    }
+
+    // 第 430 批：混合内容（Mixed Content）
+    // 历史正文里存过 `<img src="http://<服务器IP>/media/x.jpg">` —— HTTPS 页面下
+    // 浏览器直接拦掉（用户看到的是"图片裂了"）。这里在**渲染这一步**归一成
+    // 同源相对路径 `/media/x.jpg`：页面是 https 它自然就是 https。
+    // 只认 `/media/`（见 `utils/mediaUrl.js`），外部图床一律不动。
+    if (node.tagName === 'IMG') {
+      const fixed = sameOriginMediaPath(node.getAttribute('src'));
+      if (fixed) node.setAttribute('src', fixed);
     }
   });
 }
