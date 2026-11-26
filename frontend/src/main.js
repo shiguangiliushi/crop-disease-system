@@ -59,68 +59,6 @@ if (import.meta.env.PROD) {
 }
 
 
-// 配置 WebSocket 重连机制
-// 配置 WebSocket 连接
-const setupWebSocket = () => {
-  // 只在生产环境启用 WebSocket
-  if (import.meta.env.PROD && window.WebSocket) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
-    let reconnectTimeout;
-    
-    const connectWebSocket = () => {
-      try {
-        const ws = new WebSocket(wsUrl);
-        
-        ws.onopen = () => {
-          reconnectAttempts = 0; // 重置重连次数
-        };
-        
-        ws.onclose = (e) => {
-          
-          // 指数退避重连
-          if (reconnectAttempts < maxReconnectAttempts) {
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-            reconnectTimeout = setTimeout(connectWebSocket, delay);
-            reconnectAttempts++;
-          } else {
-            console.warn('Max reconnection attempts reached, giving up');
-          }
-        };
-        
-        ws.onerror = (err) => {
-          console.error('WebSocket error:', err);
-          ws.close();
-        };
-        
-        return ws;
-      } catch (err) {
-        console.error('WebSocket connection error:', err);
-        return null;
-      }
-    };
-    
-    // 初始连接
-    window.ws = connectWebSocket();
-    
-    // 清理函数
-    return () => {
-      if (window.ws) {
-        window.ws.close();
-        window.ws = null;
-      }
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
-    };
-  } else {
-    return () => {}; // 返回空清理函数
-  }
-};
-
 // 创建应用实例
 const app = createApp(App);
 const pinia = createPinia();
@@ -289,13 +227,14 @@ const mountApp = async () => {
     // 挂载应用
     app.mount('#app-container');
     window.__app_mounted__ = true;
-    
-    // 初始化 WebSocket
-    if (!window.__websocket_initialized__) {
-      setupWebSocket();
-      window.__websocket_initialized__ = true;
-    }
-    
+
+    // 第 429 批：这里原来会连一个 `wss://<host>/ws`（生产环境专用，带 5 次指数退避重连）。
+    // 后端从来没有 WebSocket 服务：`asgi.py` 就是 `get_asgi_application()`，
+    // gunicorn 走 WSGI，依赖里没有 channels，nginx 也没有 `/ws` 转发。
+    // 于是每次打开生产站点都会白试 6 次、打 6 条报错（浏览器还会记一条 ERR_FAILED），
+    // 然后 "Max reconnection attempts reached"。客户端也**没有 onmessage** ——
+    // 就算真连上也什么都不做。已整段删除，别再照着旧代码加回来。
+
   } catch (error) {
     console.error('Failed to mount app:', error);
     
