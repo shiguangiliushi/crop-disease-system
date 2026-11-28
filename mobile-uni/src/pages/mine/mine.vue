@@ -3,7 +3,8 @@
     <view class="profile">
       <view class="avatar">{{ initial }}</view>
       <view class="who">
-        <text class="name">{{ auth.username || t('mine.guest') }}</text>
+        <!-- 第 439 批：游客不显示 `guest_ab12cd34` 这种用户名（看着像注册成功了） -->
+        <text class="name">{{ auth.isGuest ? t('guest.badge') : (auth.username || t('mine.guest')) }}</text>
         <text class="role">{{ roleText }}{{ levelText ? ' · ' + levelText : '' }}</text>
       </view>
     </view>
@@ -24,19 +25,19 @@
     </view>
 
     <view class="card menu">
-      <view class="menu-item" @click="goMyFeedback">
+      <view v-if="!auth.isGuest" class="menu-item" @click="goMyFeedback">
       <text class="menu-label">{{ t('myFeedback.title') }}</text>
     </view>
 
-    <view class="menu-item" @click="goFeedback">
+    <view v-if="!auth.isGuest" class="menu-item" @click="goFeedback">
       <text class="menu-label">{{ t('feedbackForm.title') }}</text>
     </view>
 
-    <view class="menu-item" @click="goProfileEdit">
+    <view v-if="!auth.isGuest" class="menu-item" @click="goProfileEdit">
       <text class="menu-label">{{ t('profileEdit.title') }}</text>
     </view>
 
-    <view class="menu-item" @click="goNotifications">
+    <view v-if="!auth.isGuest" class="menu-item" @click="goNotifications">
       <text class="menu-label">{{ t('notify.title') }}</text>
       <text v-if="unread" class="menu-value">{{ unread }}</text>
     </view>
@@ -67,9 +68,14 @@
       <!-- #endif -->
     </view>
 
-    <button class="danger" @click="onDeleteAccount">{{ t('mine.deleteAccount') }}</button>
-
-    <button class="logout" @click="onLogout">{{ t('mine.logout') }}</button>
+    <!-- 第 439 批：游客没有"注销/退出"可说 —— 他连账号都没有，给他注册入口 -->
+    <block v-if="auth.isGuest">
+      <button class="logout" @click="goRegister">{{ t('guest.register') }}</button>
+    </block>
+    <block v-else>
+      <button class="danger" @click="onDeleteAccount">{{ t('mine.deleteAccount') }}</button>
+      <button class="logout" @click="onLogout">{{ t('mine.logout') }}</button>
+    </block>
 
     <BottomNav current="mine" />
   </view>
@@ -103,9 +109,15 @@ const unread = ref(0)  // 第 262 批：未读通知数
 const initial = computed(() => (auth.username || '?').slice(0, 1).toUpperCase())
 
 const roleText = computed(() => {
+  // 第 439 批：游客显示"注册后记录会保留"，而不是"普通用户"
+  if (auth.isGuest) return t('mine.guestTrialHint')
   const role = auth.user?.role
   return role === 'ADMIN' ? t('mine.admin') : t('mine.user')
 })
+
+function goRegister() {
+  uni.navigateTo({ url: '/pages/register/register' })
+}
 
 const levelText = computed(() => levelName.value)
 

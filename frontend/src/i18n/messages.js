@@ -9,6 +9,17 @@
  * 其余页面用 `docs/tools/check_i18n_coverage.py` 统计剩余量，按批推进。
  */
 export const zhCN = {
+  // 第 439 批：游客试用（免登录 3 次识别 / 5 次问答）
+  guest: {
+    badge: '试用中',
+    hint: '免登录试用：每天可识别 3 次、问答 5 次',
+    detectLeft: '今天还可识别 {n} 次',
+    askLeft: '今天还可问答 {n} 次',
+    exhausted: '今天的试用次数已用完',
+    resetAt: '明天 0 点重置',
+    registerCta: '注册后不限次数',
+    register: '免费注册',
+  },
   // 第 185 批：系统合并页的页签（系统健康 + 操作日志）
   // 第 186 批：加上「版块管理」页签 —— 它是 BROADCAST 那一档（全权管理员或
   // 版块管理者），页签按权限画：只有 BROADCAST 的人只看到这一个页签。
@@ -3523,6 +3534,17 @@ export const zhCN = {
 };
 
 export const en = {
+  // Batch 439: guest trial (3 detections / 5 questions per day, no sign-up)
+  guest: {
+    badge: 'Trial',
+    hint: 'Try without signing up: 3 detections and 5 questions a day',
+    detectLeft: '{n} detection(s) left today',
+    askLeft: '{n} question(s) left today',
+    exhausted: 'Your trial uses for today are used up',
+    resetAt: 'Resets at midnight',
+    registerCta: 'Sign up for unlimited use',
+    register: 'Sign up free',
+  },
   // Batch 185: tabs of the merged system page (system health + audit log)
   // Batch 186: added the Boards tab — that one belongs to the BROADCAST tier
   // (full admin or board manager); tabs are drawn per permission, so someone

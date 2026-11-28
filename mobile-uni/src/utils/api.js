@@ -104,6 +104,31 @@ export async function fetchPests() {
 }
 
 /**
+ * 第 439 批：游客试用 —— 开一个免登录身份
+ *
+ * `device: 'app'` 与登录一致：后端按设备签发凭证，不顶掉手机 H5 / 桌面端的登录态。
+ * 返回里带 `quota`（今天还能识别几次），由 store 存起来给识别页显示。
+ */
+export async function startGuestTrial() {
+  const body = await request({
+    url: '/guest/session/',
+    method: 'POST',
+    data: { device: 'app' },
+  })
+  const data = unwrapAuth(body)
+  if (!data.user || !data.token) {
+    throw new Error(body.message || '试用开启失败')
+  }
+  return { user: data.user, token: data.token, quota: data.quota || null }
+}
+
+/** 第 439 批：查剩余试用额度（登录用户后端返回 unlimited） */
+export async function fetchGuestQuota() {
+  const body = await request({ url: '/guest/quota/' })
+  return (body && body.data) || body || {}
+}
+
+/**
  * 识别一张图
  *
  * @param {string} filePath `uni.chooseImage` 给的临时路径

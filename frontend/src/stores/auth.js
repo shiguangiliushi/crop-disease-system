@@ -6,6 +6,8 @@ import { t } from '@/i18n';  // 第 84 批：错误文案跟随语言
 // localStorage 只留一份"最近一次登录的账号"作为新标签页的兜底。
 // 具体规则见 utils/authStorage.js 的模块注释。
 import { getIdentity, saveIdentity, clearIdentity, patchStoredUser } from '@/utils/authStorage';
+// 第 439 批：游客试用（免登录 3 次识别 / 5 次问答）
+import { startGuestSession, fetchGuestQuota } from '@/api/guest';
 
 // Helper function to get cookie value by name
 function getCookie(name) {
@@ -245,6 +247,7 @@ const CONTENT_MODULES = [
   function clearAuth() {
     user.value = null;
     authToken.value = null;
+    quota.value = null;
     clearIdentity();
     // 注意：这里只清身份，不动其它本地数据（例如用户自己保存的账号偏好）
   }
@@ -598,6 +601,57 @@ const CONTENT_MODULES = [
   }
 
 
+  // ==========================================================================
+  // 游客试用（第 439 批）
+  // --------------------------------------------------------------------------
+  // 游客**就是**一个带 token 的用户（`user.is_guest === true`），所以
+  // `isAuthenticated`、请求拦截器、401 处理全都不用分叉 —— 前端只多做两件事：
+  //   1. 进来发现没身份时**自动开一个**，而不是把人送到登录页；
+  //   2. 把"还剩几次"显示出来，用完再引导注册。
+  // ==========================================================================
+  const isGuest = computed(() => Boolean(user.value?.is_guest));
+  const quota = ref(null);
+
+  /**
+   * 开一个游客身份。
+   * @returns {Promise<boolean>} 成功与否；失败时调用方继续走"跳登录页"
+   */
+  async function startGuestTrial() {
+    try {
+      const body = await startGuestSession();
+      // `unwrapAuthPayload` 同时兼容 {status,message,data} 与已解包两种形状
+      const data = unwrapAuthPayload(body);
+      if (!data?.token || !data?.user) {
+        console.warn('[guest] 开试用返回结构不认识:', body);
+        return false;
+      }
+      setAuth({ userData: data.user, token: data.token, remember: true });
+      quota.value = data.quota || null;
+      // 身份一样写进 session/local 两个存储：新标签页不该再开一个新账号
+      // （额度按 IP 算，多开账号只会把用户表撑大，不会多给一次机会）
+      return true;
+    } catch (error) {
+      // 403（试用关闭）/ 429（限流）都走这里 —— 交给守卫把人送到登录页
+      console.warn('[guest] 开启试用失败:', error?.message || error);
+      return false;
+    }
+  }
+
+  /** 刷新剩余次数（识别 / 问答之后各调一次） */
+  async function refreshQuota() {
+    if (!authToken.value) return null;
+    try {
+      const body = await fetchGuestQuota();
+      const data = unwrapAuthPayload(body);
+      if (data && typeof data === 'object') quota.value = data;
+      return quota.value;
+    } catch (error) {
+      // 查不到额度不该影响主流程（最坏是顶部不显示数字）
+      console.warn('[guest] 查额度失败:', error?.message || error);
+      return quota.value;
+    }
+  }
+
   return {
     user,
     authToken,
@@ -628,6 +682,11 @@ const CONTENT_MODULES = [
     verifyToken,   // 第 123 批：主动向后端校验 token（会发请求，断网时不清登录态）
     setAuth,
     updateUser,
+    // 第 439 批：游客试用（isGuest 决定是否显示试用条；quota 是剩余次数）
+    isGuest,
+    quota,
+    startGuestTrial,
+    refreshQuota,
     // 必须导出 clearAuth：main.js 的 initAuth 与 utils/axios.js 的 401 处理
     // 都在调 authStore.clearAuth()，漏掉会抛 TypeError、401 之后清不掉登录态；
     // main.js 的初始化也依赖它处理"本地身份已失效"的情况。

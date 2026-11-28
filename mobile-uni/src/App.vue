@@ -8,15 +8,13 @@
  */
 export default {
   onLaunch() {
-    // 有 token 就直接进识别页，省掉一次"闪一下登录页"
-    try {
-      const token = uni.getStorageSync('uni_token')
-      if (token) {
-        uni.reLaunch({ url: '/pages/detect/detect' })
-      }
-    } catch (error) {
-      console.warn('[app] 读取登录态失败', error)
-    }
+    // 第 439 批：**无论有没有登录态都先落到识别页**。
+    //   · 有 token → 直接可用（与改动前一致）；
+    //   · 没有 token → 识别页会先自动开一个游客试用（`pages/detect` 的 onShow），
+    //     开不了（试用关闭 / 没网）才把人送回登录页。
+    // 改前没有 token 时停在第一页（登录表单）—— 新用户打开 App 第一眼就是
+    // "输账号密码"，而他要的只是拍张叶子照片。
+    uni.reLaunch({ url: '/pages/detect/detect' })
   },
 }
 </script>

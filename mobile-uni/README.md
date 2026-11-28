@@ -1,4 +1,4 @@
-# 移动端 · uni-app 版（第 232 批）
+﻿# 移动端 · uni-app 版（第 232 批）
 
 > 目标：**同一套代码出 H5 + 微信小程序 + Android/iOS APP**（现有 `mobile/` 的 Vant H5 保留不动）。
 > 当前进度：**步骤 ①——骨架 + 登录 + 识别 + 结果三页，跑在 H5 上**。
@@ -18,7 +18,7 @@ mobile-uni/
 ├── package.json        只装了 H5 / App 端依赖
 ├── docs/打包APK.md     出 APK 的两条路线与坑（HBuilderX 云打包 / 离线打包）
 └── src/
-    ├── App.vue         全局样式 + 启动时按登录态跳转
+    ├── App.vue         全局样式 + 启动固定落识别页（无身份则自动开游客试用，第 439 批）
     ├── main.js         uni-app 约定的 createApp()（必须返回 Pinia）
     ├── pages.json      页面路由（登录 / 识别 / 历史 / 我的 / 结果）
     ├── manifest.json   应用信息（小程序配置先留空，用到再填）
@@ -70,7 +70,8 @@ npm run build:app     # 产出 dist/build/app（HBuilderX 导入它再云打包�
 |---|---|
 | 登录带 `device` | 登录时传 `device: 'app'`，与桌面 `web`、旧 H5 `mobile` 区分（第 231 批：每设备一张 token） |
 | 上传字段名 `image` | 后端 `DetectView` 读的就是 `request.FILES['image']` |
-| 401 统一处理 | `utils/request.js` 清 token + 回登录页，页面不各写一份 |
+| 401 统一处理 | `utils/request.js` 清 token + 回登录页，页面不各写一份（**游客除外**：清掉即可，下次进识别页自动重开试用，第 439 批） |
+| 免登录试用 | 没有身份时识别页自动 `POST /api/guest/session/`（3 次/天，按 IP 计）；额度用尽后端回 **402**，页面提示注册而不是当成网络故障入补传队列 |
 | 识别结果跨页传 | 存 `uni.setStorageSync('last_result')`，不走 URL（小程序 URL 有长度限制） |
 
 ## 旧 H5 → uni-app 迁移说明

@@ -74,7 +74,7 @@ const routes = [
     path: '/detect',
     name: 'detect',
     component: () => import('@/views/DetectView.vue'),
-    meta: { title: 'detect.title', requiresAuth: true },
+    meta: { title: 'detect.title', requiresAuth: true, guest: true },
   },
   {
     path: '/result',
@@ -112,17 +112,26 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
   document.title = to.meta?.title ? `${t(to.meta.title)} · ${t('common.appName')}` : t('common.appName');
 
   if (to.meta?.requiresAuth && !auth.isAuthenticated) {
+    // 第 439 批：标了 `guest` 的页面（识别）先**自动开一个游客身份**，
+    // 而不是把人送到登录页 —— 手机从微信/短信点开链接，第一屏就该能拍。
+    // 开失败（试用关闭 / 限流）再走原来的登录页分支，行为不变。
+    if (to.meta?.guest) {
+      const started = await auth.startGuestTrial();
+      if (started) return true;
+    }
     return { name: 'login', query: { redirect: to.fullPath } };
   }
   // 已登录还去登录/注册页 → 直接回识别页，省掉"再登一次"的困惑
   // （忘记密码页不在此列：已登录的人也可能是来给别的账号重置的，不该被弹走）
-  if (auth.isAuthenticated && (to.name === 'login' || to.name === 'register')) {
+  // ⚠️ 第 439 批：**游客要排除**。否则试用条上点"免费注册"会被弹回识别页 ——
+  //    而注册正是他此刻唯一该做的事。
+  if (auth.isAuthenticated && !auth.isGuest && (to.name === 'login' || to.name === 'register')) {
     return { name: 'detect' };
   }
   return true;

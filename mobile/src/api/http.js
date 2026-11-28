@@ -95,19 +95,26 @@ http.interceptors.response.use(
           import('@/stores/auth'),
           import('@/router'),
         ]);
-        useAuthStore().clearAuth();
+        const store = useAuthStore();
+        // 第 439 批：游客（试用身份）失效时**不要**跳登录页 ——
+        // 他从没登录过，"登录已过期"没有意义；清掉身份即可，
+        // 下次进识别页守卫会重新开一个试用。
+        const wasGuest = Boolean(store.isGuest);
+        store.clearAuth();
 
-        try {
-          // 标记"这次是被踢出来的"，登录页读完即删
-          sessionStorage.setItem(AUTH_EXPIRED_FLAG, '1');
-        } catch {
-          /* 隐私模式忽略 */
-        }
+        if (!wasGuest) {
+          try {
+            // 标记"这次是被踢出来的"，登录页读完即删
+            sessionStorage.setItem(AUTH_EXPIRED_FLAG, '1');
+          } catch {
+            /* 隐私模式忽略 */
+          }
 
-        redirectingToLogin = true;
-        router.afterEach(() => { redirectingToLogin = false; });
-        if (router.currentRoute.value.name !== 'login') {
-          await router.replace({ name: 'login', query: { reason: 'expired' } });
+          redirectingToLogin = true;
+          router.afterEach(() => { redirectingToLogin = false; });
+          if (router.currentRoute.value.name !== 'login') {
+            await router.replace({ name: 'login', query: { reason: 'expired' } });
+          }
         }
       } catch (navError) {
         // 导航失败（例如被别的导航打断）不该吞掉原始 401 —— 让调用方照常拿到错误

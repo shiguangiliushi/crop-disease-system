@@ -3,14 +3,21 @@
 
     <div class="page-pad">
       <!-- 未登录：不弹回登录页，就地引导（点"我的"多半只是想看看有没有登录） -->
-      <div v-if="!auth.isAuthenticated" class="card guest-card">
+      <!-- 第 439 批：**游客也走这一块** —— 试用账号没有资料可看，
+           显示 `guest_ab12cd34` 这种用户名只会让人以为注册成功了。 -->
+      <div v-if="!auth.isAuthenticated || auth.isGuest" class="card guest-card">
         <span class="avatar avatar--guest">?</span>
         <div>
-          <p class="guest-name">{{ t('mine.guest') }}</p>
-          <p class="muted">{{ t('mine.guestHint') }}</p>
+          <p class="guest-name">{{ auth.isGuest ? t('guest.badge') : t('mine.guest') }}</p>
+          <p class="muted">{{ auth.isGuest ? t('mine.guestTrialHint') : t('mine.guestHint') }}</p>
         </div>
-        <van-button size="small" round type="primary" @click="router.push('/login')">
-          {{ t('mine.goLogin') }}
+        <van-button
+          size="small"
+          round
+          type="primary"
+          @click="router.push(auth.isGuest ? '/register' : '/login')"
+        >
+          {{ auth.isGuest ? t('guest.register') : t('mine.goLogin') }}
         </van-button>
       </div>
 
@@ -48,26 +55,26 @@
           @click="showLanguageSheet = true"
         />
         <van-cell
-          v-if="auth.isAuthenticated"
+          v-if="auth.isAuthenticated && !auth.isGuest"
           :title="t('notify.title')"
           :value="unread ? String(unread) : ''"
           is-link
           to="/notifications"
         />
         <van-cell
-          v-if="auth.isAuthenticated"
+          v-if="auth.isAuthenticated && !auth.isGuest"
           :title="t('profileEdit.title')"
           is-link
           to="/profile/edit"
         />
         <van-cell
-          v-if="auth.isAuthenticated"
+          v-if="auth.isAuthenticated && !auth.isGuest"
           :title="t('feedbackForm.title')"
           is-link
           to="/feedback"
         />
         <van-cell
-          v-if="auth.isAuthenticated"
+          v-if="auth.isAuthenticated && !auth.isGuest"
           :title="t('myFeedback.title')"
           is-link
           to="/feedback/mine"
@@ -76,7 +83,7 @@
         <van-cell v-if="auth.isAuthenticated" :title="t('history.title')" is-link to="/history" />
       </van-cell-group>
 
-      <div v-if="auth.isAuthenticated" class="logout-box">
+      <div v-if="auth.isAuthenticated && !auth.isGuest" class="logout-box">
         <van-button block round plain type="danger" @click="confirmLogout">{{ t('mine.logout') }}</van-button>
         <!--
           第 95 批：注销账号

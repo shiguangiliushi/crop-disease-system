@@ -1,6 +1,9 @@
 <template>
   <div class="detect-page">
 
+    <!-- 第 439 批：游客试用条（登录用户不显示） -->
+    <GuestTrialBar kind="detect" />
+
     <!-- 1. 初始上传界面 -->
     <div v-if="!isDetecting && !detectionResult">
       <div class="upload-card" :class="{ 'is-shaking': shaking }">
@@ -450,6 +453,8 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 // 第 31 批：页面底部"识别流程与拍摄建议"补充信息区
 import PageExtras from '@/components/PageExtras.vue';
+// 第 439 批：游客试用条（免登录剩余次数）
+import GuestTrialBar from '@/components/GuestTrialBar.vue';
 // 第 50 批：离线识别（断网时图片入本地队列，联网后自动补传）
 import { compressImage } from '@/utils/imageCompress';  // 第 165 批：与论坛/新闻共用同一份压缩
 import { mediaOrigin } from '@/utils/mediaUrl';        // 第 432 批：图片只拼媒体 origin（不吃 /api）
@@ -1107,6 +1112,21 @@ const detectDisease = async () => {
   } catch (error) {
     console.error('识别失败:', error);
 
+    // 第 439 批：游客试用。402 = 今天的试用次数用完（后端也给了一句人话，
+    // 这里只负责把顶部的"还剩几次"刷新成真实值，别让人看着 3 次却一直失败）。
+    if (authStore.isGuest) {
+      authStore.refreshQuota();
+      // ⚠️ 状态码有两种读法：@/utils/axios 包成了 `error.status`，
+      // 而 @/api/http 直接抛原始 axios 错误（在 `error.response.status`）。
+      if ((error?.status ?? error?.response?.status) === 402) {
+        // 优先用后端那句话（它已经写明"注册后可继续"），别把 402 的原生 message 抛给用户
+        $toast.error(
+          error?.data?.message || error?.response?.data?.message || t('guest.exhausted'),
+        );
+        return;
+      }
+    }
+
     // 第 159 批：**超时**要单独拎出来。
     // axios 的超时（`ECONNABORTED`）没有 `response`，于是原来落进了下面的"网络类失败"分支 →
     // 图片被悄悄塞进离线队列，用户看到"已存到离线队列，联网后自动识别"——
@@ -1162,6 +1182,8 @@ const detectDisease = async () => {
     isDetecting.value = false;
     stopProgressTimer();
     progress.value = 0;
+    // 第 439 批：游客识别成功 → 立刻刷新"还剩几次"（顶部试用条）
+    if (authStore.isGuest) authStore.refreshQuota();
   }
 };
 

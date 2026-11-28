@@ -62,11 +62,16 @@ service.interceptors.response.use(
           return Promise.reject(error);
         }
 
+        // 第 439 批：先记住"这次失效的是不是试用身份"，再清（清完 isGuest 就读不到了）
+        let wasGuest = false;
         // 本文件顶部已经静态导入了 useAuthStore，这里无需再动态 import。
         // 原来的 import('@/stores/auth') 既没有绕开循环依赖（静态导入已存在），
         // 又会让构建报 “dynamically imported but also statically imported” 告警。
         try {
           const authStore = useAuthStore();
+          // 第 439 批：游客（试用身份）失效时不要跳登录页 —— 他从没登录过，
+          // "登录已过期"对他没有意义；清掉身份即可，守卫会重新开一个试用。
+          wasGuest = Boolean(authStore.isGuest);
           authStore.clearAuth();
         } catch (err) {
           console.error('Error clearing auth state:', err);
@@ -75,7 +80,7 @@ service.interceptors.response.use(
         // 获取当前路径
         const currentRoute = window.location.pathname;
         // 如果当前不是登录页，则跳转到登录页并带上重定向地址
-        if (!currentRoute.includes('/login')) {
+        if (!wasGuest && !currentRoute.includes('/login')) {
           window.location.href = `/login?redirect=${encodeURIComponent(currentRoute)}`;
         }
       }

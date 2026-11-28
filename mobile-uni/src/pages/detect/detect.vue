@@ -2,10 +2,12 @@
   <view class="page">
     <view class="header">
       <view>
-        <text class="hello">{{ auth.username || t('mine.guest') }}</text>
-        <text class="hint">{{ t('detect.tip3') }}</text>
+        <text class="hello">{{ auth.isGuest ? t('guest.badge') : (auth.username || t('mine.guest')) }}</text>
+        <text class="hint">{{ auth.isGuest ? trialHint : t('detect.tip3') }}</text>
       </view>
-      <text class="logout" @click="onLogout">{{ t('mine.logout') }}</text>
+      <!-- 第 439 批：游客没有"退出登录"可点（他从没登录过），给他"免费注册" -->
+      <text v-if="auth.isGuest" class="logout" @click="goRegister">{{ t('guest.register') }}</text>
+      <text v-else class="logout" @click="onLogout">{{ t('mine.logout') }}</text>
     </view>
 
     <view v-if="pendingCount" class="pending" @click="syncQueue">
@@ -57,7 +59,7 @@
  * 现有 H5 的实时取景（`camera.js`）在小程序端**无法复用**，这是当初评估里就点明的
  * "UI 层要重写"的一部分。uni-app 这里一次调用三端都能用。
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { t } from '@/i18n'
 import { compressForUpload, fileSizeOf } from '@/utils/image'
 import { enqueue, pending, syncAll } from '@/utils/offlineQueue'
@@ -65,19 +67,34 @@ import { onShow } from '@dcloudio/uni-app'
 import BottomNav from '@/components/BottomNav.vue'
 import { useAuthStore } from '@/stores/auth'
 import { detectImage } from '@/utils/api'
-import { TOKEN_KEY } from '@/utils/request'
 
 const auth = useAuthStore()
 const imagePath = ref('')
 const loading = ref(false)
 const pendingCount = ref(0)
 
-onShow(() => {
-  // 没有登录态就别停在识别页（App.onLaunch 之外的兜底）
-  const token = uni.getStorageSync(TOKEN_KEY)
-  if (!token) {
-    uni.reLaunch({ url: '/pages/login/login' })
-    return
+// 第 439 批：试用条文案（登录用户不显示）
+const trialHint = computed(() => {
+  const quota = auth.quota
+  if (!quota || quota.unlimited) return t('guest.hint')
+  const left = Number(quota.detect_left ?? 0)
+  return left > 0 ? t('guest.detectLeft', { n: left }) : t('guest.exhausted')
+})
+
+function goRegister() {
+  uni.navigateTo({ url: '/pages/register/register' })
+}
+
+onShow(async () => {
+  // 第 439 批：没有身份就先开一个游客试用。
+  // `App.vue` 现在总是落到这一页，所以这里是"点开就能用"的关键一步；
+  // 开不了（试用关闭 / 没网）才回登录页 —— 这与改动前的行为一致。
+  if (!auth.token) {
+    const started = await auth.startGuestTrial()
+    if (!started) {
+      uni.reLaunch({ url: '/pages/login/login' })
+      return
+    }
   }
   pendingCount.value = pending().length
   if (pendingCount.value) syncQueue()
@@ -122,6 +139,8 @@ async function onDetect() {
   try {
     const data = await detectImage(imagePath.value)
     uni.setStorageSync('last_result', data)
+    // 第 439 批：游客识别成功 → 刷新"今天还能识别几次"
+    if (auth.isGuest) auth.refreshQuota()
     // 第 241 批：扫描线至少扫一遍（本地识别很快，否则动效一闪而过）
     const elapsed = Date.now() - startedAt
     if (elapsed < MIN_SCAN_MS) {
@@ -129,6 +148,16 @@ async function onDetect() {
     }
     uni.navigateTo({ url: '/pages/result/result' })
   } catch (error) {
+    // 第 439 批：402 = 今天的试用次数用完。这**不是**网络问题，
+    // 绝不能把图塞进补传队列 —— 它会在队列里永远重试、永远失败。
+    if (error && error.status === 402) {
+      if (auth.isGuest) auth.refreshQuota()
+      uni.showToast({
+        title: (error.data && error.data.message) || t('guest.exhausted'),
+        icon: 'none',
+      })
+      return
+    }
     // 第 239 批：网络/服务异常时把图记进补传队列，恢复网络后自动补传
     enqueue(imagePath.value)
     pendingCount.value = pending().length

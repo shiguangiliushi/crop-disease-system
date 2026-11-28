@@ -7,7 +7,8 @@
  */
 import http from './http';
 
-function unwrapAuthPayload(responseData) {
+// 第 439 批：`export` —— 游客试用（api/guest.js）要用同一份解包逻辑，别再抄一遍。
+export function unwrapAuthPayload(responseData) {
   let cur = responseData;
   for (let depth = 0; depth < 3 && cur && typeof cur === 'object'; depth += 1) {
     if (cur.user && cur.token) return cur;

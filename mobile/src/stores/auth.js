@@ -8,6 +8,8 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import * as authApi from '@/api/auth';
+// 第 439 批：游客试用（免登录 3 次识别）
+import { fetchGuestQuota, startGuestSession } from '@/api/guest';
 import { clearIdentity, getIdentity, saveIdentity } from '@/utils/authStorage';
 
 export const useAuthStore = defineStore('auth', () => {
@@ -22,10 +24,60 @@ export const useAuthStore = defineStore('auth', () => {
   const userId = computed(() => user.value?.id ?? null);
   const username = computed(() => user.value?.username || '');
 
+  // ==========================================================================
+  // 游客试用（第 439 批）
+  // --------------------------------------------------------------------------
+  // 游客**就是**一个带 token 的用户（`user.is_guest === true`），所以
+  // `isAuthenticated`、请求拦截器都不用分叉 —— 只多两件事：
+  //   1. 进识别页发现没身份时自动开一个（而不是把人送到登录页）；
+  //   2. 把"今天还能识别几次"显示出来，用完引导注册。
+  // 手机上没有问答页，所以只用到识别额度。
+  // ==========================================================================
+  const isGuest = computed(() => Boolean(user.value?.is_guest));
+  const quota = ref(null);
+
+  /**
+   * 开一个游客身份
+   * @returns {Promise<boolean>} 成功与否；失败时调用方继续走"跳登录页"
+   */
+  async function startGuestTrial() {
+    try {
+      const payload = await startGuestSession();
+      if (!payload?.token || !payload?.user) {
+        console.warn('[guest] 开试用返回结构不认识:', payload);
+        return false;
+      }
+      user.value = payload.user;
+      token.value = payload.token;
+      saveIdentity({ user: payload.user, token: payload.token });
+      quota.value = payload.quota || null;
+      return true;
+    } catch (error) {
+      // 403（试用关闭）/ 429（限流）都走这里
+      console.warn('[guest] 开启试用失败:', error?.message || error);
+      return false;
+    }
+  }
+
+  /** 刷新剩余次数（识别成功 / 额度用尽后各调一次） */
+  async function refreshQuota() {
+    if (!token.value) return null;
+    try {
+      const data = await fetchGuestQuota();
+      if (data && typeof data === 'object') quota.value = data;
+      return quota.value;
+    } catch (error) {
+      console.warn('[guest] 查额度失败:', error?.message || error);
+      return quota.value;
+    }
+  }
+
   async function login(credentials) {
     const payload = await authApi.login(credentials);
     user.value = payload.user;
     token.value = payload.token;
+    // 第 439 批：真实账号登录后，游客额度不再有意义
+    quota.value = null;
     saveIdentity({ user: payload.user, token: payload.token });
     return payload.user;
   }
@@ -36,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (result?.token && result?.user) {
       user.value = result.user;
       token.value = result.token;
+      quota.value = null;
       saveIdentity({ user: result.user, token: result.token });
     }
     return result;
@@ -45,6 +98,7 @@ export const useAuthStore = defineStore('auth', () => {
     await authApi.logout();
     user.value = null;
     token.value = null;
+    quota.value = null;
     clearIdentity();
   }
 
@@ -61,6 +115,7 @@ export const useAuthStore = defineStore('auth', () => {
   function clearAuth() {
     user.value = null;
     token.value = null;
+    quota.value = null;
     clearIdentity();
   }
 
@@ -78,6 +133,11 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     userId,
     username,
+    // 第 439 批：游客试用
+    isGuest,
+    quota,
+    startGuestTrial,
+    refreshQuota,
     login,
     register,
     logout,

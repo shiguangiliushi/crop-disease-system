@@ -283,6 +283,8 @@ const router = createRouter({
       component: DetectView,
       meta: {
         requiresAuth: true,
+        // 第 439 批：游客可进（守卫会自动开一个试用身份，不跳登录页）
+        guest: true,
         title: '病害识别',
         breadcrumb: ['识别']
       }
@@ -293,6 +295,8 @@ const router = createRouter({
       component: AssistantView,
       meta: {
         requiresAuth: true,
+        // 第 439 批：游客可问（这是"点开就能看到 Agent 能力"的关键入口）
+        guest: true,
         title: '智能问答',
         breadcrumb: ['问答']
       }
@@ -760,6 +764,17 @@ router.beforeEach(async (to, from, next) => {
 
   // 检查是否需要登录
   if (to.matched.some(record => record.meta.requiresAuth)) {
+    // 第 439 批：允许试用的页面（识别 / 问答）先**自动开一个游客身份**，
+    // 而不是把人送登录页 —— 链接发给面试官时，"点开就能用"是唯一要求。
+    // 开失败（试用被关掉 / 限流）再走下面的登录页分支，不改变原有行为。
+    if (!authStore.isAuthenticated && to.matched.some(record => record.meta.guest)) {
+      const started = await authStore.startGuestTrial()
+      if (started) {
+        next()
+        return
+      }
+    }
+
     if (!authStore.isAuthenticated) {
       // 未登录，重定向到登录页。
       //

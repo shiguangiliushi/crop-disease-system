@@ -98,6 +98,9 @@
         </span>
       </header>
 
+      <!-- 第 439 批：游客试用条（登录用户不显示） -->
+      <GuestTrialBar kind="ask" />
+
       <div ref="scrollBox" class="assistant-thread">
         <!-- 空态 -->
         <div v-if="!messages.length" class="assistant-welcome">
@@ -371,6 +374,9 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { Search } from '@element-plus/icons-vue';
 import { useI18n } from '@/i18n';
 import { parseAnswerParagraphs } from '@/utils/assistantText';
+// 第 439 批：游客试用（试用条 + 额度刷新）
+import GuestTrialBar from '@/components/GuestTrialBar.vue';
+import { useAuthStore } from '@/stores/auth';
 import {
   askAssistantStream,
   createTaskReminder,
@@ -384,6 +390,8 @@ import {
 } from '@/api/assistant';
 
 const { t } = useI18n();
+// 第 439 批：游客试用 —— 提问成功/失败后都要刷新"还剩几次"
+const authStore = useAuthStore();
 
 const PAGE_SIZE = 20;
 
@@ -730,9 +738,22 @@ const submit = async (presetText) => {
     target.messageId = data?.message_id || null;
     // 第 204 批：回答被长度上限截断时如实提示（否则用户看到的是"半句话 + 好像答完了"）
     target.truncated = Boolean(data?.truncated);
+    // 第 439 批：游客问完一次，刷新剩余额度
+    if (authStore.isGuest) authStore.refreshQuota();
   } catch (error) {
     const index = messages.value.indexOf(target);
     if (index >= 0) messages.value.splice(index, 1);
+    // 第 439 批：402 = 今天的试用问答次数用完（后端已给中文说明，直接用）
+    if (authStore.isGuest) {
+      authStore.refreshQuota();
+      // 402 = 今天的试用问答次数用完；两种错误形状都要认（见 api/http.js）
+      if ((error?.status ?? error?.response?.status) === 402) {
+        ElMessage.error(
+          error?.response?.data?.message || error?.data?.message || t('guest.exhausted'),
+        );
+        return;
+      }
+    }
     ElMessage.error(formatAssistantError(error));
   } finally {
     if (!received && target.content) target.content = target.content.trim();

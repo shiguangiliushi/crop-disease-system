@@ -99,15 +99,21 @@ http.interceptors.response.use(
   (error) => {
     const status = error?.response?.status;
     if (status === 401 && !error.config?.skipAuthRedirect) {
+      // 第 439 批：游客试用身份失效时**不要**把人送到登录页 ——
+      // 他从没登录过，看到"登录已过期"只会困惑。清掉身份即可，
+      // 下一次进入识别/问答页时守卫会重新开一个试用身份。
+      let wasGuest = false;
       try {
-        useAuthStore().clearAuth();
+        const store = useAuthStore();
+        wasGuest = Boolean(store?.isGuest);
+        store.clearAuth();
       } catch (err) {
         console.error('清理登录态失败:', err);
       }
 
       const path = window.location.pathname;
       const onAuthPage = AUTH_PAGE_PREFIXES.some((prefix) => path.startsWith(prefix));
-      if (!authRedirecting && !onAuthPage) {
+      if (!wasGuest && !authRedirecting && !onAuthPage) {
         authRedirecting = true;
         // 管理区回管理端登录页（第 116 批分开的两套入口，别把人丢错站）
         const loginPath = path.startsWith('/admin') ? '/admin/login' : '/login';

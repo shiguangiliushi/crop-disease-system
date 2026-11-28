@@ -14,6 +14,9 @@
     </div>
 
     <div class="page-pad">
+      <!-- 第 439 批：游客试用条（登录用户不显示） -->
+      <GuestTrialBar kind="detect" />
+
       <!-- 未选图：两个大入口（拍照是主路径，做成整块可点，田里戴手套也点得中） -->
       <div v-if="!previewUrl" class="card">
         <button type="button" class="entry entry--primary" @click="openCamera">
@@ -127,10 +130,14 @@ import { hasInAppCamera } from '@/utils/camera';
 // 第 91 批：断网时把照片存进本地队列，联网后自动补传识别（见 utils/offlineSync.js）
 import { enqueueOfflineImage } from '@/utils/offlineSync';
 import { useDetectStore } from '@/stores/detect';
+// 第 439 批：游客试用（试用条 + 额度）
+import { useAuthStore } from '@/stores/auth';
+import GuestTrialBar from '@/components/GuestTrialBar.vue';
 import { useI18n } from '@/i18n';
 
 const router = useRouter();
 const detectStore = useDetectStore();
+const authStore = useAuthStore();
 const { t, locale, setLocale } = useI18n();
 
 const galleryInput = ref(null);
@@ -269,6 +276,8 @@ const startDetect = async () => {
     progress.value = 100;
     detectStore.setResult(result);
     detectStore.setChosenFile(selectedFile.value);
+    // 第 439 批：游客识别成功 → 刷新"今天还能识别几次"
+    if (authStore.isGuest) authStore.refreshQuota();
     // 第 241 批：扫描线至少可见 1.1 秒（只影响等待动效，不影响结果）
     const elapsed = Date.now() - detectStartedAt;
     if (elapsed < MIN_SCAN_VISIBLE_MS) {
@@ -277,6 +286,14 @@ const startDetect = async () => {
     router.push('/result');
   } catch (error) {
     stopProgressTimer();
+
+    // 第 439 批：402 = 今天的试用识别次数用完。
+    // 后端已经给了"注册后可继续"的人话，直接用；同时把试用条刷新成真实值。
+    if (error?.response?.status === 402) {
+      if (authStore.isGuest) authStore.refreshQuota();
+      showFailToast(error?.response?.data?.message || t('guest.exhausted'));
+      return;
+    }
 
     // 第 91 批：**网络类失败也进离线队列**（而不是让用户看着"识别失败"重拍）。
     // 判据与桌面端一致：没有 response（压根没连上）或明确是 ERR_NETWORK

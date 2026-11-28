@@ -26,15 +26,28 @@ function tokenHeader() {
   }
 }
 
+/** 当前身份是不是游客试用（401 时决定"回登录页"还是"重新开一个试用"） */
+function isGuestSession() {
+  try {
+    const user = uni.getStorageSync(USER_KEY)
+    return Boolean(user && user.is_guest)
+  } catch (error) {
+    return false
+  }
+}
+
 /** 清掉登录态并回登录页（多个请求同时 401 时只跳一次） */
 let redirecting = false
-export function clearSession() {
+export function clearSession({ redirect = true } = {}) {
   try {
     uni.removeStorageSync(TOKEN_KEY)
     uni.removeStorageSync(USER_KEY)
   } catch (error) {
     /* 忽略 */
   }
+  // 第 439 批：游客失效时**不跳登录页** —— 他从没注册过，
+  // 下次进识别页会自动重开一个试用（额度按 IP 计，换身份不会多给次数）。
+  if (!redirect) return
   if (redirecting) return
   redirecting = true
   uni.reLaunch({
@@ -65,7 +78,8 @@ export function request({ url, method = 'GET', data, header = {} } = {}) {
       header: { 'Content-Type': 'application/json', ...tokenHeader(), ...header },
       success: (res) => {
         if (res.statusCode === 401) {
-          clearSession()
+          // 先判身份再清存储 —— 清完就读不出 is_guest 了
+          clearSession({ redirect: !isGuestSession() })
           reject(normalizeError(401, res.data))
           return
         }
@@ -108,7 +122,7 @@ export function uploadFile({ url, filePath, name = 'image', formData = {} } = {}
           return
         }
         if (res.statusCode === 401) {
-          clearSession()
+          clearSession({ redirect: !isGuestSession() })
           reject(normalizeError(401, body))
           return
         }

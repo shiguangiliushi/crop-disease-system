@@ -7,6 +7,14 @@
  */
 export const messages = {
   'zh-CN': {
+    // 第 439 批：游客试用（免登录 3 次识别）
+    guest: {
+      badge: '试用中',
+      hint: '免登录试用：今天可识别 3 次',
+      detectLeft: '今天还可识别 {n} 次',
+      exhausted: '今天的试用次数已用完 · 明天 0 点重置',
+      register: '免费注册',
+    },
     common: {
       appName: '农作物病害识别',
       confirm: '确定',
@@ -226,6 +234,8 @@ export const messages = {
       title: '我的',
       guest: '未登录',
       guestHint: '登录后可查看识别记录',
+      // 第 439 批：游客（试用账号）看到的那一行
+      guestTrialHint: '注册后识别记录会一直保留',
       goLogin: '去登录',
       detections: '识别次数',
       posts: '发帖',
@@ -313,6 +323,14 @@ export const messages = {
   },
 
   en: {
+    // Batch 439: guest trial (3 detections a day, no sign-up)
+    guest: {
+      badge: 'Trial',
+      hint: 'Try without signing up: 3 detections a day',
+      detectLeft: '{n} detection(s) left today',
+      exhausted: 'Your trial uses for today are used up · resets at midnight',
+      register: 'Sign up free',
+    },
     common: {
       appName: 'Crop Disease Detection',
       confirm: 'OK',
@@ -532,6 +550,8 @@ export const messages = {
       title: 'Me',
       guest: 'Not signed in',
       guestHint: 'Sign in to view your records',
+      // Batch 439: shown to a guest (trial account)
+      guestTrialHint: 'Sign up to keep your detection records',
       goLogin: 'Sign in',
       detections: 'Detections',
       posts: 'Posts',
