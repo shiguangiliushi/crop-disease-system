@@ -103,6 +103,21 @@ def _model_metrics() -> dict:
         data['weights_mtime'] = weights.stat().st_mtime
     except OSError:
         data['weights_size_bytes'] = 0
+
+    #: 第 449 批：把"模型现在是什么状态"补全 —— 之前只有静态训练指标和权重大小，
+    #: 看不出"进程里到底加载没有、上次预热是什么时候、一共多少类"。
+    #: `model_status()` 是只读的，**不会触发加载**（见 ai_service 里的说明）。
+    try:
+        from .ai_service import model_status
+
+        status = model_status()
+        data['classes'] = status.get('classes')
+        data['loaded'] = status.get('loaded')
+        data['warm_up_at'] = status.get('warm_up_at')
+        data['load_seconds'] = status.get('load_seconds')
+    except Exception as exc:  # pragma: no cover - 诊断接口不能因为模型坏了就 500
+        data['loaded'] = None
+        data['status_error'] = str(exc)
     return data
 
 

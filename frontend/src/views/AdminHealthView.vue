@@ -165,6 +165,28 @@
           {{ (data.model.weights_size_bytes / 1024 / 1024).toFixed(1) }} MB
         </el-descriptions-item>
         <el-descriptions-item label="训练条件">{{ data.model.trained_on }}</el-descriptions-item>
+
+        <!-- 第 449 批：模型**运行状态**（与上面的训练指标分开看） -->
+        <el-descriptions-item :label="t('health.modelClasses')">
+          {{ data.model.classes ?? '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('health.modelLoaded')">
+          <el-tag v-if="data.model.loaded === true" size="small" type="success" effect="light">
+            {{ t('health.modelLoadedYes') }}
+          </el-tag>
+          <el-tag v-else-if="data.model.loaded === false" size="small" type="info" effect="plain">
+            {{ t('health.modelLoadedNo') }}
+          </el-tag>
+          <span v-else>—</span>
+        </el-descriptions-item>
+        <el-descriptions-item :label="t('health.modelWarmUp')">
+          {{ data.model.warm_up_at
+            ? formatTime(data.model.warm_up_at)
+            : t('health.modelWarmUpNever') }}
+          <span v-if="data.model.load_seconds" class="model-load-cost">
+            {{ t('health.modelLoadCost', { seconds: data.model.load_seconds }) }}
+          </span>
+        </el-descriptions-item>
       </el-descriptions>
 
       <div class="model-note">
@@ -632,6 +654,13 @@ export default {
 .task-last {
   margin-left: auto;
   color: var(--ink-500, #667085);
+}
+
+/* 第 449 批：模型加载耗时小字 */
+.model-load-cost {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--ink-400, #98a2b3);
 }
 
 </style>

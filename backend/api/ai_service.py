@@ -10,6 +10,7 @@ import numpy as np
 from io import BytesIO
 from PIL import Image
 from django.conf import settings
+from django.utils import timezone  # 第 449 批：记录预热时间
 from ultralytics import YOLO
 
 # 确保torch使用CPU（如果需要）
@@ -104,6 +105,13 @@ def _prepare_chinese_labels(result) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.warning(f'标注图中文标签不可用（退回英文）：{exc}')
         return 'Arial'
+
+
+#: 第 449 批：预热状态（管理端「模型信息卡」显示"是否已加载 / 最近一次预热"）。
+#: 放在模块级而不是实例上：**不能为了看一眼状态就把模型加载一遍** ——
+#: `AIService.__new__` 会真的读权重（几百 MB），在健康页上触发它是灾难。
+_WARMED_UP_AT = None
+_LAST_LOAD_SECONDS = None
 
 
 class AIService:
@@ -547,6 +555,24 @@ class AIService:
             }
 
 
+def model_status() -> dict:
+    """模型运行状态（只读，**不会触发加载**）。
+
+    第 449 批：管理端「模型信息卡」用。`loaded` 为 False 表示进程里还没加载权重
+    （首次识别才加载；`AI_WARMUP_ON_STARTUP=True` 时启动就预热）。
+    """
+    instance = AIService._instance
+    model = getattr(instance, 'model', None) if instance is not None else None
+    names = getattr(model, 'names', None) or AIService.class_names or []
+    return {
+        'loaded': model is not None,
+        'classes': len(names),
+        'warm_up_at': _WARMED_UP_AT.isoformat() if _WARMED_UP_AT else None,
+        'load_seconds': _LAST_LOAD_SECONDS,
+        'singleton_created': instance is not None,
+    }
+
+
 def get_ai_service():
     """AI服务的单例访问器"""
     return AIService()
@@ -615,6 +641,10 @@ def warm_up(*, force: bool = False) -> bool:
             logger.warning('AI 预热完成但返回了错误状态（%.1fs）：%s', elapsed, result.get('message'))
             return False
         logger.info('AI 预热完成（%.1fs）—— 首个用户请求不再承担冷启动', elapsed)
+        #: 第 449 批：记下预热时间与耗时，供「模型信息卡」显示
+        global _WARMED_UP_AT, _LAST_LOAD_SECONDS
+        _WARMED_UP_AT = timezone.now()
+        _LAST_LOAD_SECONDS = round(elapsed, 2)
         return True
     except Exception as exc:  # noqa: BLE001
         # **绝不因为预热失败而让服务起不来**：识别是核心功能，但它不该拥有

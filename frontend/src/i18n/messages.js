@@ -862,7 +862,13 @@ export const zhCN = {
   },
 
   health: {
-    consistencyTitle: '数据一致性对账',
+    modelClasses: '类别数',
+    modelLoaded: '加载状态',
+    modelLoadedYes: '已加载',
+    modelLoadedNo: '未加载（首次识别时加载）',
+    modelWarmUp: '最近预热',
+    modelWarmUpNever: '本进程尚未预热',
+    modelLoadCost: '（耗时 {seconds}s）',    consistencyTitle: '数据一致性对账',
     consistencyOk: '口径一致',
     consistencyMismatch: '存在口径差异',
     taskTitle: '定时任务',
@@ -4332,7 +4338,13 @@ export const en = {
   },
 
   health: {
-    consistencyTitle: 'Data consistency check',
+    modelClasses: 'Classes',
+    modelLoaded: 'Load state',
+    modelLoadedYes: 'Loaded',
+    modelLoadedNo: 'Not loaded yet (loads on first detection)',
+    modelWarmUp: 'Last warm-up',
+    modelWarmUpNever: 'Not warmed up in this process',
+    modelLoadCost: '({seconds}s)',    consistencyTitle: 'Data consistency check',
     consistencyOk: 'Consistent',
     consistencyMismatch: 'Different scopes',
     taskTitle: 'Scheduled tasks',

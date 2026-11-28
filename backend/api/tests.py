@@ -15779,6 +15779,48 @@ class PostRestoreAfterUnpublishTests(APITestCase):
 #   · 上下文只取中文段 —— 防止引用里串出英文（见 assistant/context.py）；
 #   · 锚点场景的弱命中过滤 —— 实测过"这个病用什么药"会捞出 score=1 的路人词条。
 # ============================================================================
+class ModelStatusTests(TestCase):
+    """模型运行状态（第 449 批）。
+
+    管理端「模型信息卡」要显示"是否已加载 / 类别数 / 最近预热"，但**不能为了显示
+    就把模型加载一遍**（`AIService.__new__` 会读几百 MB 权重）。所以状态走
+    模块级 `model_status()`：只在已实例化时才报告真实加载状态。
+    """
+
+    def test_model_status_shape(self):
+        from api.ai_service import model_status
+
+        status = model_status()
+        self.assertIn('loaded', status)
+        self.assertIn('classes', status)
+        self.assertIn('warm_up_at', status)
+        # 类别数来自权重 names 或手写兜底列表，至少应有 30 类（真实是 39）
+        self.assertGreaterEqual(status['classes'], 30)
+
+    def test_model_status_does_not_instantiate_service(self):
+        from api.ai_service import AIService, model_status
+
+        saved = AIService._instance
+        try:
+            AIService._instance = None
+            status = model_status()
+            self.assertFalse(status['singleton_created'])
+            self.assertFalse(status['loaded'])
+            self.assertIsNone(AIService._instance, '查状态不应该触发模型加载')
+        finally:
+            AIService._instance = saved
+
+    def test_health_payload_exposes_model_runtime_state(self):
+        admin = User.objects.create_user(
+            username='ms_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=admin)
+        data = client.get('/api/admin/health/').data
+        self.assertIn('classes', data['model'])
+        self.assertIn('loaded', data['model'])
+
+
 class AdminConsistencyAndTaskStatusTests(TestCase):
     """数据一致性对账 + 定时任务状态（第 448 批）。
 
