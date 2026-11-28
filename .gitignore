@@ -103,4 +103,8 @@ _tmp_logs/
 # 仓库根的手工打包产物（第 417 批）：backend.zip / frontend.zip / mobile*.zip 合计 700+ MB，
 # 全都**超过 GitHub 单文件 100 MB 限制**。它们一直没被忽略 —— 一条 `git add -A` 就会把它们收进来。
 *.zip
-
+# ── 本机测试/截图产物（第 444 批补）─────────────────────────────────
+# 这几个是测试脚本写出来的 8 字节占位图，没有业务价值，误提交过两次。
+backend/media/detection_history/202601/
+backend/media/feedback_images/shot.png
+backend/media/pest_images/open.png
