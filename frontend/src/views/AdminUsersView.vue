@@ -35,6 +35,9 @@
         <div>
           <div class="stat-tile-value">{{ stats.total }}</div>
           <div class="stat-tile-label">{{ t('adminUsers.statTotal') }}</div>
+          <div v-if="stats.guests" class="stat-tile-sub">
+            {{ t('adminUsers.statGuests', { count: stats.guests }) }}
+          </div>
         </div>
       </div>
       <div class="stat-tile stat-tile--processing">
@@ -108,6 +111,8 @@
         @change="applyFilter"
       >
         <el-option :label="t('adminUsers.scopeNormal')" value="" />
+        <!-- 第 447 批：游客试用账号默认也在列表里；这一档让管理员只看真实用户 -->
+        <el-option :label="t('adminUsers.scopeRealOnly')" value="real_only" />
         <el-option :label="t('adminUsers.scopeIncludeDeleted')" value="include_deleted" />
         <el-option :label="t('adminUsers.scopePendingDeletion')" value="pending_deletion" />
       </el-select>
@@ -776,7 +781,7 @@ export default {
     // 第 89 批：默认每页条数与意见反馈管理页对齐（原来 20，两页一个 10 一个 20，观感不一致）
     const pageSize = ref(10);
     const filters = ref({ search: '', role: '', status: '', scope: '' });   // 第 144 批：scope = 账号范围
-    const stats = ref({ total: 0, staff: 0, expert: 0, normal: 0 });
+    const stats = ref({ total: 0, guests: 0, staff: 0, expert: 0, normal: 0 });
     /** 第 100 批：后端排序（`?ordering=`），空串 = 默认按注册时间倒序 */
     const ordering = ref('');
 
@@ -1234,6 +1239,8 @@ export default {
       //    pending_deletion 则是"只看冷静期"，按当前选择二选一。
       if (filters.value.scope === 'include_deleted') params.include_deleted = 'true';
       if (filters.value.scope === 'pending_deletion') params.pending_deletion = 'true';
+      // 第 447 批：只列真实用户（排除游客试用账号）
+      if (filters.value.scope === 'real_only') params.include_guests = 'false';
       // 第 100 批：排序交后端（白名单字段，后端会忽略非法值）
       if (ordering.value) params.ordering = ordering.value;
       return params;
@@ -1253,16 +1260,24 @@ export default {
     };
 
     // 概览小卡：各用一次 page_size=1 的请求只取 count（与反馈管理页同一套路）
+    //
+    // 第 447 批：**「用户总数」按"真实用户"计**，与系统健康页（real_users() 排除游客）
+    // 对齐；游客试用账号单独用小字显示。起因是两处数字 13 与 11 对不上，
+    // 演示时看着像统计坏了 —— 其实只是口径不同。
     const loadStats = async () => {
       try {
-        const [all, staff, expert, normal] = await Promise.all([
+        const [all, real, staff, expert, normal] = await Promise.all([
           fetchAdminUsers({ page: 1, page_size: 1 }),
-          fetchAdminUsers({ page: 1, page_size: 1, status: 'staff' }),
-          fetchAdminUsers({ page: 1, page_size: 1, status: 'expert' }),
-          fetchAdminUsers({ page: 1, page_size: 1, role: 'USER' }),
+          fetchAdminUsers({ page: 1, page_size: 1, include_guests: 'false' }),
+          fetchAdminUsers({ page: 1, page_size: 1, status: 'staff', include_guests: 'false' }),
+          fetchAdminUsers({ page: 1, page_size: 1, status: 'expert', include_guests: 'false' }),
+          fetchAdminUsers({ page: 1, page_size: 1, role: 'USER', include_guests: 'false' }),
         ]);
+        const totalAll = all?.count || 0;
+        const totalReal = real?.count || 0;
         stats.value = {
-          total: all?.count || 0,
+          total: totalReal,
+          guests: Math.max(totalAll - totalReal, 0),
           staff: staff?.count || 0,
           expert: expert?.count || 0,
           normal: normal?.count || 0,
@@ -1756,6 +1771,13 @@ export default {
 
 :deep(.el-tag + .el-tag) {
   margin-left: 0;
+}
+
+/* 第 447 批：统计小卡副行（「另有 N 位试用账号」） */
+.stat-tile-sub {
+  font-size: 12px;
+  color: var(--ink-400, #8a8f98);
+  margin-top: 2px;
 }
 
 /* 第 446 批：合并后的「时间」列 —— 主行注册时间、副行最后登录，两行都要截断不换行 */

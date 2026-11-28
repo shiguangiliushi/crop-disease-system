@@ -1892,6 +1892,7 @@ export const zhCN = {
     subtitle: '查看平台用户、身份与活跃度，并在这里授予或取消专家称号',
     refresh: '刷新',
     statTotal: '用户总数',
+      statGuests: '另有 {count} 位试用账号',
     statStaff: '管理员',
     statExpert: '在岗专家',
     statNormal: '普通用户',
@@ -2016,6 +2017,7 @@ export const zhCN = {
     // 第 144 批：账号范围（已注销 / 注销冷静期）与状态语义拆分
     scopeFilter: '账号范围',
     scopeNormal: '正常账号',
+    scopeRealOnly: '仅真实用户',
     scopeIncludeDeleted: '包含已注销',
     scopePendingDeletion: '只看注销冷静期',
     statusDeleted: '已删除',
@@ -5335,6 +5337,7 @@ export const en = {
     subtitle: 'Review platform users, their roles and activity, and grant or revoke expert status here',
     refresh: 'Refresh',
     statTotal: 'Total users',
+      statGuests: '+{count} trial accounts',
     statStaff: 'Admins',
     statExpert: 'Active experts',
     statNormal: 'Regular users',
@@ -5452,6 +5455,7 @@ export const en = {
     // 第 144 批：account scope + finer status labels
     scopeFilter: 'Account scope',
     scopeNormal: 'Active only',
+    scopeRealOnly: 'Real users only',
     scopeIncludeDeleted: 'Include deleted',
     scopePendingDeletion: 'Pending deletion only',
     statusDeleted: 'Deleted',

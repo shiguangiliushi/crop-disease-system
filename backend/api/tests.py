@@ -9651,6 +9651,27 @@ class AdminUserManagementTests(TestCase):
     def tearDown(self):
         cache.clear()
 
+    def test_include_guests_false_excludes_guest_accounts(self):
+        """游客试用账号默认在列表里，但 `?include_guests=false` 要能排除（第 447 批）。
+
+        起因：管理端「用户总数」显示 13、系统健康页显示 11 —— 因为健康/看板走
+        `real_users()`（排除游客），用户列表没排除。两个口径都不错，但界面上没交代，
+        演示时像"统计坏了"。现在前端可以显式请求"只看真实用户"，并把游客数单独展示。
+        """
+        guest = User.objects.create_user(username='guest_test447')
+        guest.is_guest = True
+        guest.set_unusable_password()
+        guest.save(update_fields=['is_guest', 'password'])
+
+        all_data = self.client_admin.get('/api/admin/users/', {'page_size': 100}).data
+        real_data = self.client_admin.get(
+            '/api/admin/users/', {'page_size': 100, 'include_guests': 'false'},
+        ).data
+
+        self.assertIn('guest_test447', {u['username'] for u in all_data['results']})
+        self.assertNotIn('guest_test447', {u['username'] for u in real_data['results']})
+        self.assertEqual(real_data['count'], all_data['count'] - 1)
+
     @staticmethod
     def _board():
         board, _ = ForumBoard.objects.get_or_create(name='um 版块', defaults={'description': '测试用'})

@@ -886,6 +886,16 @@ def _filter_admin_users(queryset, params):
                 is_deleted=False, deletion_scheduled_for__isnull=False,
             )
 
+    # 第 447 批：`?include_guests=false` → 只列**真实用户**。
+    #
+    # 起因：管理端「用户总数」显示 13，系统健康页显示 11 —— 因为健康/看板走
+    # `real_users()`（排除游客试用账号），而用户列表把 `guest_*` 一起算了。
+    # 两个数字都不错，但界面上没交代口径，演示时看着像"统计坏了"。
+    # 现在由前端显式传这个参数：「用户总数」按真实用户计，并把游客数单独展示。
+    guests_param = (params.get('include_guests') or '').strip().lower()
+    if guests_param in ('false', '0', 'no'):
+        queryset = queryset.filter(is_guest=False)
+
     role = (params.get('role') or '').strip().upper()
     if role in ADMIN_USER_ROLE_CHOICES:
         queryset = queryset.filter(role=role)
