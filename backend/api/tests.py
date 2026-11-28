@@ -15779,6 +15779,67 @@ class PostRestoreAfterUnpublishTests(APITestCase):
 #   · 上下文只取中文段 —— 防止引用里串出英文（见 assistant/context.py）；
 #   · 锚点场景的弱命中过滤 —— 实测过"这个病用什么药"会捞出 score=1 的路人词条。
 # ============================================================================
+class AdminConsistencyAndTaskStatusTests(TestCase):
+    """数据一致性对账 + 定时任务状态（第 448 批）。
+
+    这两个接口是"演示时别自相矛盾"的兜底：
+      · 用户数/识别数在「列表 / 健康页 / 快照」三处的口径不同，接口把它们并排列出；
+      · 定时任务在宿主机 crontab 里，容器读不到，所以只报能从数据验证的
+        （健康快照最近日期、备份目录最近一份）+ 期望调度清单。
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.admin = User.objects.create_user(
+            username='cons_admin', password='pw123456', is_staff=True, is_superuser=True,
+        )
+        self.plain = User.objects.create_user(username='cons_plain', password='pw123456')
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin)
+        self.client_plain = APIClient()
+        self.client_plain.force_authenticate(user=self.plain)
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_consistency_requires_full_admin(self):
+        resp = self.client_admin.get('/api/admin/consistency/')
+        self.assertEqual(resp.status_code, 200)
+        denied = self.client_plain.get('/api/admin/consistency/')
+        self.assertEqual(denied.status_code, 403)
+
+    def test_consistency_lists_user_sources_with_guest_explanation(self):
+        guest = User.objects.create_user(username='cons_guest')
+        guest.is_guest = True
+        guest.set_unusable_password()
+        guest.save(update_fields=['is_guest', 'password'])
+
+        data = self.client_admin.get('/api/admin/consistency/').data
+        users_check = next(c for c in data['checks'] if c['key'] == 'users')
+        values = {v['source']: v['value'] for v in users_check['values']}
+        self.assertEqual(values['用户列表（全部账号）'], values['用户列表（真实用户）'] + 1)
+        # 口径差异必须给出解释，而不是只报"不一致"
+        self.assertIn('试用账号', users_check['note'])
+
+    def test_task_status_reports_missing_snapshots(self):
+        data = self.client_admin.get('/api/admin/task-status/').data
+        self.assertTrue(data['snapshot']['stale'])          # 测试库里没有快照
+        self.assertEqual(len(data['tasks']), 8)             # 期望调度清单
+        keys = {t['key'] for t in data['tasks']}
+        self.assertIn('prune_guests', keys)
+        self.assertIn('cert_check', keys)
+
+    def test_task_status_tracks_last_snapshot(self):
+        today = timezone.localdate()
+        HealthSnapshot.objects.create(
+            snapshot_date=today, level='ok', counts={'users': 3, 'detections': 1},
+        )
+        data = self.client_admin.get('/api/admin/task-status/').data
+        self.assertFalse(data['snapshot']['stale'])
+        self.assertEqual(data['snapshot']['last_date'], today.isoformat())
+        snap_task = next(t for t in data['tasks'] if t['key'] == 'health_snapshot')
+        self.assertTrue(snap_task['tracked'])
+
 class AssistantEmojiQueryTests(TestCase):
     """emoji 提问也要能检索到（第 444 批）。
 

@@ -51,11 +51,17 @@ class Command(BaseCommand):
         from ...models_forum import Comment, Post
         from django.contrib.auth import get_user_model
 
+        #: 第 448 批：**与健康页同一口径**（排除游客试用账号），否则快照与页面
+        #: 会各说一套 —— 线上真实出现过"健康页 11、快照 13"的对比错觉。
+        #: 同时保留 `*_all` 方便审计（游客也确实是账号，只是不该混进"用户数"）。
         counts = {
-            'users': get_user_model().objects.count(),
+            'users': get_user_model().objects.filter(is_guest=False).count(),
+            'users_all': get_user_model().objects.count(),
+            'guests': get_user_model().objects.filter(is_guest=True).count(),
             'posts': Post.active.count(),
             'comments': Comment.objects.filter(is_deleted=False).count(),
-            'detections': DetectionHistory.objects.count(),
+            'detections': DetectionHistory.objects.real_users().count(),
+            'detections_all': DetectionHistory.objects.count(),
             'feedback': Feedback.objects.count(),
         }
 

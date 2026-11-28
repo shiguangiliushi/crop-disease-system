@@ -207,6 +207,65 @@
         </div>
       </template>
     </section>
+
+    <!-- 第 448 批：数据一致性对账（同一指标在各处口径不同时的并排说明） -->
+    <section v-if="consistency" class="panel-card">
+      <h3 class="panel-title">
+        <span>{{ t('health.consistencyTitle') }}</span>
+        <span class="panel-count" :class="consistency.ok ? 'is-ok' : 'is-warn'">
+          {{ consistency.ok ? t('health.consistencyOk') : t('health.consistencyMismatch') }}
+        </span>
+      </h3>
+      <div v-for="check in consistency.checks" :key="check.key" class="check-row">
+        <div class="check-head">
+          <i :class="check.consistent ? 'fas fa-circle-check check-ok' : 'fas fa-triangle-exclamation check-warn'"></i>
+          <strong class="check-label">{{ check.label }}</strong>
+          <span v-for="v in check.values" :key="v.source" class="check-value">
+            {{ v.source }} <b>{{ v.value }}</b>
+          </span>
+        </div>
+        <div v-if="!check.consistent" class="check-note">{{ check.note }}</div>
+      </div>
+    </section>
+
+    <!-- 第 448 批：定时任务状态（容器读不到宿主机 crontab，只报能验证的） -->
+    <section v-if="taskStatus" class="panel-card">
+      <h3 class="panel-title">
+        <span>{{ t('health.taskTitle') }}</span>
+        <span class="panel-count">{{ t('health.taskScheduleHint') }}</span>
+      </h3>
+      <el-alert
+        v-if="taskStatus.snapshot.stale"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="task-alert"
+        :title="t('health.taskSnapshotStale', { days: taskStatus.snapshot.gap_days })"
+      />
+      <div class="task-summary">
+        <span>
+          {{ t('health.taskSnapshotLast', {
+            date: taskStatus.snapshot.last_date || '—',
+            days: taskStatus.snapshot.days_in_window,
+          }) }}
+        </span>
+        <span>{{ t('health.taskSnapshotMissing', { count: taskStatus.snapshot.missing_dates.length }) }}</span>
+        <span>
+          {{ taskStatus.backup.last_name
+            ? t('health.taskBackupLast', { name: taskStatus.backup.last_name })
+            : t('health.taskBackupNone') }}
+        </span>
+      </div>
+      <div class="task-grid">
+        <div v-for="task in taskStatus.tasks" :key="task.key" class="task-row">
+          <span class="task-label">{{ task.label }}</span>
+          <code class="task-cron">{{ task.schedule }}</code>
+          <span class="task-last">
+            {{ task.last_run ? formatTime(task.last_run) : t('health.taskNotTracked') }}
+          </span>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -236,9 +295,10 @@
  */
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { fetchSystemHealth } from '@/api/health';
+import { fetchConsistency, fetchSystemHealth, fetchTaskStatus } from '@/api/health';
 import { formatApiError } from '@/api/http';
 import { useI18n } from '@/i18n';
+import { formatTime } from '@/utils/date';
 
 export default {
   name: 'AdminHealthView',
@@ -247,10 +307,22 @@ export default {
     const loading = ref(false);
     const data = ref(null);
 
+    //: 第 448 批：数据一致性对账 + 定时任务状态（都只读、都只给全权管理员）。
+    //: 单独 try/catch —— 这两个接口挂了不该让整页健康数据白屏。
+    const consistency = ref(null);
+    const taskStatus = ref(null);
+
+    const loadExtras = async () => {
+      const [cons, tasks] = await Promise.allSettled([fetchConsistency(), fetchTaskStatus()]);
+      consistency.value = cons.status === 'fulfilled' ? cons.value : null;
+      taskStatus.value = tasks.status === 'fulfilled' ? tasks.value : null;
+    };
+
     const load = async () => {
       loading.value = true;
       try {
-        data.value = await fetchSystemHealth();
+        const [health] = await Promise.all([fetchSystemHealth(), loadExtras()]);
+        data.value = health;
       } catch (error) {
         ElMessage.error(formatApiError(error, t('health.loadFailed')));
       } finally {
@@ -303,6 +375,7 @@ export default {
 
     return {
       t, loading, data, sections, alertType, overallTitle, iconOf, countOf, load,
+      consistency, taskStatus, formatTime,
       dayClass, trendTitle,
     };
   },
@@ -487,4 +560,78 @@ export default {
   font-size: 12px;
   color: var(--ink-400, #9dada5);
 }
+/* 第 448 批：一致性对账 + 任务状态 */
+.check-row {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--ink-100, #eceff3);
+}
+.check-row:last-child {
+  border-bottom: 0;
+}
+.check-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.check-label {
+  min-width: 92px;
+}
+.check-value {
+  color: var(--ink-500, #667085);
+}
+.check-ok {
+  color: #12b76a;
+}
+.check-warn {
+  color: #f79009;
+}
+.check-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--ink-400, #8a8f98);
+}
+.panel-count.is-ok {
+  color: #12b76a;
+}
+.panel-count.is-warn {
+  color: #f79009;
+}
+.task-alert {
+  margin: 8px 0;
+}
+.task-summary {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ink-500, #667085);
+  margin-bottom: 8px;
+}
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 6px 18px;
+}
+.task-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.task-label {
+  min-width: 96px;
+  color: var(--ink-600, #475467);
+}
+.task-cron {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--ink-400, #98a2b3);
+}
+.task-last {
+  margin-left: auto;
+  color: var(--ink-500, #667085);
+}
+
 </style>
