@@ -199,6 +199,9 @@ class RegisterView(APIView):
     验证码必须在序列化器**之前**校验：否则「用户名已存在」这类报错会在没通过人机校验时
     就返回，等于免费提供一个"用户名是否被占用"的探测接口（第 233 批）。
     """
+    # 第 439 批：身份入口对游客放行 —— 否则游客"用完 3 次点注册"会收到 403
+    # （写权限闸门默认拒绝，只放行白名单；注册/登录必须在这里）
+    guest_allowed = True
     permission_classes = [permissions.AllowAny]
     # 第 35 批：注册限流（防批量注册刷账号）
     throttle_classes = [ScopedRateThrottle]
@@ -595,6 +598,8 @@ class LoginView(APIView):
     - 返回token和用户信息
     - 第 35 批：加入**登录失败锁定**与**限流**（此前可无限次猜密码）
     """
+    # 第 439 批：游客点"登录"也要能进来（否则收到 403，只能清缓存重开）
+    guest_allowed = True
     permission_classes = [permissions.AllowAny]
     serializer_class = serializers.LoginSerializer
     # 第 35 批：按 IP 限流（scope 见 settings.REST_FRAMEWORK.DEFAULT_THROTTLE_RATES）。

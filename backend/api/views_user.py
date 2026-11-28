@@ -205,6 +205,8 @@ class PasswordResetRequestView(APIView):
        管理端账号大多是超管开通的、常常没绑邮箱，于是"管理员忘了密码"这条路是断的。
        现在由 `AdminUserResetLinkView` 补上一条**在系统内**能走通的路。
     """
+    # 第 439 批：身份入口对游客放行（游客点「忘记密码」不该收到 403）
+    guest_allowed = True
     permission_classes = [permissions.AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'password_reset'
@@ -245,6 +247,8 @@ class PasswordResetConfirmView(APIView):
     · 校验 token（含有效期）；
     · 设置新密码后：**清空登录失败锁定**、**删除旧 token**（强制所有端重新登录）。
     """
+    # 第 439 批：身份入口对游客放行（游客点「忘记密码」不该收到 403）
+    guest_allowed = True
     permission_classes = [permissions.AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'password_reset'

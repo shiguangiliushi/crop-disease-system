@@ -293,3 +293,118 @@ class PruneGuestsTests(TestCase):
         call_command('prune_guests', '--days', '3', stdout=StringIO())
         self.assertTrue(User.objects.filter(pk=user.pk).exists(),
                         '不给 --yes 时不该删任何东西')
+
+class GuestQuotaIpTrustTests(TestCase):
+    """额度按 IP 计，所以"信哪个 IP"就是**安全边界**（第 439 批）。
+
+    修复前 `audit._client_ip()` 取 `X-Forwarded-For` 的**最左**值，而 nginx 用的是
+    `$proxy_add_x_forwarded_for`（真 IP 追加在**最右**）—— 最左那一段是客户端自己填的。
+    结果：任何人在请求里加一个 `X-Forwarded-For: 1.2.3.4` 就能"换 IP"，
+    而游客额度正是按 IP 哈希计的 ⇒ **一个 header 换无限免费识别**（CPU 推理，
+    等于免费压测入口）。审计日志的 ip 同样会失真。
+
+    这三条用例钉住新的优先级：X-Real-IP > X-Forwarded-For 最右 > REMOTE_ADDR。
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    def _req(self, meta):
+        from .audit import _client_ip
+
+        class _R:
+            META = meta
+
+        return _client_ip(_R())
+
+    def test_spoofed_leftmost_xff_is_ignored(self):
+        ip = self._req({
+            'HTTP_X_FORWARDED_FOR': '6.6.6.6, 10.9.0.1',   # 左边是伪造的
+            'REMOTE_ADDR': '10.9.0.1',
+        })
+        self.assertEqual(ip, '10.9.0.1')
+
+    def test_x_real_ip_wins_over_forwarded_for(self):
+        ip = self._req({
+            'HTTP_X_REAL_IP': '10.9.0.2',                   # nginx 覆盖写入
+            'HTTP_X_FORWARDED_FOR': '6.6.6.6, 1.1.1.1',
+            'REMOTE_ADDR': '127.0.0.1',
+        })
+        self.assertEqual(ip, '10.9.0.2')
+
+    def test_quota_key_ignores_spoofed_leftmost(self):
+        """同一真实 IP、不同伪造前缀 → **同一个额度行**（不能靠换 header 加额度）。"""
+
+        def req(meta):
+            class _R:
+                META = meta
+
+            return _R()
+
+        a = req({'HTTP_X_FORWARDED_FOR': '1.1.1.1, 10.9.0.4', 'REMOTE_ADDR': '10.9.0.4'})
+        b = req({'HTTP_X_FORWARDED_FOR': '2.2.2.2, 10.9.0.4', 'REMOTE_ADDR': '10.9.0.4'})
+        self.assertEqual(guest.ip_hash(a), guest.ip_hash(b))
+
+    def test_real_ip_change_still_gets_new_quota(self):
+        """不同真实 IP 仍然是不同额度行（否则多台设备共享 3 次，体验不对）。"""
+
+        def req(meta):
+            class _R:
+                META = meta
+
+            return _R()
+
+        a = req({'REMOTE_ADDR': '10.9.0.4'})
+        b = req({'REMOTE_ADDR': '10.9.0.5'})
+        self.assertNotEqual(guest.ip_hash(a), guest.ip_hash(b))
+
+class GuestCanConvertToRealAccountTests(TestCase):
+    """游客必须能"转正"——否则漏斗断在最后一步（第 439 批补）。
+
+    实测坑：写闸门默认拒绝，而 `/api/register/`、`/api/login/` 一开始不在白名单；
+    前端 `utils/axios.js` 只要本地有 token 就带 `Authorization`，而游客进过识别页后
+    **token 是有的** —— 于是"用完 3 次 → 点注册"收到 403「试用账号只能使用识别与问答」，
+    用户既注册不了也登录不了（只能清缓存）。现在四个身份入口都放行：
+
+        register / login / password-reset / password-reset-confirm
+
+    注意放行的是"能到达视图"，不是"能随便写"：这些视图本身就是 `AllowAny`。
+    """
+
+    def setUp(self):
+        cache.clear()
+
+    def test_guest_can_reach_register(self):
+        client, _token = _guest_client('10.6.0.1')
+        response = client.post(
+            '/api/register/',
+            {'username': 'guest_try_register', 'password': 'pw12345678'},
+            format='json',
+        )
+        self.assertNotEqual(
+            response.status_code, 403,
+            f'游客被写闸门挡住了注册：{getattr(response, "data", None)}')
+
+    def test_guest_can_reach_login(self):
+        client, _token = _guest_client('10.6.0.2')
+        response = client.post(
+            '/api/login/',
+            {'username': 'nobody_here', 'password': 'wrong-password'},
+            format='json',
+        )
+        self.assertNotEqual(
+            response.status_code, 403,
+            f'游客被写闸门挡住了登录：{getattr(response, "data", None)}')
+
+    def test_guest_can_reach_password_reset_request(self):
+        client, _token = _guest_client('10.6.0.3')
+        response = client.post(
+            '/api/password-reset/', {'username_or_email': 'nobody'}, format='json',
+        )
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_gate_still_blocks_other_writes(self):
+        """放行的是身份入口，**不是所有写操作** —— 闸门本身不能被弄坏。"""
+        client, _token = _guest_client('10.6.0.4')
+        response = client.post('/api/feedback/', {'content': 'hello'}, format='json')
+        self.assertEqual(response.status_code, 403, response.data)

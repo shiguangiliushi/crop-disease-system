@@ -45,12 +45,45 @@ def _repr_of(target):
 
 
 def _client_ip(request):
+    """取客户端 IP —— **只信我们自己 nginx 写的那一段**（第 439 批修正）。
+
+    ## 为什么原来那版是错的
+
+    修复前取 `X-Forwarded-For` 的**最左**值：
+
+        forwarded.split(',')[0]
+
+    而 nginx 配的是 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`
+    —— 它把**真实 IP 追加到最右**，最左那一段是**客户端自己填的**。
+    于是任何人加一个 `X-Forwarded-For: 1.2.3.4` 就能"换 IP"。
+
+    这在游客试用上是**可利用的**：额度按 IP 哈希计
+    （`guest.ip_hash()` 直接用这个函数），伪造 header 即等于无限免费识别 ——
+    而识别是 CPU 推理，等于给了一个免费压测入口。审计日志的 ip 同样会失真。
+
+    ## 现在的优先级
+
+    1. `X-Real-IP` —— nginx 用 `proxy_set_header X-Real-IP $remote_addr` **覆盖**写入，
+       客户端自造的同名头会被替换掉，最可信；
+    2. `X-Forwarded-For` 的**最右**值 —— 那是我们 nginx 追加的真实来源；
+    3. `REMOTE_ADDR` —— 没有反代时的兜底（本地开发、测试）。
+    """
     if request is None:
         return None
-    forwarded = request.META.get('HTTP_X_FORWARDED_FOR') if hasattr(request, 'META') else None
+    meta = getattr(request, 'META', None)
+    if not meta:
+        return None
+
+    real_ip = (meta.get('HTTP_X_REAL_IP') or '').strip()
+    if real_ip:
+        return real_ip[:39]
+
+    forwarded = meta.get('HTTP_X_FORWARDED_FOR') or ''
     if forwarded:
-        return forwarded.split(',')[0].strip()[:39]
-    return (request.META.get('REMOTE_ADDR') or None) if hasattr(request, 'META') else None
+        # 最右才是 nginx 追加的真实 IP；最左是客户端可伪造的
+        return forwarded.rsplit(',', 1)[-1].strip()[:39] or None
+
+    return meta.get('REMOTE_ADDR') or None
 
 
 def sanitize_detail(detail):
