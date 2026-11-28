@@ -217,7 +217,8 @@ class AdminDashboardView(APIView):
         today = timezone.localdate()
         week_ago = now - timedelta(days=7)
 
-        detections = DetectionHistory.objects.all()
+        # 第 439 批：全站口径排除游客试用（试用数据在 prune_guests 时清掉）
+        detections = DetectionHistory.objects.real_users()
         users = User.objects.all()
         # 第 91 批：帖子与评论都要排除软删除的（否则"内容概览"会把删掉的帖子算成内容量）
         posts = Post.active.all()

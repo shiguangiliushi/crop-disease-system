@@ -144,7 +144,8 @@ class AdminDetectionListView(APIView):
         if denied:
             return denied
 
-        queryset = DetectionHistory.objects.select_related('user', 'pest_info')
+        # 第 439 批：管理端识别列表不含游客试用记录
+        queryset = DetectionHistory.objects.real_users().select_related('user', 'pest_info')
 
         # -- 关键字：用户名 / 识别结果 / 词条名 --------------------------------
         search = (request.query_params.get('search') or '').strip()

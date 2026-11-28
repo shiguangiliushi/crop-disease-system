@@ -71,7 +71,8 @@ def compute_alerts(days=DEFAULT_DAYS, baseline_days=DEFAULT_BASELINE_DAYS,
 
     # ---------- 窗口内：按病害统计 ----------
     recent_rows = (
-        DetectionHistory.objects
+        # 第 439 批：全站热度不计游客试用 —— 几次试用就会让"某病害进入高发期"假阳性
+        DetectionHistory.objects.real_users()
         .filter(timestamp__gte=recent_start, pest_info__isnull=False)
         .values('pest_info_id')
         .annotate(
@@ -86,7 +87,7 @@ def compute_alerts(days=DEFAULT_DAYS, baseline_days=DEFAULT_BASELINE_DAYS,
 
     # ---------- 基线窗口：周均量 ----------
     baseline_rows = (
-        DetectionHistory.objects
+        DetectionHistory.objects.real_users()
         .filter(timestamp__gte=baseline_start, timestamp__lt=recent_start, pest_info__isnull=False)
         .values('pest_info_id')
         .annotate(count=Count('id'))
@@ -96,7 +97,7 @@ def compute_alerts(days=DEFAULT_DAYS, baseline_days=DEFAULT_BASELINE_DAYS,
 
     # ---------- 去年同月：季节性 ----------
     seasonal_map = set(
-        DetectionHistory.objects
+        DetectionHistory.objects.real_users()
         .filter(
             timestamp__month=local_today.month,
             timestamp__year=local_today.year - 1,
@@ -315,7 +316,7 @@ def alert_diagnostics(days=DEFAULT_DAYS, min_cases=DEFAULT_MIN_CASES):
     recent_start = now - timedelta(days=days)
 
     rows = list(
-        DetectionHistory.objects
+        DetectionHistory.objects.real_users()
         .filter(timestamp__gte=recent_start, pest_info__isnull=False)
         .values('pest_info_id', 'pest_info__name', 'pest_info__crop_type')
         .annotate(count=Count('id'), users=Count('user', distinct=True))

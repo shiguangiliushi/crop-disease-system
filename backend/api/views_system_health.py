@@ -52,7 +52,8 @@ def _counts():
         'active_users': User.objects.filter(is_active=True, is_deleted=False).count(),
         'posts': Post.active.count(),
         'comments': Comment.objects.filter(is_deleted=False).count(),
-        'detections': DetectionHistory.objects.count(),
+        # 第 439 批：游客试用不算进"系统规模"
+        'detections': DetectionHistory.objects.real_users().count(),
         'feedback': Feedback.objects.count(),
         'feedback_pending': Feedback.objects.filter(status='pending').count(),
     }
@@ -119,7 +120,8 @@ def _runtime_model_stats(days: int = 30) -> dict:
     from .models import DetectionHistory, Feedback
 
     since = timezone.now() - timedelta(days=days)
-    rows = DetectionHistory.objects.filter(timestamp__gte=since)
+    # 第 439 批：14 天趋势同样排除游客（否则试用会把趋势抬起来）
+    rows = DetectionHistory.objects.real_users().filter(timestamp__gte=since)
 
     total = rows.count()
     avg = rows.aggregate(value=Avg('confidence'))['value'] or 0

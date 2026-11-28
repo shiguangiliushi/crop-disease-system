@@ -50,6 +50,9 @@ RegisterView = import_view('api.views', 'RegisterView')
 CaptchaView = import_view('api.views', 'CaptchaView')  # 第 233 批：注册图片验证码
 LoginView = import_view('api.views', 'LoginView')
 CheckAuthView = import_view('api.views', 'CheckAuthView')
+# 第 439 批：游客试用（开身份 / 查额度）。懒加载与其他视图一致。
+GuestSessionView = import_view('api.views_guest', 'GuestSessionView')
+GuestQuotaView = import_view('api.views_guest', 'GuestQuotaView')
 LogoutView = import_view('api.views', 'LogoutView')
 PestEncyclopediaViewSet = import_view('api.views', 'PestEncyclopediaViewSet')
 PestDetailView = import_view('api.views', 'PestDetailView')
@@ -267,6 +270,10 @@ api_urlpatterns = [
     path('captcha/', CaptchaView.as_view(), name='captcha'),
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'),
+    # 第 439 批：游客试用。session 会**建账号**，所以单独限流（scope=guest_session）；
+    # quota 是只读，登录用户也能查（返回 unlimited）。
+    path('guest/session/', GuestSessionView.as_view(), name='guest-session'),
+    path('guest/quota/', GuestQuotaView.as_view(), name='guest-quota'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('check-auth/', CheckAuthView.as_view(), name='check-auth'),
     # 第 91 批（安全）：这里原本还挂着 DRF 自带的

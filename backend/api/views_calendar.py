@@ -206,7 +206,8 @@ class CalendarView(APIView):
         seasonal_pests = []
         if scope_crops:
             rows = (
-                DetectionHistory.objects
+                # 第 439 批："本月需重点防范"是站内统计，排除游客试用
+                DetectionHistory.objects.real_users()
                 .filter(
                     timestamp__gte=_start,
                     timestamp__lt=_end,
@@ -261,7 +262,8 @@ class CalendarView(APIView):
         # `timezone.localdate()`（本地）——UTC+8 的凌晨两者会差一个月，
         # 表现成"我明明今天识别过，日历格子却是空的"。
         #: 区间 `_start` / `_end` 已在读取请求参数后用 `_month_bounds` 算好（见函数开头）。
-        activity_qs = DetectionHistory.objects.filter(
+        # 第 439 批：日历上的"站内活动"排除游客试用
+        activity_qs = DetectionHistory.objects.real_users().filter(
             timestamp__gte=_start, timestamp__lt=_end, pest_info__isnull=False)
         if crop and crop != 'all':
             activity_qs = activity_qs.filter(pest_info__crop_type=crop)

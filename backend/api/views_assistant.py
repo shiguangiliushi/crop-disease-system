@@ -48,6 +48,9 @@ from .schema_serializers import (  # 第 388 批：只用于 OpenAPI 文档
 from .assistant import prompts, vision
 from .assistant.service import escalate
 from .image_validation import ImageValidationError, validate_image_upload
+# 第 439 批：游客试用（额度扣减 + 看图问答的禁用）
+from . import guest as guest_trial
+from . import views_guest
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +183,8 @@ class AssistantAskView(APIView):
     """问一个问题（一次返回完整答案）。"""
 
     permission_classes = [permissions.IsAuthenticated]
+    #: 第 439 批：游客可以问答（一次扣一次额度），见 `api/guest.py`
+    guest_allowed = True
 
     @extend_schema(
         summary='提问（一次返回完整答案）',
@@ -195,6 +200,17 @@ class AssistantAskView(APIView):
         payload, error = _parse_request(request)
         if error is not None:
             return error
+
+        # 第 439 批：游客试用 —— 先挡"带图问答"，再扣额度。
+        # 顺序不能反：带图的请求直接 400，不该白扣一次试用机会（而且 vision 单价更高）。
+        if guest_trial.is_guest(request.user) and payload['image'] is not None:
+            return Response(
+                {'detail': '试用账号暂不支持看图问答，注册后可用'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        over_quota = views_guest.charge('ask', request)
+        if over_quota is not None:
+            return over_quota
 
         result = orchestrator.ask(
             user=request.user,
@@ -228,6 +244,8 @@ class AssistantAskStreamView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated]
+    #: 第 439 批：流式问答同样对游客开放（前端默认走的就是这条）
+    guest_allowed = True
 
     @extend_schema(
         summary='提问（SSE 流式返回）',
@@ -250,6 +268,17 @@ class AssistantAskStreamView(APIView):
         payload, error = _parse_request(request)
         if error is not None:
             return error
+
+        # 第 439 批：游客试用 —— 先挡"带图问答"，再扣额度。
+        # 顺序不能反：带图的请求直接 400，不该白扣一次试用机会（而且 vision 单价更高）。
+        if guest_trial.is_guest(request.user) and payload['image'] is not None:
+            return Response(
+                {'detail': '试用账号暂不支持看图问答，注册后可用'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        over_quota = views_guest.charge('ask', request)
+        if over_quota is not None:
+            return over_quota
 
         stream = orchestrator.ask_stream(
             user=request.user,

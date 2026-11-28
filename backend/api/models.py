@@ -71,6 +71,21 @@ class CustomUser(AbstractUser):
     #     所以正确做法是"保留内容、清除个人信息"（见 soft_delete 的说明）。
     #   · 用户也可能后悔或需要申诉，留一条可追溯的记录比"查无此人"更负责。
     # ========================================================================
+    # ========================================================================
+    # 第 439 批：游客试用身份
+    # ------------------------------------------------------------------------
+    # 游客是**真用户**（有 token、能落识别历史与会话），所以不需要给识别/问答
+    # 再写一套"匿名分支"—— 那会让同一条链路长出两个生产者。
+    #
+    # 为什么用字段而不是"用户名以 guest_ 开头"：
+    #   前缀是**约定**，字段是**约束**。将来改命名规则、或者有人真注册了
+    #   `guest_abc` 这种名字，靠字符串判断会静默错，而且是错在"统计里多算了一个人"
+    #   这种很久之后才被发现的地方。
+    #
+    # 谁能建：只有 `POST /api/guest/session/`（见 api/guest.py），
+    # 普通注册路径永远写 False。
+    is_guest = models.BooleanField('游客试用账号', default=False, db_index=True)
+
     is_deleted = models.BooleanField('已注销', default=False, db_index=True)
     deleted_at = models.DateTimeField('注销时间', null=True, blank=True)
     deleted_by = models.ForeignKey(
@@ -572,12 +587,28 @@ class PreventionMethod(models.Model):
         verbose_name_plural = verbose_name
 
 
+class DetectionHistoryQuerySet(models.QuerySet):
+    """识别记录的默认查询集（第 439 批新增 `real_users()`）。"""
+
+    def real_users(self):
+        """只留真实用户（排除游客试用账号）。
+
+        ⚠️ 用在**统计与列表**上（看板 / 系统健康 / 预警热度 / 农事日历 / 管理端识别列表）。
+        **不要**用在"看某人自己的历史"上：那里的条件本来就是 `filter(user=request.user)`，
+        游客看自己的记录是正常的 —— 再套一层只会让游客的历史页变成空白，
+        看起来像 bug（而它其实是权限问题）。
+        """
+        return self.exclude(user__is_guest=True)
+
+
 class DetectionHistory(models.Model):
     """单条识别记录（识别历史列表的数据源）。
 
     ⚠️ `pest_info` 允许为 NULL —— 老数据、或识别结果没匹配到词条时就是空的，
     读的地方不能假设它一定存在（序列化器里那段回填正是为此）。
     """
+    objects = DetectionHistoryQuerySet.as_manager()
+
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, verbose_name="用户")
     image = models.ImageField(upload_to='detection_history/',
                               storage=signed_media_storage,  # 第 259 批：.url 自动带签名
@@ -896,3 +927,7 @@ from . import models_social  # noqa: E402,F401
 # 实测：E2E 清理临时账号时踩到；正常请求路径因为 views 里 import 过反而没事 ——
 # 这种"看运气"的 bug 必须收敛成唯一入口。
 from . import models_token  # noqa: E402,F401
+# 第 439 批：同理 —— `GuestTrialQuota` 不在这里被导入，删游客账号时
+# 收集器就不知道有这张表；而"删游客账号"正是本功能唯一的清理路径，
+# 一旦漏级联，prune_guests 会在 COMMIT 处报 FOREIGN KEY constraint failed。
+from . import models_guest  # noqa: E402,F401

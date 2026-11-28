@@ -724,6 +724,11 @@ REST_FRAMEWORK = {  # REST框架配置
     # 代价：DRF 自带可浏览 API（BrowsableAPIRenderer）的登录表单不再可用，
     # 浏览器里直接打开 /api/... 会以匿名身份呈现；Django admin 是普通视图，不受影响。
     'DEFAULT_AUTHENTICATION_CLASSES': [  # 默认认证类
+        # 第 439 批：游客试用的**写权限闸门**。它继承 `DeviceTokenAuthentication`，
+        # 所以放在它前面不会漏认 token；差别只是"游客 token 只能写白名单视图"。
+        # ⚠️ 顺序不能换：认证类按顺序试，第一个返回身份的就定了，
+        #    放在后面等于闸门永远不执行（功能看起来正常，防护却是空的）。
+        'api.authentication.GuestTokenAuthentication',
         # 第 231 批：**每设备一张 token**（手机与桌面可以同时在线）。
         # 先认 `DeviceToken`（新主路径），再退回 DRF 的 `Token`（老客户端/老数据/测试）。
         'api.authentication.DeviceTokenAuthentication',
@@ -790,7 +795,33 @@ REST_FRAMEWORK = {  # REST框架配置
         # 而这个接口是**唯一的自助恢复途径** —— 限太死会让真正要恢复账号的人
         # 因为"邻居把额度用完了"而恢复不了。10/min 已足以让在线撞库不可行。
         'cancel_deletion': '10/min',
+        # 第 439 批：游客试用。**开试用会建账号**，不限流等于给了一个"批量建用户"的接口。
+        # 6/min 足够一个人反复刷新（正常也就 1~2 次），但挡住了脚本。
+        # 注意：真正的额度在 `GuestTrialQuota` 表里（见 api/guest.py），
+        # 这里只挡突发；缓存是 LocMem 时这条限流本身是"每进程一份"，所以要靠表。
+        'guest_session': '6/min',
     },
+}
+
+# ============================================================================
+# 游客试用（第 439 批）
+# ----------------------------------------------------------------------------
+# 目标：任何人打开站点就能**免注册**试 3 次识别、5 次问答（发给面试官/技术总监的链接，
+# 让他 60 秒内点得通，而不是先填一遍注册表单）。
+#
+# 三个值改这里即可，**不要**散落到视图里：
+#   · `enabled`：总开关。关掉后 `/api/guest/session/` 直接 403，
+#     **已经开着页面的游客也会被 `GuestTokenAuthentication` 一并拒掉**
+#     （只关入口不关存量，出事时这个开关起不到止血作用）。
+#   · 日额度按 **IP + 自然日** 计（不是按 token —— 清 localStorage 不等于换额度）。
+#
+# ⚠️ 额度为什么不放缓存：本项目生产默认缓存是 LocMemCache（每进程一份），
+#    gunicorn 多 worker 时"N 次/天"会变成 N 倍且不报错。见 api/models_guest.py。
+# ============================================================================
+GUEST_TRIAL = {
+    'enabled': _env_bool('DJANGO_GUEST_TRIAL', True),
+    'detect_per_day': int(os.environ.get('DJANGO_GUEST_DETECT_PER_DAY') or 3),
+    'ask_per_day': int(os.environ.get('DJANGO_GUEST_ASK_PER_DAY') or 5),
 }
 
 # ============================================================================

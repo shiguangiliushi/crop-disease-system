@@ -487,7 +487,8 @@ def get_detection_errors(days: int = 30, threshold: float = 0.5, top: int = 5) -
         top = 5
 
     since = timezone.now() - timedelta(days=days)
-    detections = DetectionHistory.objects.filter(timestamp__gte=since)
+    # 第 439 批：管理端助手看到的运行数据也不含游客试用
+    detections = DetectionHistory.objects.real_users().filter(timestamp__gte=since)
     total = detections.count()
 
     low = 0

@@ -109,6 +109,10 @@ from .models import (
     PreventionMethod, Feedback, News
 )
 from .pagination import CustomPagination
+# 第 439 批：用户响应体（登录 / check-auth / 游客开试用共用，见该模块说明）
+from . import user_payload
+# 第 439 批：游客额度扣减 / 退还（只在游客身份下生效）
+from . import views_guest
 from .permissions import IsAdminOrReadOnly
 # 第 124 批：能力口径统一收口（本站原来同一个判定抄了 16 处）
 from .capabilities import (
@@ -286,7 +290,11 @@ class StatisticsView(APIView):
                 logger.info(f'Statistics scoped to user {user.id} records')
 
             # 获取基础查询集
+            # 第 439 批：全站口径排除游客试用；个人口径不动
+            # （游客进统计页时看到"自己的 0 条"是正常的，套上排除反而像 bug）
             base_queryset = DetectionHistory.objects.filter(**user_filter)
+            if can_see_all_users and all_users:
+                base_queryset = base_queryset.real_users()
             logger.info(f'Base queryset count: {base_queryset.count()}')
 
             # 1. 病害类型分布 - 统计所有记录，按病害类型分组
@@ -494,21 +502,8 @@ class CheckAuthView(APIView):
         return Response({
             'status': 'success',
             'message': 'User is authenticated',
-            'data': {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'is_staff': user.is_staff,
-                'is_superuser': user.is_superuser,
-                'role': getattr(user, 'role', 'USER'),
-                # 第 23 批：与登录响应保持一致，带上头像地址
-                'avatar': serializers._user_avatar_url(user, request),
-                # 第 124 批：能力清单（前端据此显示后台菜单与按钮；
-                # 真正的边界始终在后端 —— 前端只负责"别把做不到的东西画出来"）
-                'capabilities': capabilities_of(user),
-                # 第 128 批：内容模块清单（内容侧**按模块**显示：勾了新闻才给新闻管理）
-                'content_modules': content_modules_of(user),
-            }
+            # 第 439 批：与登录 / 游客开试用共用同一份字段（见 api/user_payload.py）
+            'data': user_payload.build(user, request),
         })
 
 
@@ -519,6 +514,8 @@ class LogoutView(APIView):
     - 清除认证token
     """
     permission_classes = [permissions.IsAuthenticated]
+    #: 第 439 批：游客也要能"结束试用"（登出后前端清掉身份，下次进页面会重新开一个）。
+    guest_allowed = True
 
     @extend_schema(
         request=OpenApiTypes.OBJECT,
@@ -805,34 +802,10 @@ class LoginView(APIView):
                 'status': 'success',
                 'message': '登录成功',
                 'data': {
-                    'user': {
-                        'id': user.id,
-                        'username': user.username,
-                        'email': user.email,
-                        'is_staff': user.is_staff,
-                        'is_superuser': user.is_superuser,
-                        # 第 23 批：带上头像地址，否则顶栏要等用户进过一次资料页才有头像
-                        'avatar': serializers._user_avatar_url(user, request),
-                        # 第 17 批修复：这里原先**不返回 role**，而前端多处管理员判定
-                        # （路由守卫 `user.role === 'ADMIN' || user.is_staff`、
-                        # HistoryView / DiseaseStatistics 的 all_users 开关、
-                        # PestEncyclopediaView / PestDetailView 的新增编辑按钮、
-                        # stores/auth.js 的 isAdmin）都依赖 `user.role`；
-                        # 而 stores/auth.js 的 checkAuth() 只从 localStorage 读取用户、
-                        # **不会调用 /api/check-auth/ 刷新**，所以 role 永远是 undefined
-                        # → 这些 role 分支全部是死代码（role=ADMIN 但 is_staff=False 的
-                        # 账号会被前端当成普通用户，甚至被路由守卫挡在管理页之外，
-                        # 而后端其实是允许的）。
-                        # role 本身不是敏感信息（/api/users/{id}/ 与 check-auth 都已公开返回）。
-                        'role': getattr(user, 'role', 'USER'),
-                        # 第 124 批：能力清单（键名与 /api/check-auth/ 一致）。
-                        # 前端 `stores/auth.js` 用它决定"能不能进管理后台、菜单显示哪几项"，
-                        # 而不是自己拿 is_staff/role 推 —— 口径只有后端一份（capabilities.py）。
-                        'capabilities': capabilities_of(user),
-                        # 第 128 批：内容模块（"内容审核/新闻管理/病害百科/意见反馈"里
-                        # 这个人被授权了哪几块）
-                        'content_modules': content_modules_of(user),
-                    },
+                    # 第 439 批：收敛到 `user_payload.build()` —— 登录 / check-auth /
+                    # 游客开试用返回的是**同一个**用户对象，抄三份的下场是
+                    # "少一个 role 或 capabilities，前端菜单静默失效"（第 17 批踩过）。
+                    'user': user_payload.build(user, request),
                     'token': token.key
                 }
             }
@@ -861,6 +834,9 @@ class DetectView(APIView):
     """
     parser_classes = (MultiPartParser, FormParser)
     permission_classes = [permissions.IsAuthenticated]
+    #: 第 439 批：游客可以识别（一次扣一次额度）。闸门判定见
+    #: `authentication.GuestTokenAuthentication` —— 没写这一行就是"注册后可用"。
+    guest_allowed = True
 
     @extend_schema(
         request=OpenApiTypes.OBJECT,
@@ -878,6 +854,13 @@ class DetectView(APIView):
                 {'error': '未检测到图片文件'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # 第 439 批：游客试用扣额度。
+        # 位置刻意放在"确认带了图片"**之后**：没有图片的请求是 400，
+        # 不该让用户为此少掉一次试用机会。登录用户在这里是空操作。
+        over_quota = views_guest.charge('detect', request)
+        if over_quota is not None:
+            return over_quota
 
         try:
             # 获取上传的图片
@@ -933,6 +916,9 @@ class DetectView(APIView):
                 # 第 74 批：错误文案面向农户。技术细节（服务未初始化）只进日志，
                 # 不返回给用户；同时保留 503 让前端能区分"服务不可用"与"图片问题"。
                 logger.error('[detect] AI 服务未初始化，无法识别')
+                # 第 439 批：推理根本没跑，把游客这次额度还回去 ——
+                # 否则"站点坏了"会连试用次数一起吃掉，看起来像在骗人。
+                views_guest.refund('detect', request)
                 return Response(
                     {'error': '识别服务暂时不可用，请稍后重试', 'retryable': True},
                     status=status.HTTP_503_SERVICE_UNAVAILABLE
@@ -1988,7 +1974,7 @@ class DetectionHistoryDetailView(RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         user = self.request.user
         if has_capability(user, CAP_USER_ADMIN):
-            return DetectionHistory.objects.all()
+            return DetectionHistory.objects.real_users()
         return DetectionHistory.objects.filter(user=user)
 
     def perform_destroy(self, instance):
@@ -2047,6 +2033,9 @@ class DetectionHistoryView(APIView):
         # 用户权限过滤：普通用户只能看到自己的记录
         if not (is_admin_user and all_users):
             queryset = queryset.filter(user=user)
+        else:
+            # 第 439 批：管理端"全部用户"列表不含游客试用（他们在 3 天后被清理）
+            queryset = queryset.real_users()
 
         # 病害名称筛选
         if pest_name and pest_name.lower() != 'all':
@@ -2462,6 +2451,8 @@ class DetectionHistoryClearView(APIView):
     点击后必然 404。这里补上，并同步删除关联的图片文件。
     """
     permission_classes = [permissions.IsAuthenticated]
+    #: 第 439 批：游客可以清空自己的试用痕迹（只能清自己的，`all_users` 他要不到）。
+    guest_allowed = True
 
     @extend_schema(
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 204: None},

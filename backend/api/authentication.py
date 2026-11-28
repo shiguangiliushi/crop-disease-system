@@ -22,8 +22,16 @@ from __future__ import annotations
 
 from rest_framework import authentication, exceptions
 from rest_framework.authentication import get_authorization_header
+from rest_framework.permissions import SAFE_METHODS
 
 from .models_token import DeviceToken
+
+
+#: 游客 token 能写的视图白名单（只是文档；真正的判定看视图上的 `guest_allowed`）
+GUEST_WRITABLE_VIEWS = (
+    'DetectView', 'AssistantAskView', 'AssistantAskStreamView',
+    'DetectionHistoryClearView', 'LogoutView',
+)
 
 
 class DeviceTokenAuthentication(authentication.BaseAuthentication):
@@ -77,3 +85,53 @@ class DeviceTokenAuthentication(authentication.BaseAuthentication):
 
     def authenticate_header(self, request):
         return self.keyword
+
+
+class GuestTokenAuthentication(DeviceTokenAuthentication):
+    """游客试用 token 的**写权限闸门**（第 439 批）。
+
+    ## 为什么要一层认证类，而不是在 `permission_classes` 上挂一道权限
+
+    权限类会被视图自己声明的 `permission_classes = [...]` **整个覆盖**。
+    本项目大量视图是显式声明的（`DetectView`、`AssistantAskView`、各种管理端视图），
+    所以挂在 `DEFAULT_PERMISSION_CLASSES` 上的闸门对它们**根本不生效** ——
+    等于"看起来设了防，实际只防住了没写 permission_classes 的那几个"。
+
+    认证类不会被覆盖：它在 `APIView.initial()` 的 `perform_authentication()` 里调用，
+    早于权限检查。所以闸门放在这里，**默认拒绝、逐处放行**。
+
+    ## 规则
+
+    - 非游客 → 原样放行（这条类对真实用户零影响）；
+    - 游客 + 安全方法（GET/HEAD/OPTIONS）→ 放行（否则连百科、预警都看不了）；
+    - 游客 + 写方法 → 只有视图上写了 `guest_allowed = True` 才放行。
+
+    需要放行的只有四个视图（识别、问答同步/流式、清空自己的历史、登出），
+    见各自类上的 `guest_allowed`。新增接口时**默认是拒绝**的：
+    这正是我们要的默认值。
+    """
+
+    def authenticate(self, request):
+        result = super().authenticate(request)
+        if not result:
+            return result
+
+        user = result[0]
+        if not getattr(user, 'is_guest', False):
+            return result          # 真实用户，完全不受影响
+
+        # 总开关关掉时，**已经开着页面的游客也一并失效** ——
+        # 否则"关闭试用"只是关掉了入口，存量游客还能继续用，
+        # 线上出事（例如额度被刷爆）时这个开关就起不到止血作用。
+        from . import guest as guest_trial
+        if not guest_trial.config()['enabled']:
+            raise exceptions.PermissionDenied('试用功能已关闭，请注册后使用')
+
+        if request.method in SAFE_METHODS:
+            return result          # 读是安全的：游客和匿名访客能看的一样
+
+        view = (request.parser_context or {}).get('view')
+        if not getattr(view, 'guest_allowed', False):
+            raise exceptions.PermissionDenied(
+                '试用账号只能使用识别与问答，注册后可使用完整功能')
+        return result
