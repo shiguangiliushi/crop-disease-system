@@ -285,8 +285,13 @@ FOCUS_BY_INTENT = {
 DEGRADE_TEXT = {
     'zh': {
         'no_llm': '（AI 助手暂时不可用，以下为该病害的档案原文，仅供参考）\n\n{body}',
-        'no_source': ('本系统词条未收录该问题，建议咨询当地植保站。\n'
-                      '（如需查看已收录的作物与病害，可在「病害百科」中浏览。）'),
+        # 第 444 批：原来写"本系统词条**未收录**该问题" —— 这是在替词库下结论，
+        # 但真相往往只是"这次没检索到"（例如用户只发了一个 🍎）。
+        # 改成如实描述检索结果，并给一个可操作的说法示范。
+        'no_source': ('这条问题我没在词条里匹配到内容。可以换个说法再问一次'
+                      '（带上作物名或病害名，例如「苹果黑星病怎么防治」），'
+                      '或咨询当地植保站。\n'
+                      '（已收录的作物与病害可在「病害百科」里浏览。）'),
         'sensitive': '您的问题包含不允许的词汇（{words}），请修改后重试。',
         'empty': '请先输入您的问题。',
         'too_long': '问题太长了（上限 {limit} 字），请精简后再问。',
@@ -298,9 +303,11 @@ DEGRADE_TEXT = {
     'en': {
         'no_llm': ('(The AI assistant is temporarily unavailable. The archive text below is shown '
                    'for reference only.)\n\n{body}'),
-        'no_source': ('This topic is not covered by our entries; please consult your local plant '
-                      'protection station.\n(You can browse the crops and diseases we do cover in '
-                      'the Disease Encyclopedia.)'),
+        'no_source': ("I couldn't match this question to any of our entries. Try rephrasing with "
+                      'the crop or disease name (e.g. "how to control apple scab"), or consult '
+                      'your local plant protection station.\n'
+                      '(You can browse the crops and diseases we do cover in the Disease '
+                      'Encyclopedia.)'),
         'sensitive': 'Your question contains disallowed words ({words}). Please rephrase it and try again.',
         'empty': 'Please type your question first.',
         'too_long': 'The question is too long (limit {limit} characters). Please shorten it.',

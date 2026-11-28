@@ -15758,6 +15758,51 @@ class PostRestoreAfterUnpublishTests(APITestCase):
 #   · 上下文只取中文段 —— 防止引用里串出英文（见 assistant/context.py）；
 #   · 锚点场景的弱命中过滤 —— 实测过"这个病用什么药"会捞出 score=1 的路人词条。
 # ============================================================================
+class AssistantEmojiQueryTests(TestCase):
+    """emoji 提问也要能检索到（第 444 批）。
+
+    线上真实反馈：用户只发了一个 🍎，系统答「资料里没有收录苹果的任何病害」——
+    而词库里其实有 4 条苹果词条（实测 `search('🍎')=0`、`search('苹果')=4`）。
+    原因是 emoji 不是文本 token，字面匹配命中 0 条 → 直接走 `no_source` 降级，
+    那句"没收录"就成了错误结论。
+
+    修法：检索前把 emoji 换成作物名（`expand_emoji`），用户原话仍原样带给模型。
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        PestInfo.objects.create(
+            name='苹果黑星病', crop_type='苹果', english_identifier='apple_scab',
+            symptoms='叶片正面出现橄榄绿色至黑褐色霉层，后期叶片扭曲。',
+            description='病菌在落叶上越冬，春季多雨时流行。',
+        )
+
+    def test_emoji_expands_to_crop_name(self):
+        from .assistant import retriever
+
+        self.assertEqual(retriever.expand_emoji('🍎'), '苹果')
+        self.assertEqual(retriever.expand_emoji('🍅'), '番茄')
+        self.assertEqual(retriever.expand_emoji('苹果黑星病怎么防治'), '苹果黑星病怎么防治')
+
+    def test_emoji_only_query_hits_knowledge_base(self):
+        from .assistant import retriever
+
+        self.assertTrue(retriever.search('🍎'), '只发一个 🍎 也应该检索到苹果词条')
+
+    def test_unknown_crop_emoji_still_returns_nothing(self):
+        """词库确实没收录的作物（香蕉）仍然 0 条 —— 但不能说成"没收录苹果"。"""
+        from .assistant import retriever
+
+        self.assertEqual(retriever.search('🍌'), [])
+
+    def test_no_source_wording_does_not_claim_absence(self):
+        from .assistant import prompts
+
+        for lang in ('zh', 'en'):
+            with self.subTest(lang=lang):
+                self.assertNotIn('未收录', prompts.degrade_text('no_source', lang))
+        self.assertIn('没在词条里匹配到', prompts.degrade_text('no_source', 'zh'))
+
 class AssistantTests(TestCase):
     """智能回答助手：闸门 / 检索 / 降级 / 引用 / 接口。"""
 
@@ -15851,14 +15896,16 @@ class AssistantTests(TestCase):
 
     # ── 二、无来源不回答 ────────────────────────────────────────────────
     def test_no_source_question_does_not_call_llm(self):
-        """知识库里没有的问题：明确说"词条未收录"，且**不调模型**（不许它自由发挥）"""
+        """知识库里没有的问题：如实说"没匹配到词条"，且**不调模型**（不许它自由发挥）"""
         with patch('api.assistant.orchestrator.llm.chat') as mocked_chat:
             resp = self.client_auth.post('/api/assistant/ask/',
                                          {'question': '帮我写一首关于春天的诗'}, format='json')
             mocked_chat.assert_not_called()
         self.assertEqual(resp.data['degrade_reason'], 'no_source')
         self.assertEqual(resp.data['citations'], [])
-        self.assertIn('未收录', resp.data['answer'])
+        # 第 444 批：话术从「词条未收录该问题」改成「没在词条里匹配到内容」——
+        # 原话术是在替词库下结论，而真相往往只是"这次没检索到"（例如只发一个 🍎）。
+        self.assertIn('没在词条里匹配到', resp.data['answer'])
 
     # ── 三、降级：助手挂了，接口仍然 200 ─────────────────────────────────
     def test_llm_disabled_falls_back_to_archive_text(self):
@@ -16847,12 +16894,12 @@ class AssistantStreamTests(TestCase):
         self.assertTrue(events[-1][1]['degraded'])
 
     def test_no_source_stream_does_not_call_model(self):
-        """与农业无关的问题：不调模型，给出"未收录"整段"""
+        """与农业无关的问题：不调模型，给出"没匹配到"整段（第 444 批改话术）"""
         with patch('api.assistant.llm.chat_stream') as mocked:
             _resp, events = self._stream(question='帮我写一首关于春天的诗')
             mocked.assert_not_called()
         self.assertEqual(events[0][1]['degrade_reason'], 'no_source')
-        self.assertIn('未收录', events[1][1]['text'])
+        self.assertIn('没在词条里匹配到', events[1][1]['text'])
 
     def test_empty_question_stream_has_no_message_id(self):
         """空问题：不建会话也不落库，但**仍返回合法 SSE**（前端解析器不能因此报错）"""
@@ -17165,7 +17212,8 @@ class AssistantLanguageTests(TestCase):
         """无来源话术也要按语言给（英文用户不该看到中文提示）"""
         resp = self._ask_en(question='Please write me a poem about spring')
         self.assertEqual(resp.data['degrade_reason'], 'no_source')
-        self.assertIn('not covered by our entries', resp.data['answer'])
+        # 第 444 批：英文话术同步改成"没匹配到"（不再断言"词库没收录"）
+        self.assertIn("couldn't match this question", resp.data['answer'])
         self.assertNotRegex(resp.data['answer'], r'[\u4e00-\u9fff]')
 
     def test_sensitive_and_empty_messages_follow_language(self):
