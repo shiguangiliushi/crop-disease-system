@@ -216,6 +216,11 @@
       v-else-if="items.length === 0"
       :description="hasActiveFilter ? t('feedbackAdmin.emptyFiltered') : t('feedbackAdmin.empty')"
     >
+      <!-- 第 448 批：侧栏角标（待处理）与列表口径不同，空态里直接把"待处理共 N 条"说出来，
+           用户就不会以为"角标有数字、列表是 0"是统计坏了。 -->
+      <p v-if="stats.pending" class="empty-pending-hint">
+        {{ t('feedbackAdmin.emptyPendingHint', { count: stats.pending }) }}
+      </p>
       <el-button v-if="hasActiveFilter" size="small" @click="clearFilters">
         {{ t('feedbackAdmin.clearFilters') }}
       </el-button>
@@ -1316,4 +1321,11 @@ export default {
   justify-content: flex-end;
   margin-top: 14px;
 }
+/* 第 448 批：空态里的"待处理共 N 条"提示 */
+.empty-pending-hint {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--ink-400, #8a8f98);
+}
+
 </style>

@@ -1415,6 +1415,7 @@ export const zhCN = {
     general: '通用建议',
   },
   feedbackAdmin: {
+    emptyPendingHint: '当前筛选下 0 条，但待处理反馈共有 {count} 条（侧栏角标统计的就是它）。',
     title: '意见反馈管理',
     subtitle: '全部用户的反馈（含「病害识别」页的识别纠错反馈）—— 可查看提交人、流转处理状态并填写回复',
     statusFilter: '处理状态',
@@ -4878,6 +4879,7 @@ export const en = {
     general: 'General advice',
   },
   feedbackAdmin: {
+    emptyPendingHint: 'No results with the current filters, but {count} are still pending (that is what the sidebar badge counts).',
     title: 'Feedback management',
     subtitle: 'Feedback from all users (including diagnosis corrections from the Detect page) — see the submitter, move the status and write a reply',
     statusFilter: 'Status',
