@@ -182,22 +182,43 @@ PY
 fi
 
 # ── 2. crontab ───────────────────────────────────────────────────────────────
+# ⚠️ 第 443 批：这里原来用 `sed` 改 + 直接打印 ✓ —— 实测在真实 crontab 上
+#    两个「✓」都打印了，但**一行都没改**（sed 的匹配串和实际行尾/空格不一致，
+#    而 pipeline 仍然退出 0）。所以改成：用 python 逐行判断（不依赖精确匹配），
+#    改完**重新读回 crontab 复核**，没改成就明确报警。
 say "2. 定时任务（§5 prune_media 补 --yes + prune_guests）"
 run "sudo mkdir -p $CRON_LOG_DIR && sudo chmod 777 $CRON_LOG_DIR"
-if crontab -l 2>/dev/null | grep -q 'prune_media --yes'; then
-  ok "prune_media 已带 --yes，跳过"
-else
-  run "crontab -l > ~/crontab.bak.\$(date +%m%d%H%M)"
-  run "crontab -l 2>/dev/null | sed 's#manage.py prune_media >>#manage.py prune_media --yes --min-age-days 7 >>#' | crontab -"
-  ok "prune_media 已补 --yes --min-age-days 7"
+
+if [ "$CHECK_ONLY" = "0" ]; then
+  crontab -l > "$HOME/crontab.bak.$(date +%m%d%H%M)" 2>/dev/null || true
+  python3 - "$APP_DIR" "$CRON_LOG_DIR" <<'PY'
+import subprocess, sys
+
+app, logdir = sys.argv[1], sys.argv[2]
+cur = subprocess.run(['crontab', '-l'], capture_output=True, text=True).stdout
+out, fixed, has_guest = [], False, False
+for line in cur.splitlines():
+    if 'manage.py prune_media' in line and '--yes' not in line:
+        line = line.replace('manage.py prune_media',
+                            'manage.py prune_media --yes --min-age-days 7')
+        fixed = True
+    if 'manage.py prune_guests' in line:
+        has_guest = True
+    out.append(line)
+if not has_guest:
+    out.append(
+        f'0 5 * * * cd {app} && sudo docker compose exec -T backend '
+        f'python manage.py prune_guests --days 3 --yes >> {logdir}/guests.log 2>&1')
+subprocess.run(['crontab', '-'], input='\n'.join(out) + '\n', text=True, check=True)
+print(f'  prune_media 补 --yes: {fixed}   prune_guests 追加: {not has_guest}')
+PY
 fi
-if crontab -l 2>/dev/null | grep -q 'prune_guests'; then
-  ok "prune_guests 已存在，跳过"
-else
-  RUN_LINE="0 5 * * * cd $APP_DIR && $DC exec -T backend python manage.py prune_guests --days 3 --yes >> $CRON_LOG_DIR/guests.log 2>&1"
-  run "( crontab -l 2>/dev/null; echo '$RUN_LINE' ) | crontab -"
-  ok "已追加 prune_guests（每天 05:00）"
-fi
+
+# 复核：以 crontab 实际内容为准，不看上面的 print
+MEDIA_OK="$(crontab -l 2>/dev/null | grep -c 'prune_media.*--yes' || true)"
+GUEST_OK="$(crontab -l 2>/dev/null | grep -c 'prune_guests' || true)"
+if [ "${MEDIA_OK:-0}" -ge 1 ]; then ok "prune_media 已带 --yes --min-age-days 7"; else warn "prune_media 仍不带 --yes（需手工改）"; fi
+if [ "${GUEST_OK:-0}" -ge 1 ]; then ok "prune_guests 已挂（每天 05:00）"; else warn "prune_guests 缺失（需手工加）"; fi
 
 # ── 3. 试用开关 ──────────────────────────────────────────────────────────────
 say "3. 试用开关（§6）"
