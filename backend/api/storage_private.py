@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from django.core.files.storage import FileSystemStorage
 
-from .media_sign import DEFAULT_TTL, PRIVATE_PREFIXES, sign_path
+from .media_sign import DEFAULT_TTL, private_prefixes, sign_path
 
 
 class SignedMediaStorage(FileSystemStorage):
@@ -57,7 +57,7 @@ class SignedMediaStorage(FileSystemStorage):
     def url(self, name: str) -> str:
         base = super().url(name)
         normalized = str(name or '').replace('\\', '/')
-        if any(normalized.startswith(prefix) for prefix in PRIVATE_PREFIXES):
+        if any(normalized.startswith(prefix) for prefix in private_prefixes()):
             separator = '&' if '?' in base else '?'
             return f'{base}{separator}{sign_path(normalized, DEFAULT_TTL)}'
         return base

@@ -31,7 +31,7 @@ from rest_framework.views import APIView
 
 
 #: 需要鉴权的目录前缀（第 257 批只有助手提问图片；后续可加 detection_history / consult_images）
-from .media_sign import PRIVATE_PREFIXES  # 第 259 批：清单集中到 media_sign
+from .media_sign import private_prefixes  # 第 441 批：清单可配（含可选的 detection_uploads）
 
 #: 归属判断：目录前缀 → (模型路径, 关联查询字段)
 #: 收权某目录时，这里要同时给出"谁算所有者"。
@@ -62,7 +62,7 @@ class MediaView(APIView):
         """
         from django.conf import settings
 
-        if not any(path.startswith(prefix) for prefix in PRIVATE_PREFIXES):
+        if not any(path.startswith(prefix) for prefix in private_prefixes()):
             return media_serve(request, path, document_root=settings.MEDIA_ROOT)
 
         # 第 258 批：签名 URL 优先 —— `<img>` 带不了 Authorization 头，

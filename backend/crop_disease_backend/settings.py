@@ -450,6 +450,13 @@ BASE_URL = 'http://localhost:8000'  # 基础URL，用于构建完整URL
 MEDIA_URL = '/media/'  # 媒体文件URL前缀
 MEDIA_ROOT = BASE_DIR / 'media'  # 媒体文件存储路径
 
+#: 第 441 批：把历史遗留的上传目录 `detection_uploads/` 也纳入"私有"（需签名访问）。
+#: 默认 **False**：这些是早期版本写的路径，现在仍被识别记录引用。
+#: ⚠️ 打开前必须先在 nginx 里把该前缀**回源给 Django**（否则老图片全部 404），
+#:    两处一起改的步骤见 `docs/安全加固清单.md` 第 5 条。开关生效后
+#:    `SignedMediaStorage.url()` 会给新 URL 追加 `?sig=…`，旧的无签名 URL 会失效。
+PRIVATE_DETECTION_UPLOADS = _env_bool('DJANGO_PRIVATE_DETECTION_UPLOADS', False)
+
 # 确保媒体目录存在
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 
@@ -796,10 +803,17 @@ REST_FRAMEWORK = {  # REST框架配置
         # 因为"邻居把额度用完了"而恢复不了。10/min 已足以让在线撞库不可行。
         'cancel_deletion': '10/min',
         # 第 439 批：游客试用。**开试用会建账号**，不限流等于给了一个"批量建用户"的接口。
-        # 6/min 足够一个人反复刷新（正常也就 1~2 次），但挡住了脚本。
+        # 第 441 批：6/min → **2/min**。6/min 对"一个人反复刷新"也太宽松
+        # （≈8600 个账号/天/IP），而正常使用只需要 1~2 次。想放宽改这一行即可。
         # 注意：真正的额度在 `GuestTrialQuota` 表里（见 api/guest.py），
         # 这里只挡突发；缓存是 LocMem 时这条限流本身是"每进程一份"，所以要靠表。
-        'guest_session': '6/min',
+        'guest_session': '2/min',
+        # 第 441 批：识别按"身份"限速（登录用户按用户、匿名按 IP）。
+        # 背景：DetectView 之前**完全没有限流** —— 游客额度虽然按 IP 每天 3 次，
+        # 但换 IP 就刷新、"注册用户"更是可以无限刷；识别是 CPU 推理（≈0.8s/张），
+        # 打满 CPU 会让整站变慢。这一条挡"同一身份短时间连发"，
+        # 跨 IP 的刷量只能靠 nginx `limit_req`（见 docs/安全加固清单.md）。
+        'detect': '10/min',
     },
 }
 

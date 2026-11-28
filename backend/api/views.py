@@ -842,6 +842,12 @@ class DetectView(APIView):
     #: 第 439 批：游客可以识别（一次扣一次额度）。闸门判定见
     #: `authentication.GuestTokenAuthentication` —— 没写这一行就是"注册后可用"。
     guest_allowed = True
+    #: 第 441 批：识别限流（scope=detect，10/min）。之前这里**没有任何限流** ——
+    #: 识别是 CPU 推理（≈0.8s/张），一个人连发就能把 CPU 打满，让整站变慢。
+    #: 游客另有"每 IP 每天 3 次"的额度（GuestTrialQuota），这一条挡的是同一身份突发。
+    #: ⚠️ 跨 IP 的刷量代码层挡不住，必须配 nginx `limit_req`（docs/安全加固清单.md）。
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'detect'
 
     @extend_schema(
         request=OpenApiTypes.OBJECT,

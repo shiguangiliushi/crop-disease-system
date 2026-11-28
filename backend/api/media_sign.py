@@ -27,6 +27,21 @@ PRIVATE_PREFIXES = (
 
 DEFAULT_TTL = 3600  # 1 小时：足够一次页面浏览，又不会长期可用
 
+#: 第 441 批：**可选**私有目录。这些是历史遗留的上传路径（早期版本的
+#: `upload_to`,现在还在 serving），默认不私有 —— 因为一旦私有，nginx 必须把
+#: 这些前缀回源给 Django（`views_media` 校验签名），只改代码不改 nginx 会让
+#: 所有老图片 404。所以做成开关，两处一起改（见 docs/安全加固清单.md 第 5 条）。
+PRIVATE_OPTIONAL = ('detection_uploads/',)
+
+
+def private_prefixes() -> tuple[str, ...]:
+    """当前生效的私有前缀清单（每次调用都读 settings，测试可 `override_settings`）。"""
+    from django.conf import settings
+
+    if getattr(settings, 'PRIVATE_DETECTION_UPLOADS', False):
+        return PRIVATE_PREFIXES + PRIVATE_OPTIONAL
+    return PRIVATE_PREFIXES
+
 
 def _secret() -> bytes:
     from django.conf import settings
