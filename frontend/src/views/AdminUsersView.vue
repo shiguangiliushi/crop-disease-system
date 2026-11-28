@@ -169,7 +169,7 @@
       @sort-change="onSortChange"
     >
       <el-table-column type="selection" width="46" :selectable="isRowSelectable" />
-      <el-table-column :label="t('adminUsers.colUser')" min-width="240" prop="username" sortable="custom">
+      <el-table-column :label="t('adminUsers.colUser')" min-width="210" prop="username" sortable="custom">
         <template #default="{ row }">
           <div class="user-cell">
             <el-avatar :size="34" :src="row.avatar || undefined">
@@ -191,13 +191,13 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="t('adminUsers.colRole')" width="120">
+      <el-table-column :label="t('adminUsers.colRole')" width="110">
         <template #default="{ row }">
           <el-tag size="small" effect="plain" :type="roleTagType(row)">{{ roleLabel(row) }}</el-tag>
         </template>
       </el-table-column>
 
-      <el-table-column :label="t('adminUsers.colStatus')" width="200">
+      <el-table-column :label="t('adminUsers.colStatus')" width="150">
         <template #default="{ row }">
           <el-tag size="small" :type="statusTagType(row)" effect="light">{{ statusLabel(row) }}</el-tag>
           <el-tag v-if="row.is_expert" size="small" type="success" effect="dark" class="expert-tag">
@@ -206,7 +206,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="t('adminUsers.colActivity')" width="190" prop="detections" sortable="custom">
+      <el-table-column :label="t('adminUsers.colActivity')" width="165" prop="detections" sortable="custom">
         <template #default="{ row }">
           <span class="activity-text">
             {{ t('adminUsers.activitySummary', {
@@ -216,18 +216,21 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="t('adminUsers.colJoined')" width="160" prop="date_joined" sortable="custom">
-        <template #default="{ row }">{{ formatTime(row.date_joined, 'YYYY-MM-DD HH:mm') }}</template>
-      </el-table-column>
-
-      <el-table-column :label="t('adminUsers.colLastLogin')" width="160" prop="last_login" sortable="custom">
+      <!-- 第 446 批：原来「注册」「最后登录」各占 160px，加起来 320px，导致整表 1472px
+           超出管理后台内容区（1240px）→ 右侧列被固定操作列盖住（"展示不全"）。
+           合并成一列（注册为主、最后登录为辅），省 150px，排序仍按注册时间。 -->
+      <el-table-column :label="t('adminUsers.colTimes')" width="170" prop="date_joined" sortable="custom">
         <template #default="{ row }">
-          <span v-if="row.last_login">{{ formatTime(row.last_login, 'YYYY-MM-DD HH:mm') }}</span>
-          <span v-else class="muted">{{ t('adminUsers.neverLoggedIn') }}</span>
+          <div class="time-main">{{ formatTime(row.date_joined, 'YYYY-MM-DD HH:mm') }}</div>
+          <div class="time-sub">
+            {{ t('adminUsers.lastLoginShort') }}
+            <template v-if="row.last_login">{{ formatTime(row.last_login, 'YYYY-MM-DD HH:mm') }}</template>
+            <template v-else>{{ t('adminUsers.neverLoggedIn') }}</template>
+          </div>
         </template>
       </el-table-column>
 
-      <el-table-column :label="t('adminUsers.colActions')" width="356" fixed="right">
+      <el-table-column :label="t('adminUsers.colActions')" width="300" fixed="right">
         <template #default="{ row }">
           <el-button size="small" type="primary" link @click="openDetail(row)">
             {{ t('adminUsers.detailAction') }}
@@ -1753,5 +1756,17 @@ export default {
 
 :deep(.el-tag + .el-tag) {
   margin-left: 0;
+}
+
+/* 第 446 批：合并后的「时间」列 —— 主行注册时间、副行最后登录，两行都要截断不换行 */
+.time-main {
+  font-variant-numeric: tabular-nums;
+}
+.time-sub {
+  font-size: 12px;
+  color: var(--ink-400, #8a8f98);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>
