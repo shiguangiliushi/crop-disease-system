@@ -3,10 +3,52 @@
 上传叶片照片，得到**病害名称、置信度与防治建议**；配套病害百科、识别历史、预警、种植日历、
 智能问答、专家咨询、论坛，以及完整管理后台。
 
-> 桌面端 + 移动端（Vant H5 / uni-app）共用一个 Django REST 后端；识别用 YOLOv8 目标检测，
-> **结果仅供参考**。逐条实现说明见 [`docs/系统完善记录.md`](docs/系统完善记录.md)。
+- **在线体验**：[www.shiguangiliushi.com](https://www.shiguangiliushi.com)（**免登录可试用 3 次识别 / 5 次问答**）
+- **训练侧代码**：[crop-disease-training](https://github.com/shiguangiliushi/crop-disease-training)（数据清洗 → 切分 → 训练 → 评估）
+
+| 项 | 值 |
+|---|---|
+| 识别模型 | **YOLOv8n**（3.02 M 参数），**39 类**（26 病害 + 12 健康 + 1 背景类），权重 **5.97 MB** |
+| 离线指标 | P **87.8%** / R **89.6%** / mAP50 **91.5%**（val 全量 4528 张，CPU） |
+| 推理速度 | 单张 **131 ms**（CPU，imgsz=640）；站内识别接口预热后 **≈0.8 s/张**，冷启动首张 26 s |
+| 技术栈 | Django 5.2 + DRF · Vue 3 + Element Plus · **LangGraph 1.2.24** · Ultralytics 8.3 · Docker Compose |
+| 系统助手 | **LangGraph 四节点状态图**，工具读写分离，不可逆写走「待确认表 + 原子认领」 |
+| 规模 | 单人完成 · **480 次提交** · 桌面端 + 两套移动端（Vant H5 / uni-app） |
+
+> ⚠️ **指标口径（先说清，别误读）**：这份数据集的标注是**整图单框**（框宽、框高归一化后中位数都为 1.0），
+> 所以 mAP50 与 mAP50-95 必然相等 —— **这个 mAP 实质是 39 类分类准确率**，不是田间多目标定位精度；
+> 且 val 与 train 同源（含增强副本），**换到真实田间照片会明显下降**。
+> 评估方式、复现命令与"为什么只有这个口径"见
+> [docs/评估方法.md](https://github.com/shiguangiliushi/crop-disease-training/blob/main/docs/%E8%AF%84%E4%BC%B0%E6%96%B9%E6%B3%95.md)。
 
 ![识别结果](docs/images/farmer-detect-result.webp)
+
+## 系统助手（Agent）
+
+管理端有一个**能查状态、也能代办**的助手。它跑在自己的状态图上（LangGraph `StateGraph`），
+不是"拼一段 prompt 让模型自由发挥"：
+
+- **四节点 + 条件路由**：`plan` 决定下一步 → `read` 执行只读工具 → `guard` 处理写动作 → `answer` 收口。
+  无工具调用直落 `answer`；只读工具回 `plan` 循环；含写动作才进 `guard`
+- **双上限**：`MAX_STEPS=4` 卡住"模型反复查"的循环，`MAX_WRITES=1` 保证一轮问答最多一次写
+- **工具读写分离**：8 个只读工具（系统健康、14 天趋势、审计摘要、运行数据、纠错样本、识别错例、
+  文档检索、只读 `manage.py` 自检）走一个**按名字通用执行**的入口；3 个可逆写工具
+  （核实样本 / 标记已处理 / 回复反馈）单独一个注册表，**只能**经 `validate() → execute()` 执行 ——
+  写工具若混进只读表，等于给模型开了一条写权限通道
+- **不可逆写只提议、不执行**：`delete_feedback` 默认不进模型工具表（`OPS_IRREVERSIBLE_ENABLED=False`），
+  开关打开后也只生成一条待确认记录
+- **为什么弃用 `interrupt()`**：第 424 批用 LangGraph 的 `interrupt()` 做"提议 → 确认"，
+  `InMemorySaver` 的状态在**进程内存**里 —— gunicorn 多 worker 时确认请求会落到另一个进程，
+  表现是"点了确认没反应"；进程重启则静默丢失。第 425 批改为落 `OpsPendingWrite` 表：
+  图只负责提议，确认是另一个确定性请求，**不经过图、也不经过模型**
+- **防双击 / 重放**：确认走 `UPDATE … WHERE status='pending'` **原子认领**，第二个请求只拿到 `consumed`
+- **"这算不算确认"是纯函数**，不交给模型 —— 否则模型能确认自己刚提的议
+- **模型适配层**：自写 `DjangoLLM(BaseChatModel)`，**刻意不装 openai SDK**，避免它的重试策略
+  长出第二套超时口径
+- **测试**：`api/tests_agent.py` **45 条**用例，模型替换为 `ScriptedModel`（按脚本吐 `AIMessage`），
+  不打真实端点、不花额度
+
+设计取舍见 [`docs/智能回答助手框架.md`](docs/智能回答助手框架.md)。
 
 ## 功能
 
@@ -18,6 +60,7 @@
 | 农户 | 病害百科 | 38 类词条（26 病害 + 12 健康）、症状与防治、溯源来源、中英双语 |
 | 农户 | 预警 / 日历 | 当期高发病害（未登录可看）；农事任务按月 + 识别记录分布 |
 | 农户 | 社区 | 专家咨询、论坛（发帖/评论/点赞收藏/草稿/置顶加精）、私信、通知、举报 |
+| 游客 | **免登录试用** | 不注册即可识别 3 次、提问 5 次（按 IP 计，次日 0 点重置）；额度在服务端按 `UPDATE … WHERE < 上限` 原子扣减，用尽返回 402 并引导注册；只能读全站内容，发帖/反馈/私信一律 403 |
 | 管理 | 内容 | 帖子 / 评论 / 举报三个页签（含已删除追溯、敏感词库） |
 | 管理 | 用户 | 停用·恢复、角色与模块授权、开通编辑员、签发重置链接、注销冷静期 |
 | 管理 | 百科 / 新闻 / 反馈 | 词条增删改与批量导入、行业动态、意见反馈流转 |
@@ -45,21 +88,24 @@
 ## 技术栈与结构
 
 ```
-backend/    Django 5.2 + DRF（SQLite、YOLOv8；含 gunicorn.conf.py / Dockerfile）
+backend/    Django 5.2 + DRF（SQLite、YOLOv8n；含 gunicorn.conf.py / Dockerfile）
 frontend/   桌面端 Vue 3 + Element Plus + Vite   :5173
 mobile/     移动端 Vue 3 + Vant + Vite           :5174（独立应用）
 mobile-uni/ 移动端 uni-app（H5 :5175，后续出小程序/APP）
 docs/       设计与运维文档、README 配图、工具脚本；tools/ 开发辅助；deploy/ 反代示例
 ```
 
-识别链路：`图片 → Django → YOLOv8（backend/api/newmodels/best.pt，39 类）→ 标注图 + 词条映射 → 结构化结果`。
+识别链路：`图片 → Django → YOLOv8n（backend/api/newmodels/best.pt，5.97 MB，39 类）→ 标注图 + 词条映射 → 结构化结果`。
 
 > 换模型后先跑 `python manage.py check_model_labels`：**权重里的类名是唯一权威**，
 > 与词条错位会"框上 A、详情 B"且全程静默。
 
 > **模型训练代码**单独放在 [shiguangiliushi/crop-disease-training](https://github.com/shiguangiliushi/crop-disease-training)：
 > 标签清洗 → 数据集切分 → 训练（Ultralytics 8.3.143）。
-> 线上权重实测 **P 87.8% / R 89.6% / mAP50 91.5%**（39 类，val 4528 张）；
+> 线上这份权重是 **YOLOv8n 从 COCO 预训练微调**得来（checkpoint 内 `train_args`：imgsz 640 / batch 16 /
+> 50 轮 / AMP / GPU，Ultralytics 8.3.168），**不是**那个仓库里 `yolov11.yaml` 的 CPU 跑法 ——
+> 后者只用来验证流水线，39 类在 CPU 上不收敛。两边的区别见该仓库 README 开头的说明。
+> 线上权重实测 **P 87.8% / R 89.6% / mAP50 91.5%**（39 类，val 4528 张，CPU）；
 > 评估方式、以及"这份数据的检测其实是整图单框分类"这一关键前提，见该仓库的 `docs/评估方法.md`。
 
 ## 快速开始
